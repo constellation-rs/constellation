@@ -1,0 +1,7 @@
+[workspace]
+members = [
+	"deploy",
+	"examples",
+	"test",
+	"fabric",
+]

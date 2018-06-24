@@ -1,0 +1,32 @@
+[package]
+name = "deploy"
+version = "0.1.0"
+license = "Apache-2.0"
+authors = ["Alec Mocatta <alec@mocatta.net>"]
+categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
+keywords = ["deploy","distributed","fabric"]
+description = """
+The `deploy` library to aide writing and debugging of distributed programs, as well as tooling to run them across a cluster.
+"""
+repository = "https://github.com/alecmocatta/deploy"
+homepage = "https://github.com/alecmocatta/deploy"
+documentation = "https://docs.rs/deploy"
+readme = "../README.md"
+
+[dependencies]
+deploy-common = {path = "../common", version = "=0.1.0"}
+nix = {git = "https://github.com/alecmocatta/nix", rev = "a613f105"}
+fringe = {git = "https://github.com/alecmocatta/libfringe", rev = "3aa6d2d0", features = ["valgrind"]}
+bincode = "1.0"
+crossbeam = "0.3"
+serde_derive = "1.0"
+serde = "1.0"
+serde_json = "1.0"
+lazy_static = "1.0"
+either = {version = "1.5", features = ["serde"]}
+ansi_term = "0.11"
+rand = "0.5"
+itertools = "0.7"
+atty = "0.2"
+docopt = "1.0"
+futures = "0.2"
