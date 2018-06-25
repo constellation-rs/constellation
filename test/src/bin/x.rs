@@ -178,27 +178,53 @@
 
 #![feature(never_type)]
 extern crate deploy;
-extern crate serde;
 extern crate futures;
-use std::{env,io,thread,time};
-use std::io::{Read,Write};
+extern crate serde;
+use std::{
+	env,
+	io::{self, Read, Write},
+	thread, time,
+};
 
 use deploy::*;
-use futures::stream::StreamExt;
-use futures::future::FutureExt;
+use futures::{future::FutureExt, stream::StreamExt};
 
 fn sub(parent: Pid, arg: u32) {
 	println!("hi {}", arg);
-	let _ = futures::executor::block_on(Receiver::<String>::new(parent).take(5).forward(Sender::<String>::new(parent))).unwrap();
+	let _ = futures::executor::block_on(Receiver::<String>::new(parent).take(5).forward(Sender::<
+		String,
+	>::new(
+		parent
+	))).unwrap();
 }
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
-	let x = futures::executor::block_on(futures::future::join_all((0..10).map(|i|{
-		let pid = spawn(sub, i, Resources{mem:20*1024*1024,..Resources::default()}).expect("SPAWN FAILED");
-		futures::stream::iter_ok(vec![String::from("abc"),String::from("def"),String::from("ghi"),String::from("jkl"),String::from("mno")]).forward(Sender::<String>::new(pid))
-		.join(Receiver::<String>::new(pid).take(5).fold(String::new(), |acc,x|futures::future::ok(acc+&x)))
-		.map(|(_,res)|res)
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
+	let x = futures::executor::block_on(futures::future::join_all((0..10).map(|i| {
+		let pid = spawn(
+			sub,
+			i,
+			Resources {
+				mem: 20 * 1024 * 1024,
+				..Resources::default()
+			},
+		).expect("SPAWN FAILED");
+		futures::stream::iter_ok(vec![
+			String::from("abc"),
+			String::from("def"),
+			String::from("ghi"),
+			String::from("jkl"),
+			String::from("mno"),
+		]).forward(Sender::<String>::new(pid))
+			.join(
+				Receiver::<String>::new(pid)
+					.take(5)
+					.fold(String::new(), |acc, x| futures::future::ok(acc + &x)),
+			)
+			.map(|(_, res)| res)
 	}))).unwrap();
 	println!("{:?}", x);
 }

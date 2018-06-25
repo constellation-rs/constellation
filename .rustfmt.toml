@@ -1,0 +1,8 @@
+fn_args_density = "Compressed"
+hard_tabs = true
+imports_layout = "Horizontal"
+merge_imports = true
+# reorder_impl_items = true # currently nondeterministic, breaks check
+use_field_init_shorthand = true
+use_try_shorthand = true
+# wrap_comments = true # breaks test json

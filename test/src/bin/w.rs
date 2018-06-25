@@ -178,19 +178,32 @@
 
 extern crate deploy;
 extern crate serde;
-use std::{env,io,thread,time};
-use std::io::{Read,Write};
+use std::{
+	env,
+	io::{self, Read, Write},
+	thread, time,
+};
 
 use deploy::*;
 
 fn sub(parent: Pid, arg: u32) {
-	thread::sleep(time::Duration::new(0,10_000_000)*arg);
+	thread::sleep(time::Duration::new(0, 10_000_000) * arg);
 	println!("hi {}", arg);
 }
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
 	for i in 0..10 {
-		let pid = spawn(sub, i, Resources{mem:20*1024*1024,..Resources::default()}).expect("SPAWN FAILED");
+		let pid = spawn(
+			sub,
+			i,
+			Resources {
+				mem: 20 * 1024 * 1024,
+				..Resources::default()
+			},
+		).expect("SPAWN FAILED");
 	}
 }

@@ -16,12 +16,15 @@
 //= }
 
 extern crate deploy;
-use std::{panic,process,thread};
 use deploy::*;
+use std::{panic, process, thread};
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
-	panic::set_hook(Box::new(|info|{
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
+	panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
 		process::abort()
 	}));

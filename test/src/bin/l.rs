@@ -50,18 +50,30 @@
 
 extern crate deploy;
 extern crate serde;
-use std::{env,io,thread,time};
-use std::io::{Read,Write};
+use std::{
+	env,
+	io::{self, Read, Write},
+	thread, time,
+};
 
 use deploy::*;
 
-fn sub<T>(parent: Pid, arg: T) {
-}
+fn sub<T>(parent: Pid, arg: T) {}
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
 	for i in 0..2 {
-		let pid = spawn(sub, (), Resources{mem:20*1024*1024,..Resources::default()}).expect("SPAWN FAILED");
+		let pid = spawn(
+			sub,
+			(),
+			Resources {
+				mem: 20 * 1024 * 1024,
+				..Resources::default()
+			},
+		).expect("SPAWN FAILED");
 		let receiver = Receiver::<String>::new(pid);
 	}
 }
