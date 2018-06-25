@@ -79,7 +79,7 @@ struct SchedulerArg {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 use deploy_common::{
-	copy_sendfile, is_valgrind, map_bincode_err, valgrind_start_fd, BufferedStream, Deploy, DeployInputEvent, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	copy_sendfile, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployInputEvent, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
 
@@ -539,10 +539,8 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 					.unwrap();
 				let mut arg = unsafe {
 					fs::File::from_raw_fd(
-						nix::sys::memfd::memfd_create(
-							&argv[0],
-							nix::sys::memfd::MemFdCreateFlag::empty(),
-						).expect("Failed to memfd_create"),
+						memfd_create(&argv[0], nix::sys::memfd::MemFdCreateFlag::empty())
+							.expect("Failed to memfd_create"),
 					)
 				};
 				assert_eq!(arg.as_raw_fd(), ARG_FD);

@@ -31,7 +31,7 @@ use std::{
 };
 
 use deploy_common::{
-	copy, copy_sendfile, map_bincode_err, move_fds, BufferedStream, DeployInputEvent, DeployOutputEvent, FdIter, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, Signal
+	copy, copy_sendfile, map_bincode_err, memfd_create, move_fds, seal, BufferedStream, DeployInputEvent, DeployOutputEvent, FdIter, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, Signal
 };
 
 macro_rules! log { // prints to STDOUT
@@ -94,7 +94,7 @@ fn parse_request<R: Read>(
 	// copy(stream, &mut elf, len as usize)?; assert_eq!(elf.len(), len as usize);
 	let mut elf = unsafe {
 		fs::File::from_raw_fd(
-			nix::sys::memfd::memfd_create(
+			memfd_create(
 				&ffi::CString::new(unix::ffi::OsStringExt::into_vec(args[0].clone())).unwrap(),
 				nix::sys::memfd::MemFdCreateFlag::MFD_CLOEXEC,
 			).expect("Failed to memfd_create"),
@@ -110,6 +110,7 @@ fn parse_request<R: Read>(
 	copy(stream, &mut elf, len as usize)?;
 	let x = nix::unistd::lseek64(elf.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);
+	seal(elf.as_raw_fd());
 
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	Ok((process, args, vars, elf, arg))
