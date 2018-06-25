@@ -33,19 +33,28 @@
 //= }
 
 extern crate deploy;
-use std::{panic,process,thread};
 use deploy::*;
+use std::{panic, process, thread};
 
-fn sub<T>(parent: Pid, arg: T) {
-}
+fn sub<T>(parent: Pid, arg: T) {}
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
-	panic::set_hook(Box::new(|info|{
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
+	panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
 		process::abort()
 	}));
-	let pid = spawn(sub, (), Resources{mem:20*1024*1024,..Resources::default()}).expect("SPAWN FAILED");
+	let pid = spawn(
+		sub,
+		(),
+		Resources {
+			mem: 20 * 1024 * 1024,
+			..Resources::default()
+		},
+	).expect("SPAWN FAILED");
 	let sender1 = Sender::<usize>::new(pid);
 	let sender2 = Sender::<usize>::new(pid);
 }

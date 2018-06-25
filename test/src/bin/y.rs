@@ -16,12 +16,16 @@
 //= }
 
 extern crate deploy;
-use std::{io};
-use std::io::{Read,Write};
+use std::io::{self, Read, Write};
 
 use deploy::*;
 
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
-	io::stdout().write_all(&(0u8..=255).collect::<Vec<_>>()).unwrap()
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
+	io::stdout()
+		.write_all(&(0u8..=255).collect::<Vec<_>>())
+		.unwrap()
 }

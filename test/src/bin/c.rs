@@ -16,9 +16,12 @@
 //= }
 
 extern crate deploy;
-use std::process;
 use deploy::*;
+use std::process;
 fn main() {
-	init(Resources{mem:20*1024*1024,..Resources::default()});
+	init(Resources {
+		mem: 20 * 1024 * 1024,
+		..Resources::default()
+	});
 	process::exit(1);
 }

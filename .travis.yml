@@ -1,0 +1,48 @@
+language: rust
+rust: nightly-2018-06-10
+os:
+  - linux
+  - osx
+sudo: false
+cache:
+  - apt
+  - cargo
+env:
+matrix:
+  include:
+    - os: linux
+      env: MODE=debug
+    - os: linux
+      # dist: trusty
+      env: MODE=release
+    # - os: linux
+    #   dist: precise
+    #   env: MODE=release
+    # - os: linux
+    #   env: TARGET=x86_64-unknown-linux-musl MODE=debug
+    # - os: linux
+    #   env: TARGET=x86_64-unknown-linux-musl MODE=release
+    # - os: osx
+    #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=debug
+    # - os: osx
+    #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=release
+  exclude:
+    - env:
+addons:
+  apt:
+    packages:
+      - musl-tools
+before_script:
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install FiloSottile/musl-cross/musl-cross && ln -s /usr/local/bin/x86_64-linux-musl-gcc /usr/local/bin/musl-gcc; fi
+  - if [ -n "$TARGET" ]; then rustup target add "$TARGET"; fi
+  - rustup component add rustfmt-preview
+script:
+  - rustc --version
+  - cargo fmt --version
+  - rustdoc --version
+  - cargo fmt -- --check
+  - cargo build --verbose --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
+  - cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
+  - cargo doc --no-deps --locked
+notifications:
+  email: false
