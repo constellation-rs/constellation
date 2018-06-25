@@ -11,6 +11,7 @@ extern crate nix;
 extern crate rand;
 extern crate serde_json;
 
+use rand::{Rng, SeedableRng};
 use std::{
 	borrow, env, ffi, fmt, fs,
 	io::{self, Read, Write},
@@ -19,7 +20,7 @@ use std::{
 		self,
 		unix::io::{AsRawFd, FromRawFd, IntoRawFd},
 	},
-	ptr,
+	path, ptr,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -414,7 +415,6 @@ fn pretty_pid<'a>(
 	assert_eq!(&pid.0, &decrypted_data);
 
 	let x = bytes.to_hex().take(7).collect::<String>();
-	use rand::{Rng, SeedableRng};
 	let mut rng = rand::XorShiftRng::from_seed([
 		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
 		bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
@@ -673,6 +673,28 @@ pub fn move_fds(fds: &mut [(std::os::unix::io::RawFd, std::os::unix::io::RawFd)]
 	}
 }
 
+pub fn seal(fd: std::os::unix::io::RawFd) {
+	let fd2 = nix::fcntl::open(
+		&path::PathBuf::from(format!("/proc/self/fd/{}", fd)),
+		nix::fcntl::OFlag::O_RDONLY,
+		nix::sys::stat::Mode::empty(),
+	).unwrap();
+	let flags = nix::fcntl::FdFlag::from_bits(
+		nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
+	).unwrap();
+	nix::unistd::close(fd).unwrap();
+	nix::unistd::dup3(
+		fd2,
+		fd,
+		if flags.contains(nix::fcntl::FdFlag::FD_CLOEXEC) {
+			nix::fcntl::OFlag::O_CLOEXEC
+		} else {
+			nix::fcntl::OFlag::empty()
+		},
+	).unwrap();
+	nix::unistd::close(fd2).unwrap();
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct FdIter(*mut nix::libc::DIR);
@@ -794,6 +816,39 @@ pub fn copy_splice<O: AsRawFd, I: AsRawFd>(out: &O, in_: &I, len: usize) -> Resu
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub fn memfd_create(
+	name: &ffi::CStr, flags: nix::sys::memfd::MemFdCreateFlag,
+) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	match nix::sys::memfd::memfd_create(name, flags) {
+		Err(nix::Error::Sys(nix::errno::Errno::ENOSYS)) => {
+			let mut random: [u8; 32] = unsafe { mem::uninitialized() };
+			rand::thread_rng().fill(&mut random);
+			let name = path::PathBuf::from(format!("/{}", random.to_hex()));
+			nix::sys::mman::shm_open(
+				&name,
+				nix::fcntl::OFlag::O_RDWR | nix::fcntl::OFlag::O_CREAT | nix::fcntl::OFlag::O_EXCL,
+				nix::sys::stat::Mode::S_IRWXU,
+			).map(|fd| {
+				if flags == nix::sys::memfd::MemFdCreateFlag::MFD_CLOEXEC {
+				} else if flags == nix::sys::memfd::MemFdCreateFlag::empty() {
+					let mut flags_ = nix::fcntl::FdFlag::from_bits(
+						nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
+					).unwrap();
+					flags_.remove(nix::fcntl::FdFlag::FD_CLOEXEC);
+					nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFD(flags_)).unwrap();
+				} else {
+					unimplemented!()
+				}
+				nix::sys::mman::shm_unlink(&name).unwrap();
+				fd
+			})
+		}
+		a => a,
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 mod bufferedstream {
 	use std::{
 		io::{self, Write},
@@ -858,7 +913,8 @@ pub use bufferedstream::BufferedStream;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 mod hex {
-	use std::mem;
+	use std::{fmt, mem};
+	#[derive(Clone)]
 	pub struct Hex<'a>(&'a [u8], bool);
 	impl<'a> Iterator for Hex<'a> {
 		type Item = char;
@@ -876,6 +932,14 @@ mod hex {
 			} else {
 				None
 			}
+		}
+	}
+	impl<'a> fmt::Display for Hex<'a> {
+		fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+			for char_ in self.clone() {
+				write!(f, "{}", char_)?;
+			}
+			Ok(())
 		}
 	}
 	pub trait ToHex {
