@@ -1,6 +1,6 @@
 [package]
 name = "test"
-version = "0.1.0"
+version = "0.1.1"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -14,8 +14,8 @@ documentation = "https://docs.rs/deploy"
 readme = "../TESTING.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.0"}
-deploy = {path = "../deploy", version = "=0.1.0"}
+deploy-common = {path = "../common", version = "=0.1.1"}
+deploy = {path = "../deploy", version = "=0.1.1"}
 multiset = {git = "https://github.com/jmitchell/multiset", rev = "0fd00e5e"}
 serde = "1.0"
 serde_derive = "1.0"
