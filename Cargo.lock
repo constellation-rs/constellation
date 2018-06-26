@@ -106,13 +106,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "deploy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ansi_term 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "atty 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "bincode 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cargo_metadata 0.5.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossbeam 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "deploy-common 0.1.0",
+ "deploy-common 0.1.1",
  "docopt 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fringe 1.2.1 (git+https://github.com/alecmocatta/libfringe?rev=3aa6d2d0)",
@@ -128,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-common"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes_frast 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "ansi_term 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -178,20 +179,20 @@ dependencies = [
 
 [[package]]
 name = "examples"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "deploy 0.1.0",
+ "deploy 0.1.1",
  "serde 1.0.66 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.66 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "fabric"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bincode 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossbeam 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "deploy-common 0.1.0",
+ "deploy-common 0.1.1",
  "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.66 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -519,12 +520,12 @@ dependencies = [
 
 [[package]]
 name = "test"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bincode 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cargo_metadata 0.5.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "deploy 0.1.0",
- "deploy-common 0.1.0",
+ "deploy 0.1.1",
+ "deploy-common 0.1.1",
  "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.7.8 (registry+https://github.com/rust-lang/crates.io-index)",
