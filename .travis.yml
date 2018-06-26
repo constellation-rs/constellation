@@ -11,27 +11,37 @@ env:
 matrix:
   include:
     - os: linux
+      dist: trusty
       env: MODE=debug
     - os: linux
-      # dist: trusty
+      dist: trusty
+      sudo: required # https://docs.travis-ci.com/user/reference/overview/
+      env: MODE=release
+    - os: linux
+      dist: trusty
+      sudo: false
       env: MODE=release
     # - os: linux
     #   dist: precise
     #   env: MODE=release
     # - os: linux
     #   env: TARGET=x86_64-unknown-linux-musl MODE=debug
+    #   addons:
+    #     apt:
+    #       packages:
+    #         - musl-tools
     # - os: linux
     #   env: TARGET=x86_64-unknown-linux-musl MODE=release
+    #   addons:
+    #     apt:
+    #       packages:
+    #         - musl-tools
     # - os: osx
     #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=debug
     # - os: osx
     #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=release
   exclude:
     - env:
-addons:
-  apt:
-    packages:
-      - musl-tools
 before_script:
   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install FiloSottile/musl-cross/musl-cross && ln -s /usr/local/bin/x86_64-linux-musl-gcc /usr/local/bin/musl-gcc; fi
   - if [ -n "$TARGET" ]; then rustup target add "$TARGET"; fi

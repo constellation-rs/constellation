@@ -258,7 +258,7 @@ fn main() {
 			"4GiB",
 			"4",
 			bridge.to_str().unwrap(),
-			"127.0.0.1:12340",
+			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
 		.stdout(process::Stdio::null())

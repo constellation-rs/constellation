@@ -15,7 +15,8 @@ readme = "../README.md"
 
 [dependencies]
 deploy-common = {path = "../common", version = "=0.1.0"}
-nix = {git = "https://github.com/alecmocatta/nix", rev = "a613f105"}
+# nix = {git = "https://github.com/alecmocatta/nix", rev = "a613f105"}
+nix = "0.11"
 fringe = {git = "https://github.com/alecmocatta/libfringe", rev = "3aa6d2d0", features = ["valgrind"]}
 bincode = "1.0"
 crossbeam = "0.3"
