@@ -68,7 +68,7 @@ use std::{
 };
 
 use deploy_common::{
-	copy, is_valgrind, map_bincode_err, move_fds, parse_binary_size, valgrind_start_fd, BufferedStream, Resources
+	copy, is_valgrind, map_bincode_err, memfd_create, move_fds, parse_binary_size, seal, valgrind_start_fd, BufferedStream, Resources
 };
 
 #[global_allocator]
@@ -227,7 +227,7 @@ fn parse_request<R: Read>(
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let mut elf = unsafe {
 		fs::File::from_raw_fd(
-			nix::sys::memfd::memfd_create(
+			memfd_create(
 				&ffi::CString::new(unix::ffi::OsStringExt::into_vec(args[0].clone())).unwrap(),
 				nix::sys::memfd::MemFdCreateFlag::MFD_CLOEXEC,
 			).expect("Failed to memfd_create"),
@@ -243,10 +243,11 @@ fn parse_request<R: Read>(
 	copy(stream, &mut elf, len as usize)?;
 	let x = nix::unistd::lseek64(elf.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);
+	seal(elf.as_raw_fd());
 	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let mut arg = unsafe {
 		fs::File::from_raw_fd(
-			nix::sys::memfd::memfd_create(
+			memfd_create(
 				&ffi::CString::new(unix::ffi::OsStringExt::into_vec(args[0].clone())).unwrap(),
 				nix::sys::memfd::MemFdCreateFlag::empty(),
 			).expect("Failed to memfd_create"),
