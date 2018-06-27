@@ -75,7 +75,7 @@ Deploy makes it easier to write a distributed program. Akin to MPI, it abstracts
 There are two execution modes: running normally with `cargo run` and deploying to a cluster with `cargo deploy`. We'll discuss the first, and then cover what differs in the second.
 
 #### Monitor process
-Every process has a **monitor process** that capture's the process' output, and calls `waitpid` on it to capture the exit status (be it exit code or signal). This is set up by forking upon process initialisation, parent being the monitor and the child going on to run the user's program. It captures the output by replacing file descriptors 0,1,2 (which correspond to stdin, stdout and stderr) with pipes, such that when the user's process writes to e.g. fd 1, it's writing to a pipe that the monitor process then reads from and forwards to the **bridge**.
+Every process has a **monitor process** that capture's the process's output, and calls `waitpid` on it to capture the exit status (be it exit code or signal). This is set up by forking upon process initialisation, parent being the monitor and the child going on to run the user's program. It captures the output by replacing file descriptors 0,1,2 (which correspond to stdin, stdout and stderr) with pipes, such that when the user's process writes to e.g. fd 1, it's writing to a pipe that the monitor process then reads from and forwards to the **bridge**.
 
 #### Bridge
 The **bridge** is what collects the output from the various **monitor processes** and outputs it formatted at the terminal. It is started inside `init()`, with the process forking such that the parent becomes the bridge, while the child goes on to run the user's program.
@@ -110,9 +110,9 @@ Rather than being invoked by a fork inside the user process, it is started autom
 This is a command [added to](https://doc.rust-lang.org/book/second-edition/ch14-05-extending-cargo.html#extending-cargo-with-custom-commands) cargo that under the hood invokes `cargo run`, except that rather than the resulting binary being run locally, it is sent off to the **bridge**. The **bridge** then sends back any output, which is output formatted at the terminal.
 
 ## How to use it
-```
+```toml
 [dependencies]
-deploy = "0.1.0"
+deploy = "0.1.2"
 ```
 ```
 extern crate deploy;
@@ -157,7 +157,7 @@ cargo deploy 10.0.0.1:8888 --release
 ```
 
 #### Requirements
-Rust: nightly. **NB: the current nightly rustc [crashes](https://github.com/rust-lang/rust/issues/51649), so use known working `nightly-2018-06-10` for the time being.***
+Rust: nightly. **NB: the current nightly rustc [crashes](https://github.com/rust-lang/rust/issues/51649), so use known working `nightly-2018-06-10` for the time being.**
 
 Linux: kernel >= 3.9; `/proc` filesystem; IPv4 where the address given to fabric master is bindable to by the fabric itself (this requirement could be lifted).
 

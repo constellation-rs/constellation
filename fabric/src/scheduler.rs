@@ -1,5 +1,6 @@
 use bincode;
 use crossbeam;
+use deploy_common::{copy, map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
 use either::Either;
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
@@ -9,8 +10,6 @@ use std::{
 	sync::mpsc,
 	thread,
 };
-
-use deploy_common::{copy, map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
 
 #[derive(Debug)]
 pub struct Node {

@@ -176,17 +176,12 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
-extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
+use std::{thread, time};
 
-fn sub(parent: Pid, arg: u32) {
+fn sub(_parent: Pid, arg: u32) {
 	thread::sleep(time::Duration::new(0, 10_000_000) * arg);
 	println!("hi {}", arg);
 }
@@ -197,7 +192,7 @@ fn main() {
 		..Resources::default()
 	});
 	for i in 0..10 {
-		let pid = spawn(
+		let _pid = spawn(
 			sub,
 			i,
 			Resources {

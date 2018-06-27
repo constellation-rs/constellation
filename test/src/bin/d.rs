@@ -1,7 +1,7 @@
 //= {
 //=   "output": {
 //=     "2": [
-//=       "thread 'main' panicked at 'qwertyuiop', test/src/bin/d\\.rs:31:2\n",
+//=       "thread 'main' panicked at 'qwertyuiop', test/src/bin/d\\.rs:33:2\n",
 //=       true
 //=     ],
 //=     "1": [
@@ -15,9 +15,11 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
 use deploy::*;
 use std::{panic, process, thread, time};
+
 fn main() {
 	init(Resources {
 		mem: 20 * 1024 * 1024,

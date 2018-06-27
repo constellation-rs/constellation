@@ -15,6 +15,7 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
 use deploy::*;
 use std::{panic, process, thread};
@@ -29,5 +30,5 @@ fn main() {
 		process::abort()
 	}));
 	let pid = pid();
-	let sender = Sender::<usize>::new(pid);
+	let _sender = Sender::<usize>::new(pid);
 }

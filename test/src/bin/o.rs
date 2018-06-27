@@ -48,17 +48,11 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
-extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
 
-fn sub<T>(parent: Pid, arg: T) {
+fn sub<T>(parent: Pid, _arg: T) {
 	let receiver = Receiver::<String>::new(parent);
 	println!("{}", receiver.recv().unwrap());
 }
@@ -68,7 +62,7 @@ fn main() {
 		mem: 20 * 1024 * 1024,
 		..Resources::default()
 	});
-	for i in 0..2 {
+	for _ in 0..2 {
 		let pid = spawn(
 			sub,
 			(),
