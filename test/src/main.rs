@@ -4,10 +4,11 @@
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
 #![feature(global_allocator, allocator_api)]
+#![deny(missing_docs, warnings, deprecated)]
+
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate cargo_metadata;
 extern crate deploy_common;
 extern crate either;
 extern crate itertools;
@@ -18,10 +19,10 @@ extern crate serde_json;
 mod ext;
 
 use std::{
-	collections::{HashMap, HashSet},
-	env, ffi, fs, hash,
+	collections::HashMap,
+	env, fs, hash,
 	io::{self, BufRead},
-	iter, mem, net, os,
+	iter, os,
 	path::{Path, PathBuf},
 	process, str, time,
 };
@@ -215,10 +216,10 @@ fn main() {
 		.output()
 		.expect("Failed to invoke cargo");
 	for message in serde_json::Deserializer::from_slice(&output.stdout)
-		.into_iter::<ext::cargo_metadata::Message>()
+		.into_iter::<deploy_common::cargo_metadata::Message>()
 	{
-		if let ext::cargo_metadata::Message::CompilerArtifact { artifact } =
-			message.unwrap_or_else(|_| {
+		if let deploy_common::cargo_metadata::Message::CompilerArtifact { artifact } = message
+			.unwrap_or_else(|_| {
 				panic!(
 					"Failed to parse output of cargo {}",
 					itertools::join(args.iter(), " ")
@@ -265,18 +266,18 @@ fn main() {
 		.stderr(process::Stdio::null())
 		.spawn()
 		.unwrap();
-	let start = time::Instant::now();
+	let start_ = time::Instant::now();
 	while let Err(_) = std::net::TcpStream::connect(FABRIC_ADDR) {
 		// TODO: parse output rather than this loop and timeout
-		if start.elapsed() > time::Duration::new(2, 0) {
+		if start_.elapsed() > time::Duration::new(2, 0) {
 			panic!("Fabric not up within 2s");
 		}
 		std::thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
-	let start = time::Instant::now();
+	let start_ = time::Instant::now();
 	while let Err(_) = std::net::TcpStream::connect(BRIDGE_ADDR) {
 		// TODO: parse output rather than this loop and timeout
-		if start.elapsed() > time::Duration::new(10, 0) {
+		if start_.elapsed() > time::Duration::new(10, 0) {
 			panic!("Bridge not up within 10s");
 		}
 		std::thread::sleep(std::time::Duration::new(0, 1_000_000));
@@ -284,7 +285,7 @@ fn main() {
 
 	let mut products = products
 		.iter()
-		.filter(|&(src, bin)| src.starts_with(Path::new(TESTS)))
+		.filter(|&(src, _bin)| src.starts_with(Path::new(TESTS)))
 		.collect::<Vec<_>>();
 	products.sort_by(|&(ref a_src, _), &(ref b_src, _)| a_src.cmp(b_src));
 

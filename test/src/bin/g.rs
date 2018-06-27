@@ -15,8 +15,10 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
 use deploy::*;
+
 fn main() {
 	init(Resources {
 		mem: 20 * 1024 * 1024,

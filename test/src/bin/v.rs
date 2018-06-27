@@ -32,11 +32,12 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
 use deploy::*;
 use std::{panic, process, thread};
 
-fn sub<T>(parent: Pid, arg: T) {}
+fn sub<T>(_parent: Pid, _arg: T) {}
 
 fn main() {
 	init(Resources {
@@ -55,6 +56,6 @@ fn main() {
 			..Resources::default()
 		},
 	).expect("SPAWN FAILED");
-	let sender1 = Sender::<usize>::new(pid);
-	let sender2 = Sender::<usize>::new(pid);
+	let _sender1 = Sender::<usize>::new(pid);
+	let _sender2 = Sender::<usize>::new(pid);
 }

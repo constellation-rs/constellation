@@ -80,17 +80,11 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
-extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
 
-fn sub(parent: Pid, i: u64) {
+fn sub(_parent: Pid, i: u64) {
 	assert_eq!(resources().mem, 20 * 1024 * 1024 + i);
 	println!("hi {:?}", resources());
 }
@@ -102,7 +96,7 @@ fn main() {
 	});
 	println!("{:?}", resources());
 	for i in 0..4 {
-		let pid = spawn(
+		let _pid = spawn(
 			sub,
 			i,
 			Resources {
