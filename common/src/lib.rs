@@ -842,7 +842,10 @@ pub fn memfd_create(
 	match nix::sys::memfd::memfd_create(name, flags) {
 		Err(nix::Error::Sys(nix::errno::Errno::ENOSYS)) => {
 			let mut random: [u8; 32] = unsafe { mem::uninitialized() };
-			rand::thread_rng().fill(&mut random);
+			// thread_rng uses getrandom(2) on >=3.17 (same as memfd_create), permanently opens /dev/urandom on fail, which messes our fd numbers. TODO: less assumptive about fd numbers..
+			let rand = fs::File::open("/dev/urandom").expect("Couldn't open /dev/urandom");
+			(&rand).read_exact(&mut random).unwrap();
+			mem::drop(rand);
 			let name = path::PathBuf::from(format!("/{}", random.to_hex()));
 			nix::sys::mman::shm_open(
 				&name,
