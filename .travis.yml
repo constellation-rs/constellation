@@ -21,9 +21,9 @@ matrix:
       dist: trusty
       sudo: false
       env: MODE=release
-    # - os: linux
-    #   dist: precise
-    #   env: MODE=release
+    - os: linux
+      dist: precise
+      env: MODE=release
     # - os: linux
     #   env: TARGET=x86_64-unknown-linux-musl MODE=debug
     #   addons:
