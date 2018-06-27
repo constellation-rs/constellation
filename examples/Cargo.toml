@@ -1,6 +1,6 @@
 [package]
 name = "examples"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -13,6 +13,6 @@ homepage = "https://github.com/alecmocatta/deploy"
 documentation = "https://docs.rs/deploy"
 
 [dependencies]
-deploy = {path = "../deploy", version = "=0.1.1"}
+deploy = {path = "../deploy", version = "=0.1.2"}
 serde_derive = "1.0"
 serde = "1.0"

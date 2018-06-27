@@ -1,4 +1,5 @@
 #![feature(asm)]
+#![deny(warnings, deprecated)]
 
 extern crate serde;
 #[macro_use]
@@ -6,6 +7,7 @@ extern crate serde_derive;
 extern crate aes_frast;
 extern crate ansi_term;
 extern crate bincode;
+extern crate cargo_metadata as cargo_metadata_;
 extern crate either;
 extern crate nix;
 extern crate rand;
@@ -18,11 +20,20 @@ use std::{
 	mem, net, ops,
 	os::{
 		self,
-		unix::io::{AsRawFd, FromRawFd, IntoRawFd},
+		unix::io::{AsRawFd, IntoRawFd},
 	},
 	path, ptr,
 };
 
+/// An opaque identifier for a process.
+///
+/// The current process's `Pid` can be retrieved with [pid()](pid).
+///
+/// Unlike typical OS pids, it is:
+///  * Universally unique – that is to say, the same `Pid` will never be seen twice
+///  * When running across a cluster, it is cluster-wide, rather than within a single instance.
+///
+/// All inter-process communication occurs after [Sender](Sender)s and [Receiver](Receiver)s have been created with `Pid`s, thus `Pid`s are the sole form of addressing necessary.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Pid([u8; 16]);
 impl Pid {
@@ -84,6 +95,7 @@ pub trait PidInternal {
 	fn new(ip: net::IpAddr, port: u16) -> Pid;
 	fn addr(&self) -> net::SocketAddr;
 }
+#[doc(hidden)]
 impl PidInternal for Pid {
 	fn new(ip: net::IpAddr, port: u16) -> Pid {
 		Pid::new(ip, port)
@@ -263,9 +275,16 @@ pub enum Format {
 	Json,
 }
 
+/// Memory and CPU requirements for a process.
+///
+/// This is used in allocation of a process, to ensure that sufficient resources are available.
+///
+/// Best effort is made to enforce these as limits to avoid buggy/greedy processes starving others.
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct Resources {
+	/// Memory requirement in bytes
 	pub mem: u64,
+	/// CPU requirement as a fraction of one logical core. Any positive value is valid.
 	pub cpu: f32,
 }
 impl Default for Resources {
@@ -273,6 +292,7 @@ impl Default for Resources {
 		DEPLOY_RESOURCES_DEFAULT
 	}
 }
+/// The [Resources] returned by [Resources::default()](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
 pub const DEPLOY_RESOURCES_DEFAULT: Resources = Resources {
 	mem: 1024 * 1024 * 1024,
 	cpu: 0.05,
@@ -844,6 +864,45 @@ pub fn memfd_create(
 			})
 		}
 		a => a,
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub mod cargo_metadata {
+	use cargo_metadata_;
+	// pub use cargo_metadata_::*;
+	use std::path::PathBuf;
+
+	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs
+	#[derive(Deserialize, Debug)]
+	#[serde(tag = "reason", rename_all = "kebab-case")]
+	pub enum Message {
+		CompilerArtifact {
+			#[serde(flatten)]
+			artifact: Artifact,
+		},
+		CompilerMessage {},
+		BuildScriptExecuted {},
+		#[serde(skip)]
+		Unknown, // TODO https://github.com/serde-rs/serde/issues/912
+	}
+	#[derive(Deserialize, Debug)]
+	pub struct Artifact {
+		pub package_id: String,
+		pub target: cargo_metadata_::Target, // https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/core/manifest.rs#L188
+		pub profile: ArtifactProfile,
+		pub features: Vec<String>,
+		pub filenames: Vec<PathBuf>,
+		pub fresh: bool,
+	}
+	#[derive(Deserialize, Debug)]
+	pub struct ArtifactProfile {
+		pub opt_level: String,
+		pub debuginfo: Option<u32>,
+		pub debug_assertions: bool,
+		pub overflow_checks: bool,
+		pub test: bool,
 	}
 }
 

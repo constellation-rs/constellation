@@ -3,11 +3,13 @@ mod heap;
 mod serialize;
 mod tcp_linux;
 
+pub use self::tcp_linux::{socket_forwarder, SocketForwardee, SocketForwarder};
+use self::tcp_linux::{EpollExecutor, EpollExecutorContext, LinuxTcp, LinuxTcpListener, Triggerer};
+use either::Either;
 use futures;
 use nix;
 use rand;
 use serde;
-
 use std::{
 	cell,
 	collections::HashMap,
@@ -15,11 +17,6 @@ use std::{
 	sync::{self, Arc},
 	thread,
 };
-
-// use self::circularbuffer::{Readable,Writable};
-pub use self::tcp_linux::{socket_forwarder, SocketForwardee, SocketForwarder};
-use self::tcp_linux::{EpollExecutor, EpollExecutorContext, LinuxTcp, LinuxTcpListener, Triggerer};
-use either::Either;
 
 fn getpid() -> nix::unistd::Pid {
 	nix::unistd::getpid()
@@ -896,7 +893,7 @@ impl InnerConnected {
 		self.send_serializer.push_avail()
 	}
 
-	fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, executor: &EpollExecutorContext) {
+	fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, _executor: &EpollExecutorContext) {
 		self.send_serializer.push(t);
 		// self.poll(executor);
 	}
@@ -930,7 +927,7 @@ impl InnerConnected {
 	}
 
 	fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, executor: &EpollExecutorContext,
+		&mut self, _executor: &EpollExecutorContext,
 	) -> T {
 		// logln!("{:?}:{:?} recv {:?}", 0000, self as *mut InnerConnected , unsafe{intrinsics::type_name::<T>()});
 		self.recv_deserializer_given = false;
@@ -994,7 +991,7 @@ impl InnerConnectedRemoteClosed {
 		self.send_serializer.push_avail()
 	}
 
-	fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, executor: &EpollExecutorContext) {
+	fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, _executor: &EpollExecutorContext) {
 		self.send_serializer.push(t);
 		// self.poll(executor);
 	}
@@ -1106,7 +1103,7 @@ impl InnerConnectedLocalClosed {
 	}
 
 	fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, executor: &EpollExecutorContext,
+		&mut self, _executor: &EpollExecutorContext,
 	) -> T {
 		// logln!("{:?}:{:?} recv {:?}", 0000, self as *mut InnerConnectedLocalClosed, unsafe{intrinsics::type_name::<T>()});
 		self.recv_deserializer_given = false;
@@ -1161,10 +1158,13 @@ impl InnerConnectedClosing {
 	}
 }
 
+/// Channel operation error modes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChannelError {
-	Error,
+	/// The remote process has exited, thus `send()`/`recv()` could never succeed.
 	Exited,
+	/// The remote process terminated abruptly, or the channel was killed by the OS or hardware.
+	Error,
 }
 impl fmt::Display for ChannelError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1244,7 +1244,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		})
 	}
 
-	fn async_send_available(&self, context: &Context) -> bool {
+	fn async_send_available(&self, _context: &Context) -> bool {
 		match &self
 			.channel
 			.as_ref()
@@ -1385,7 +1385,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 	where
 		T: 'static,
 	{
-		if let Some(recv) = self.xxx_send(context) {
+		if let Some(_recv) = self.xxx_send(context) {
 			Ok(futures::Async::Ready(()))
 		} else {
 			self.channel
@@ -1762,6 +1762,13 @@ impl<T: serde::de::DeserializeOwned> fmt::Debug for Receiver<T> {
 	}
 }
 
+/// Types that can be [select()](select)ed upon.
+///
+/// [select()](select) lets you block on multiple blocking operations until progress can be made on at least one.
+///
+/// [Receiver::selectable_recv()](Receiver::selectable_recv) and [Sender::selectable_send()](Sender::selectable_send) let one create `Selectable` objects, any number of which can be passed to [select()](select). [select()](select) then blocks until at least one is progressable, and then from any that are progressable picks one at random and executes it.
+///
+/// It is inspired by the [select()](select) of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
 pub trait Selectable: fmt::Debug {
 	#[doc(hidden)]
 	fn subscribe(&self, thread::Thread);
@@ -1817,7 +1824,7 @@ impl<T> Rand<T> {
 
 	fn push<R: rand::Rng>(&mut self, x: T, rng: &mut R) {
 		self.count += 1;
-		if rng.gen_weighted_bool(self.count as u32) {
+		if rng.gen_range(0, self.count) == 0 {
 			self.res = Some(x);
 		}
 	}

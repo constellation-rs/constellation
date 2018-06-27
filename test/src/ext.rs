@@ -1,10 +1,8 @@
+#![allow(dead_code)]
+
 pub mod serialize_as_regex_string {
 	use regex;
-	use serde::{de, Deserialize, Deserializer, Serializer};
-	use std::{
-		char,
-		fmt::{self, Write},
-	};
+	use serde::Serializer;
 
 	#[derive(PartialEq, Eq, Hash, Serialize, Debug)]
 	pub struct SerializeAsRegexString(#[serde(with = "self")] pub Vec<u8>);
@@ -148,42 +146,6 @@ pub mod hashmap {
 	}
 }
 
-pub mod cargo_metadata {
-	use cargo_metadata;
-	use std::path::PathBuf;
-
-	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs
-	#[derive(Deserialize, Debug)]
-	#[serde(tag = "reason", rename_all = "kebab-case")]
-	pub enum Message {
-		CompilerArtifact {
-			#[serde(flatten)]
-			artifact: Artifact,
-		},
-		CompilerMessage {},
-		BuildScriptExecuted {},
-		#[serde(skip)]
-		Unknown, // TODO https://github.com/serde-rs/serde/issues/912
-	}
-	#[derive(Deserialize, Debug)]
-	pub struct Artifact {
-		pub package_id: String,
-		pub target: cargo_metadata::Target, // https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/core/manifest.rs#L188
-		pub profile: ArtifactProfile,
-		pub features: Vec<String>,
-		pub filenames: Vec<PathBuf>,
-		pub fresh: bool,
-	}
-	#[derive(Deserialize, Debug)]
-	pub struct ArtifactProfile {
-		pub opt_level: String,
-		pub debuginfo: Option<u32>,
-		pub debug_assertions: bool,
-		pub overflow_checks: bool,
-		pub test: bool,
-	}
-}
-
 pub mod serde_multiset {
 	use multiset;
 	use serde::{
@@ -235,7 +197,7 @@ pub mod serde_multiset {
 }
 
 pub mod binary_string {
-	use serde::{de, Deserialize, Deserializer, Serializer};
+	use serde::{Deserialize, Deserializer, Serializer};
 	use std::{
 		char,
 		fmt::{self, Write},

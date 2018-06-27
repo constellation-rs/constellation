@@ -1,6 +1,6 @@
 [package]
 name = "deploy"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -14,7 +14,7 @@ documentation = "https://docs.rs/deploy"
 readme = "../README.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.1"}
+deploy-common = {path = "../common", version = "=0.1.2"}
 # nix = {git = "https://github.com/alecmocatta/nix", rev = "a613f105"}
 nix = "0.11"
 fringe = {git = "https://github.com/alecmocatta/libfringe", rev = "3aa6d2d0", features = ["valgrind"]}
@@ -30,5 +30,4 @@ rand = "0.5"
 itertools = "0.7"
 atty = "0.2"
 docopt = "1.0"
-futures = "0.2"
-cargo_metadata = "0.5"
+futures-preview = "0.2"

@@ -177,15 +177,9 @@
 //= }
 
 #![feature(never_type)]
+#![deny(warnings, deprecated)]
 extern crate deploy;
 extern crate futures;
-extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
 use futures::{future::FutureExt, stream::StreamExt};
 

@@ -130,15 +130,11 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
 extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
+use std::{env, thread, time};
 
 fn sub<T: std::fmt::Debug>(parent: Pid, arg: T) {
 	println!("! sub1");
