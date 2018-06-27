@@ -176,17 +176,11 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
-extern crate serde;
-use std::{
-	env,
-	io::{self, Read, Write},
-	thread, time,
-};
-
 use deploy::*;
 
-fn sub<T>(parent: Pid, arg: T) {
+fn sub<T>(parent: Pid, _arg: T) {
 	let receiver = Receiver::<String>::new(parent);
 	let sender = Sender::<usize>::new(parent);
 	println!("{}", receiver.recv().unwrap());
@@ -214,10 +208,10 @@ fn main() {
 		.into_iter()
 		.map(|pid| (Sender::<String>::new(pid), Receiver::<usize>::new(pid)))
 		.collect::<Vec<_>>();
-	for &(ref sender, ref receiver) in channels.iter() {
+	for &(ref sender, ref _receiver) in channels.iter() {
 		sender.send(String::from("hi")).unwrap();
 	}
-	for &(ref sender, ref receiver) in channels.iter() {
+	for &(ref _sender, ref receiver) in channels.iter() {
 		println!("{}", receiver.recv().unwrap());
 	}
 }

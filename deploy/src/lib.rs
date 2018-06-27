@@ -1,7 +1,19 @@
-#![doc(html_root_url = "https://docs.rs/deploy/0.1.0")]
+//! Distributed programming primitives.
+//!
+//! This library provides a runtime to aide in the writing and debugging of distributed programs.
+//!
+//! The two key ideas are:
+//!
+//!  * **Spawning new processes:** The [spawn()](spawn) function can be used to spawn a new process running a particular function.
+//!  * **Channels:** [Sender]s and [Receiver]s can be used for synchronous or asynchronous inter-process communication.
+//!
+//! The only requirement to use is that [init()](init) must be called immediately inside your application's `main()` function.
+
+#![doc(html_root_url = "https://docs.rs/deploy/0.1.2")]
 #![feature(global_allocator, allocator_api, read_initializer, linkage, core_intrinsics, nll)]
-// #![deny(missing_docs, warnings, missing_debug_implementations)]
+#![deny(missing_docs, warnings, deprecated)]
 #![allow(dead_code)]
+
 extern crate ansi_term;
 extern crate atty;
 extern crate bincode;
@@ -19,16 +31,21 @@ extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
 
+pub use channel::{ChannelError, Selectable};
+use deploy_common::{
+	copy_sendfile, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+};
+pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
 use either::Either;
 use std::{
-	alloc, env, ffi, fmt, fs, intrinsics,
+	alloc, ffi, fmt, fs, intrinsics,
 	io::{self, Read, Write},
 	iter, marker, mem, net, ops,
 	os::{
 		self,
 		unix::io::{AsRawFd, FromRawFd, IntoRawFd},
 	},
-	path, process, ptr, str,
+	path, process, str,
 	sync::{self, mpsc},
 	thread,
 };
@@ -37,18 +54,20 @@ use std::{
 // 	($($arg:tt)*) => (let mut file = ::std::io::BufWriter::with_capacity(4096/*PIPE_BUF*/, unsafe{<::std::fs::File as ::std::os::unix::io::FromRawFd>::from_raw_fd(2)}); <::std::io::BufWriter<::std::fs::File> as ::std::io::Write>::write_fmt(&mut file, format_args!($($arg)*)).unwrap(); <::std::fs::File as ::std::os::unix::io::IntoRawFd>::into_raw_fd(file.into_inner().unwrap()););
 // }
 macro_rules! log {
-	($($arg:tt)*) => {};
+	($($arg:tt)*) => (format_args!($($arg)*));
 }
 macro_rules! logln {
 	() => (log!("\n"));
 	($fmt:expr) => (log!(concat!($fmt, "\n")));
 	($fmt:expr, $($arg:tt)*) => (log!(concat!($fmt, "\n"), $($arg)*));
 }
+#[allow(unused_macros)]
 macro_rules! print {
 	($($arg:tt)*) => {
 		compile_error!("Cannot use print!()")
 	};
 }
+#[allow(unused_macros)]
 macro_rules! eprint {
 	($($arg:tt)*) => {
 		compile_error!("Cannot use eprint!()")
@@ -78,11 +97,6 @@ struct SchedulerArg {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-use deploy_common::{
-	copy_sendfile, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployInputEvent, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
-};
-pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
-
 lazy_static! {
 	static ref BRIDGE: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
 	static ref SCHEDULER: sync::Mutex<()> = sync::Mutex::new(());
@@ -94,18 +108,25 @@ lazy_static! {
 }
 static mut HANDLE: Option<channel::Handle> = None;
 
-pub use channel::{ChannelError, Selectable};
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The sending half of a channel.
+///
+/// It has a synchronous blocking method [send()](Sender::send) and an asynchronous nonblocking method [selectable_send()](Sender::selectable_send).
 pub struct Sender<T: serde::ser::Serialize>(Option<channel::Sender<T>>, Pid);
 impl<T: serde::ser::Serialize> Sender<T> {
+	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Sender<T> {
 		if remote == pid() {
 			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{intrinsics::type_name::<T>()});
 		}
 		let context = CONTEXT.read().unwrap();
-		if let Some(sender) = channel::Sender::new(remote.addr(), context.as_ref().unwrap()) {
+		if let Some(sender) = channel::Sender::new(
+			remote.addr(),
+			context.as_ref().unwrap_or_else(|| {
+				panic!("You must call init() immediately inside your application's main() function")
+			}),
+		) {
 			Sender(Some(sender), remote)
 		} else {
 			panic!(
@@ -116,6 +137,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		}
 	}
 
+	/// Get the pid of the remote end of this Sender
 	pub fn pid(&self) -> Pid {
 		self.1
 	}
@@ -137,6 +159,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 			})
 	}
 
+	/// Blocking send.
 	pub fn send(&self, t: T) -> Result<(), ChannelError>
 	where
 		T: 'static,
@@ -150,6 +173,9 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		})
 	}
 
+	/// [Selectable] send.
+	///
+	/// This needs to be passed to [select()](select) to be executed.
 	pub fn selectable_send<'a, F: FnOnce() -> T + 'a, E: FnOnce(ChannelError) + 'a>(
 		&'a self, send: F, err: E,
 	) -> impl channel::Selectable + 'a
@@ -236,26 +262,35 @@ impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<T> {
 	}
 
 	fn poll_flush(
-		&mut self, cx: &mut futures::task::Context,
+		&mut self, _cx: &mut futures::task::Context,
 	) -> Result<futures::Async<()>, Self::SinkError> {
 		Ok(futures::Async::Ready(()))
 	}
 
 	fn poll_close(
-		&mut self, cx: &mut futures::task::Context,
+		&mut self, _cx: &mut futures::task::Context,
 	) -> Result<futures::Async<()>, Self::SinkError> {
 		Ok(futures::Async::Ready(()))
 	}
 }
 
+/// The receiving half of a channel.
+///
+/// It has a synchronous blocking method [recv()](Receiver::recv) and an asynchronous nonblocking method [selectable_recv()](Receiver::selectable_recv).
 pub struct Receiver<T: serde::de::DeserializeOwned>(Option<channel::Receiver<T>>, Pid);
 impl<T: serde::de::DeserializeOwned> Receiver<T> {
+	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Receiver<T> {
 		if remote == pid() {
 			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{intrinsics::type_name::<T>()});
 		}
 		let context = CONTEXT.read().unwrap();
-		if let Some(receiver) = channel::Receiver::new(remote.addr(), context.as_ref().unwrap()) {
+		if let Some(receiver) = channel::Receiver::new(
+			remote.addr(),
+			context.as_ref().unwrap_or_else(|| {
+				panic!("You must call init() immediately inside your application's main() function")
+			}),
+		) {
 			Receiver(Some(receiver), remote)
 		} else {
 			panic!(
@@ -266,6 +301,7 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 		}
 	}
 
+	/// Get the pid of the remote end of this Receiver
 	pub fn pid(&self) -> Pid {
 		self.1
 	}
@@ -287,6 +323,7 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 			})
 	}
 
+	/// Blocking receive.
 	pub fn recv(&self) -> Result<T, ChannelError>
 	where
 		T: 'static,
@@ -300,6 +337,9 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 		})
 	}
 
+	/// [Selectable] receive.
+	///
+	/// This needs to be passed to [select()](select) to be executed.
 	pub fn selectable_recv<'a, F: FnOnce(T) + 'a, E: FnOnce(ChannelError) + 'a>(
 		&'a self, recv: F, err: E,
 	) -> impl channel::Selectable + 'a
@@ -389,6 +429,13 @@ impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Recei
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// `select()` lets you block on multiple blocking operations until progress can be made on at least one.
+///
+/// [Receiver::selectable_recv()](Receiver::selectable_recv) and [Sender::selectable_send()](Sender::selectable_send) let one create [Selectable] objects, any number of which can be passed to `select()`. `select()` then blocks until at least one is progressable, and then from any that are progressable picks one at random and executes it.
+///
+/// It returns an iterator of all the [Selectable] objects bar the one that has been executed.
+///
+/// It is inspired by the `select()` of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
 pub fn select<'a>(
 	select: Vec<Box<channel::Selectable + 'a>>,
 ) -> impl Iterator<Item = Box<channel::Selectable + 'a>> + 'a {
@@ -400,7 +447,8 @@ pub fn select<'a>(
 		)
 	})
 }
-pub fn select_all<'a>(mut select: Vec<Box<Selectable + 'a>>) {
+/// A thin wrapper around [select()](select) that loops until all [Selectable] objects have been executed.
+pub fn run<'a>(mut select: Vec<Box<Selectable + 'a>>) {
 	while select.len() != 0 {
 		select = self::select(select).collect();
 	}
@@ -408,8 +456,10 @@ pub fn select_all<'a>(mut select: Vec<Box<Selectable + 'a>>) {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Get the [Pid] of the current process
 #[inline(always)]
 pub fn pid() -> Pid {
+	// TODO: panic!("You must call init() immediately inside your application's main() function")
 	// TODO: cache
 	let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
 	let local_addr = listener.local_addr().unwrap();
@@ -417,17 +467,30 @@ pub fn pid() -> Pid {
 	Pid::new(local_addr.ip(), local_addr.port())
 }
 
+/// Get the memory and CPU requirements configured at initialisation of the current process
 pub fn resources() -> Resources {
-	RESOURCES.read().unwrap().unwrap()
+	RESOURCES.read().unwrap().unwrap_or_else(|| {
+		panic!("You must call init() immediately inside your application's main() function")
+	})
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Spawn a new process.
+///
+/// `spawn()` takes 3 arguments:
+///  * `start`: the function to be run in the new process
+///  * `arg`: an argument that will be given to the `start` function
+///  * `resources`: memory and CPU resource requirements of the new process
+///
+/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
 pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 	start: fn(parent: Pid, arg: T), arg: T, resources: Resources,
 ) -> Option<Pid> {
 	let _scheduler = SCHEDULER.lock().unwrap();
-	if !DEPLOYED.read().unwrap().unwrap() {
+	if !DEPLOYED.read().unwrap().unwrap_or_else(|| {
+		panic!("You must call init() immediately inside your application's main() function")
+	}) {
 		// logln!("attempting spawn");
 		let argv: Vec<ffi::CString> = ENV
 			.read()
@@ -708,6 +771,10 @@ pub fn bridge_init() -> net::TcpListener {
 	}
 	listener
 }
+
+/// Initialise the [deploy](self) runtime. This must be called immediately inside your application's `main()` function.
+///
+/// The `resources` argument describes memory and CPU requirements for the initial process.
 pub fn init(mut resources: Resources) {
 	if is_valgrind() {
 		let _ = nix::unistd::close(valgrind_start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
@@ -1057,7 +1124,7 @@ pub fn init(mut resources: Resources) {
 					}
 				})
 				.unwrap();
-			let x2 = thread::Builder::new()
+			let _x2 = thread::Builder::new()
 				.name("x2".to_string())
 				.spawn(move || {
 					loop {

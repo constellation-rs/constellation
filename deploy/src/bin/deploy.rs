@@ -1,10 +1,25 @@
-#![feature(nll)]
-#![feature(global_allocator, allocator_api)]
-#![allow(dead_code)]
+//! # `deploy`
+//! Run a binary on a fabric cluster
+//!
+//! ## Usage
+//! ```text
+//! deploy [options] <host> <binary> [--] [args]...
+//! ```
+//!
+//! ## Options
+//! ```text
+//! -h --help          Show this screen.
+//! -V --version       Show version.
+//! --format=<fmt>     Output format [possible values: human, json] [defa ult: human]
+//! ```
+//!
+//! Note: --format can also be given as an env var, such as DEPLOY_FORMAT=json
 
-extern crate crossbeam;
-// extern crate ansi_term;
+#![feature(nll, global_allocator, allocator_api)]
+#![deny(missing_docs, warnings, deprecated)]
+
 extern crate bincode;
+extern crate crossbeam;
 extern crate serde;
 extern crate serde_json;
 #[macro_use]
@@ -14,16 +29,15 @@ extern crate deploy_common;
 extern crate docopt;
 extern crate either;
 
+use deploy_common::{
+	copy_sendfile, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, Format, Formatter, Pid, Resources, StyleSupport
+};
 use either::Either;
 use std::{
 	collections::HashSet,
 	env, ffi, fs,
 	io::{self, Read, Write},
 	iter, mem, net, path, process,
-};
-
-use deploy_common::{
-	copy_sendfile, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, Format, Formatter, Pid, Resources, StyleSupport, DEPLOY_RESOURCES_DEFAULT
 };
 
 #[global_allocator]
@@ -58,7 +72,7 @@ fn main() {
 	let args: Args = docopt::Docopt::new(USAGE)
 		.and_then(|d| d.deserialize())
 		.unwrap_or_else(|e| e.exit());
-	let version = args.flag_version
+	let _version = args.flag_version
 		|| envs
 			.version
 			.map(|x| x.expect("DEPLOY_VERSION must be 0 or 1"))
@@ -70,10 +84,6 @@ fn main() {
 				.map(|x| x.expect("DEPLOY_FORMAT must be json or human"))
 		})
 		.unwrap_or(Format::Human);
-	// let process = Resources{
-	// 	mem: 20*1024*1024, // enough to run recce; at some point this should be configurable
-	// 	cpu: 0.001,
-	// };
 	let bridge_address: net::SocketAddr = args.arg_host.parse().unwrap();
 	let path = args.arg_binary;
 	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(path.clone()))

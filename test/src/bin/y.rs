@@ -15,10 +15,10 @@
 //=   }
 //= }
 
+#![deny(warnings, deprecated)]
 extern crate deploy;
-use std::io::{self, Read, Write};
-
 use deploy::*;
+use std::io::{self, Write};
 
 fn main() {
 	init(Resources {

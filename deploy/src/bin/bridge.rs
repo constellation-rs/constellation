@@ -1,3 +1,5 @@
+//! A binary that runs automatically on the `fabric` that is responsible for forwarding output back to `cargo deploy` at the user's terminal.
+
 /*
 
 TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill while spawning.
@@ -5,6 +7,8 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 */
 
 #![feature(nll)]
+#![deny(missing_docs, warnings, deprecated)]
+
 extern crate bincode;
 extern crate crossbeam;
 extern crate deploy;
@@ -16,8 +20,8 @@ use either::Either;
 use std::{
 	collections::HashMap,
 	env, ffi, fs,
-	io::{self, Read, Write},
-	mem, net,
+	io::{self, Read},
+	mem,
 	os::{
 		self,
 		unix::{
@@ -25,7 +29,6 @@ use std::{
 			io::{AsRawFd, FromRawFd, IntoRawFd},
 		},
 	},
-	path::{self, PathBuf},
 	sync::{self, mpsc},
 	thread, *,
 };
@@ -34,31 +37,30 @@ use deploy_common::{
 	copy, copy_sendfile, map_bincode_err, memfd_create, move_fds, seal, BufferedStream, DeployInputEvent, DeployOutputEvent, FdIter, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, Signal
 };
 
-macro_rules! log { // prints to STDOUT
-	($($arg:tt)*) => (let mut file = ::std::io::BufWriter::with_capacity(4096/*PIPE_BUF*/, unsafe{<::std::fs::File as ::std::os::unix::io::FromRawFd>::from_raw_fd(2)}); <::std::io::BufWriter<::std::fs::File> as ::std::io::Write>::write_fmt(&mut file, format_args!($($arg)*)).unwrap(); <::std::fs::File as ::std::os::unix::io::IntoRawFd>::into_raw_fd(file.into_inner().unwrap()););
-}
-// macro_rules! log {
-// 	($($arg:tt)*) => ();
+// macro_rules! log { // prints to STDOUT
+// 	($($arg:tt)*) => (let mut file = ::std::io::BufWriter::with_capacity(4096/*PIPE_BUF*/, unsafe{<::std::fs::File as ::std::os::unix::io::FromRawFd>::from_raw_fd(2)}); <::std::io::BufWriter<::std::fs::File> as ::std::io::Write>::write_fmt(&mut file, format_args!($($arg)*)).unwrap(); <::std::fs::File as ::std::os::unix::io::IntoRawFd>::into_raw_fd(file.into_inner().unwrap()););
 // }
+macro_rules! log {
+	($($arg:tt)*) => (format_args!($($arg)*));
+}
 macro_rules! logln {
 	() => (log!("\n"));
 	($fmt:expr) => (log!(concat!($fmt, "\n")));
 	($fmt:expr, $($arg:tt)*) => (log!(concat!($fmt, "\n"), $($arg)*));
 }
+#[allow(unused_macros)]
 macro_rules! print {
 	($($arg:tt)*) => {
 		compile_error!("Cannot use print!()")
 	};
 }
+#[allow(unused_macros)]
 macro_rules! eprint {
 	($($arg:tt)*) => {
 		compile_error!("Cannot use eprint!()")
 	};
 }
 
-const LISTENER_FD: os::unix::io::RawFd = 3; // from fabric
-const ARG_FD: os::unix::io::RawFd = 4; // from fabric
-const BOUND_FD: os::unix::io::RawFd = 5; // from fabric
 const SCHEDULER_FD: os::unix::io::RawFd = 4;
 
 #[derive(Clone, Debug)]
@@ -292,7 +294,7 @@ fn main() {
 		.spawn(move || {
 			for stream in listener.incoming() {
 				logln!("BRIDGE: accepted");
-				let mut stream = stream.unwrap();
+				let stream = stream.unwrap();
 				let sender = sender.clone();
 				thread::Builder::new()
 					.name(String::from("b"))

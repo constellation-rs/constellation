@@ -1,17 +1,19 @@
-use super::heap;
+use super::{
+	circularbuffer::{
+		CircularBuffer, CircularBufferReadToFd, CircularBufferWriteFromFd, Readable, ReadableFd, Writable, WritableFd
+	},
+	heap,
+};
+use deploy_common::PidInternal;
+use either::Either;
 use itertools;
 use nix::{self, libc};
-
-use std::{cmp, collections::HashSet, fmt, mem, net, ops, os, ptr, sync, time};
-
-use either::Either;
-
-use std::os::unix::io::IntoRawFd;
-
-use deploy_common::PidInternal;
-
-use super::circularbuffer::{
-	CircularBuffer, CircularBufferReadToFd, CircularBufferWriteFromFd, Readable, ReadableFd, Writable, WritableFd
+use std::{
+	cmp,
+	collections::HashSet,
+	fmt, mem, net, ops,
+	os::{self, unix::io::IntoRawFd},
+	ptr, sync, time,
 };
 
 const INCOMING_MAGIC: u64 = 123456789098765432;
@@ -764,7 +766,7 @@ impl LinuxTcpListener {
 									}
 								}
 								Some(to) => {
-									to.send(fd);
+									to.send(fd).unwrap(); // let _ = ?
 								}
 							}
 						}
@@ -1301,7 +1303,6 @@ impl LinuxTcpConnecter {
 									return ret;
 								} else {
 									logln!("{}: bad magic B {:?}", ::pid(), magic);
-									panic!();
 									executor.remove_fd(fd);
 									nix::unistd::close(fd).unwrap();
 									self.state = LinuxTcpConnecterState::Init;
@@ -1460,7 +1461,6 @@ impl LinuxTcpConnectee {
 							ret
 						} else {
 							logln!("bad magic A {:?}", magic);
-							panic!();
 							Either::Right(None)
 						}
 					}
@@ -1645,7 +1645,6 @@ impl LinuxTcpConnecterLocalClosed {
 									return ret;
 								} else {
 									logln!("{}: bad magic B {:?}", ::pid(), magic);
-									panic!();
 									executor.remove_fd(fd);
 									nix::unistd::close(fd).unwrap();
 									self.state = LinuxTcpConnecterState::Init;
@@ -1806,7 +1805,6 @@ impl LinuxTcpConnecteeLocalClosed {
 							ret
 						} else {
 							logln!("bad magic A {:?}", magic);
-							panic!();
 							Either::Right(None)
 						}
 					}
@@ -1922,7 +1920,7 @@ impl LinuxTcpConnection {
 		self.recv.read_available() > 0
 	}
 
-	pub fn recv(&mut self, executor: &EpollExecutorContext) -> u8 {
+	pub fn recv(&mut self, _executor: &EpollExecutorContext) -> u8 {
 		let mut byte = [0];
 		self.recv.read(&mut byte);
 		// self.poll(executor);
@@ -1933,7 +1931,7 @@ impl LinuxTcpConnection {
 		self.send.write_available() > 0
 	}
 
-	pub fn send(&mut self, x: u8, executor: &EpollExecutorContext) {
+	pub fn send(&mut self, x: u8, _executor: &EpollExecutorContext) {
 		self.send.write(&[x]);
 		// self.poll(executor);
 	}
@@ -2016,7 +2014,7 @@ impl LinuxTcpConnectionRemoteClosed {
 		self.send.write_available() > 0
 	}
 
-	pub fn send(&mut self, x: u8, executor: &EpollExecutorContext) {
+	pub fn send(&mut self, x: u8, _executor: &EpollExecutorContext) {
 		self.send.write(&[x]);
 		// self.poll(executor);
 	}
@@ -2132,7 +2130,7 @@ impl LinuxTcpConnectionLocalClosed {
 		self.recv.read_available() > 0
 	}
 
-	pub fn recv(&mut self, executor: &EpollExecutorContext) -> u8 {
+	pub fn recv(&mut self, _executor: &EpollExecutorContext) -> u8 {
 		let mut byte = [0];
 		self.recv.read(&mut byte);
 		// self.poll(executor);

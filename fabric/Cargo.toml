@@ -1,6 +1,6 @@
 [package]
 name = "fabric"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","command-line-utilities"]
@@ -14,7 +14,7 @@ documentation = "https://docs.rs/fabric"
 readme = "README.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.1"}
+deploy-common = {path = "../common", version = "=0.1.2"}
 nix = "0.11"
 bincode = "1.0"
 serde = "1.0"

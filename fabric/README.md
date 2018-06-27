@@ -7,12 +7,12 @@ This is part of the [`deploy`](https://github.com/alecmocatta/deploy) project.
 Run a fabric worker, optionally as master, and optionally start a bridge running.
 
 ## Usage
-```
+```text
 fabric master (<addr> <mem> <cpu> [<bridge> <addr>]...)...
 fabric <addr>
 ```
 ## Options
-```
+```text
 -h --help          Show this screen.
 -V --version       Show version.
 ```
@@ -31,18 +31,22 @@ The argument to non-master workers is the address to bind to.
 
 For example, respective invocations on each of a cluster of 3 servers with
 512GiB memory and 36 logical cores apiece might be:
+```text
+fabric 10.0.0.2:9999
 ```
+```text
+fabric 10.0.0.3:9999
+```
+```text
 fabric master 10.0.0.1:9999 400GiB 34 bridge 10.0.0.1:8888 \
               10.0.0.2:9999 400GiB 34 \
               10.0.0.3:9999 400GiB 34
-fabric 10.0.0.2:9999
-fabric 10.0.0.3:9999
 ```
 Deploying to this cluster might then be:
-```
+```text
 deploy 10.0.0.1:8888 ./binary
 ```
 or, for a Rust crate:
-```
+```text
 cargo deploy 10.0.0.1:8888
 ```

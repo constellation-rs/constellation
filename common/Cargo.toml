@@ -1,6 +1,6 @@
 [package]
 name = "deploy-common"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous"]
@@ -22,6 +22,7 @@ nix = "0.11"
 ansi_term = "0.11"
 rand = "0.5"
 bincode = "1.0"
+cargo_metadata = "0.5"
 
 # fixes for cargo update -Z minimal-versions
 cfg-if = "0.1.2"
