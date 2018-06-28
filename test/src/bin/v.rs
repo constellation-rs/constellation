@@ -34,6 +34,7 @@
 
 #![deny(warnings, deprecated)]
 extern crate deploy;
+extern crate nix;
 use deploy::*;
 use std::{panic, process, thread};
 
@@ -46,6 +47,16 @@ fn main() {
 	});
 	panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		let err = unsafe {
+			nix::libc::setrlimit64(
+				nix::libc::RLIMIT_CORE,
+				&nix::libc::rlimit64 {
+					rlim_cur: 0,
+					rlim_max: 0,
+				},
+			)
+		};
+		assert_eq!(err, 0);
 		process::abort()
 	}));
 	let pid = spawn(
