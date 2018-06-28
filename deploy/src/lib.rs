@@ -87,8 +87,8 @@ static GLOBAL: alloc::System = alloc::System;
 
 const LISTENER_FD: os::unix::io::RawFd = 3; // from fabric
 const ARG_FD: os::unix::io::RawFd = 4; // from fabric
-const SCHEDULER_FD: os::unix::io::RawFd = 5 - 1;
-const MONITOR_FD: os::unix::io::RawFd = 6 - 1;
+const SCHEDULER_FD: os::unix::io::RawFd = 4;
+const MONITOR_FD: os::unix::io::RawFd = 5;
 
 #[derive(Clone, Deserialize, Debug)]
 struct SchedulerArg {
@@ -884,8 +884,8 @@ pub fn init(mut resources: Resources) {
 					// logln!("parent");
 
 					nix::unistd::close(LISTENER_FD).unwrap();
-					let fd = nix::unistd::dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
-					assert_eq!(fd, LISTENER_FD);
+					let err = nix::unistd::dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
+					assert_eq!(err, LISTENER_FD);
 
 					let context = channel::Context::with_fd(LISTENER_FD, None);
 					*CONTEXT.try_write().unwrap() = Some(context);
@@ -1036,6 +1036,21 @@ pub fn init(mut resources: Resources) {
 		);
 		*BRIDGE.write().unwrap() = Some(bridge);
 
+		let fd = nix::fcntl::open(
+			"/dev/null",
+			nix::fcntl::OFlag::O_RDWR,
+			nix::sys::stat::Mode::empty(),
+		).unwrap(); // SCHEDULER
+		assert_eq!(fd, 4);
+		let err = nix::unistd::dup2(fd, 5).unwrap(); // MONITOR
+		assert_eq!(err, 5);
+		let err = nix::unistd::dup2(fd, 7).unwrap();
+		assert_eq!(err, 7);
+		let err = nix::unistd::dup2(fd, 8).unwrap();
+		assert_eq!(err, 8);
+		let err = nix::unistd::dup2(fd, 9).unwrap();
+		assert_eq!(err, 9);
+
 		let (bridge_sender, bridge_receiver) = mpsc::sync_channel::<ProcessOutputEvent>(0);
 		let (z1_sender, z1_receiver) = mpsc::sync_channel::<Vec<u8>>(0);
 		let y = forward_fd(nix::libc::STDOUT_FILENO, 8 - 1, bridge_sender.clone());
@@ -1049,29 +1064,40 @@ pub fn init(mut resources: Resources) {
 		let z1 = forward_input_fd(nix::libc::STDIN_FILENO, 10 - 1, z1_receiver);
 		let (monitor_reader, monitor_writer) =
 			nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
-		assert_eq!(monitor_reader, MONITOR_FD - 1);
-		assert_eq!(monitor_writer, MONITOR_FD);
+		assert_ne!(monitor_reader, MONITOR_FD - 1);
+		let err = nix::unistd::dup2(monitor_reader, MONITOR_FD - 1).unwrap();
+		assert_eq!(err, MONITOR_FD - 1);
+		nix::unistd::close(monitor_reader).unwrap();
+		let monitor_reader = MONITOR_FD - 1;
+		assert_ne!(monitor_writer, MONITOR_FD);
+		let err = nix::unistd::dup2(monitor_writer, MONITOR_FD).unwrap();
+		assert_eq!(err, MONITOR_FD);
+		nix::unistd::close(monitor_writer).unwrap();
+		let monitor_writer = MONITOR_FD;
+
 		let (socket_forwarder, socket_forwardee) = channel::socket_forwarder();
 		let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 		if let nix::unistd::ForkResult::Parent { child } = nix::unistd::fork().unwrap() {
 			nix::unistd::close(monitor_writer).unwrap();
-			let fd = nix::unistd::dup2(monitor_reader, MONITOR_FD).unwrap();
-			assert_eq!(fd, MONITOR_FD);
+			assert_ne!(monitor_reader, MONITOR_FD);
+			let err = nix::unistd::dup2(monitor_reader, MONITOR_FD).unwrap();
+			assert_eq!(err, MONITOR_FD);
 			nix::unistd::close(monitor_reader).unwrap();
 			nix::unistd::close(reader).unwrap();
-			nix::unistd::close(nix::libc::STDIN_FILENO).unwrap();
-			let err = nix::fcntl::open(
+			let fd = nix::fcntl::open(
 				"/dev/null",
 				nix::fcntl::OFlag::O_RDWR,
 				nix::sys::stat::Mode::empty(),
 			).unwrap();
+			assert_ne!(fd, nix::libc::STDIN_FILENO);
+			let err = nix::unistd::dup2(fd, nix::libc::STDIN_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDIN_FILENO);
-			nix::unistd::close(nix::libc::STDOUT_FILENO).unwrap();
-			let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+			nix::unistd::close(fd).unwrap();
+			let err = nix::unistd::dup2(nix::libc::STDIN_FILENO, nix::libc::STDOUT_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDOUT_FILENO);
 			if FORWARD_STDERR {
-				nix::unistd::close(nix::libc::STDERR_FILENO).unwrap();
-				let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+				let err =
+					nix::unistd::dup2(nix::libc::STDIN_FILENO, nix::libc::STDERR_FILENO).unwrap();
 				assert_eq!(err, nix::libc::STDERR_FILENO);
 			}
 
@@ -1206,7 +1232,8 @@ pub fn init(mut resources: Resources) {
 			// unsafe{nix::libc::_exit(0)};
 			process::exit(0);
 		}
-		nix::unistd::close(monitor_reader).unwrap();
+		// nix::unistd::close(monitor_reader).unwrap();
+		assert_eq!(monitor_reader, SCHEDULER_FD);
 		nix::unistd::close(writer).unwrap();
 		nix::unistd::close(10 - 1).unwrap();
 		if FORWARD_STDERR {
@@ -1234,7 +1261,10 @@ pub fn init(mut resources: Resources) {
 			let scheduler = net::TcpStream::connect(scheduler.unwrap())
 				.unwrap()
 				.into_raw_fd();
-			assert_eq!(scheduler, SCHEDULER_FD);
+			assert_ne!(scheduler, SCHEDULER_FD);
+			let err = nix::unistd::dup2(scheduler, SCHEDULER_FD).unwrap();
+			assert_eq!(err, SCHEDULER_FD);
+			nix::unistd::close(scheduler).unwrap();
 		}
 
 		let err = unsafe {
@@ -1328,7 +1358,7 @@ fn forward_fd(
 	bridge_sender: mpsc::SyncSender<ProcessOutputEvent>,
 ) -> thread::JoinHandle<()> {
 	assert_ne!(fd_, use_fd);
-	assert_eq!(
+	assert_ne!(
 		nix::fcntl::fcntl(use_fd, nix::fcntl::FcntlArg::F_GETFD),
 		Err(nix::Error::Sys(nix::errno::Errno::EBADF))
 	);
@@ -1374,7 +1404,7 @@ fn forward_input_fd(
 	fd_: os::unix::io::RawFd, use_fd: os::unix::io::RawFd, receiver: mpsc::Receiver<Vec<u8>>,
 ) -> thread::JoinHandle<()> {
 	assert_ne!(fd_, use_fd);
-	assert_eq!(
+	assert_ne!(
 		nix::fcntl::fcntl(use_fd, nix::fcntl::FcntlArg::F_GETFD),
 		Err(nix::Error::Sys(nix::errno::Errno::EBADF))
 	);

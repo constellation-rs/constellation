@@ -25,3 +25,4 @@ itertools = "0.7"
 either = {version = "1.5", features = ["serde"]}
 regex = "1.0"
 futures-preview = "0.2"
+nix = "0.11"

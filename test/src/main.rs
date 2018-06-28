@@ -206,8 +206,8 @@ fn main() {
 	let start = time::Instant::now();
 	thread::Builder::new()
 		.spawn(move || loop {
-			println!("{:?}", start.elapsed());
 			thread::sleep(time::Duration::new(10, 0));
+			println!("{:?}", start.elapsed());
 		})
 		.unwrap();
 	let current_dir = env::current_dir().unwrap();
