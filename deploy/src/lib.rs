@@ -33,7 +33,7 @@ extern crate lazy_static;
 
 pub use channel::{ChannelError, Selectable};
 use deploy_common::{
-	copy_sendfile, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	copy_sendfile, dup2, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
 use either::Either;
@@ -580,7 +580,7 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 				}
 
 				if process_listener != LISTENER_FD {
-					let x = nix::unistd::dup2(process_listener, LISTENER_FD).unwrap();
+					let x = dup2(process_listener, LISTENER_FD).unwrap();
 					assert_eq!(x, LISTENER_FD);
 					nix::unistd::close(process_listener).unwrap();
 				}
@@ -639,7 +639,7 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 					).unwrap();
 					let elf_desired_fd_ = valgrind_start_fd.unwrap() - 1;
 					assert!(elf_desired_fd_ > fd);
-					nix::unistd::dup2(fd, elf_desired_fd_).unwrap();
+					dup2(fd, elf_desired_fd_).unwrap();
 					nix::unistd::close(fd).unwrap();
 					nix::unistd::fexecve(elf_desired_fd_, &argv, &envp)
 						.expect("Failed to execve /proc/self/fd/n");
@@ -884,7 +884,7 @@ pub fn init(mut resources: Resources) {
 					// logln!("parent");
 
 					nix::unistd::close(LISTENER_FD).unwrap();
-					let err = nix::unistd::dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
+					let err = dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
 					assert_eq!(err, LISTENER_FD);
 
 					let context = channel::Context::with_fd(LISTENER_FD, None);
@@ -1042,13 +1042,13 @@ pub fn init(mut resources: Resources) {
 			nix::sys::stat::Mode::empty(),
 		).unwrap(); // SCHEDULER
 		assert_eq!(fd, 4);
-		let err = nix::unistd::dup2(fd, 5).unwrap(); // MONITOR
+		let err = dup2(fd, 5).unwrap(); // MONITOR
 		assert_eq!(err, 5);
-		let err = nix::unistd::dup2(fd, 7).unwrap();
+		let err = dup2(fd, 7).unwrap();
 		assert_eq!(err, 7);
-		let err = nix::unistd::dup2(fd, 8).unwrap();
+		let err = dup2(fd, 8).unwrap();
 		assert_eq!(err, 8);
-		let err = nix::unistd::dup2(fd, 9).unwrap();
+		let err = dup2(fd, 9).unwrap();
 		assert_eq!(err, 9);
 
 		let (bridge_sender, bridge_receiver) = mpsc::sync_channel::<ProcessOutputEvent>(0);
@@ -1065,12 +1065,12 @@ pub fn init(mut resources: Resources) {
 		let (monitor_reader, monitor_writer) =
 			nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 		assert_ne!(monitor_reader, MONITOR_FD - 1);
-		let err = nix::unistd::dup2(monitor_reader, MONITOR_FD - 1).unwrap();
+		let err = dup2(monitor_reader, MONITOR_FD - 1).unwrap();
 		assert_eq!(err, MONITOR_FD - 1);
 		nix::unistd::close(monitor_reader).unwrap();
 		let monitor_reader = MONITOR_FD - 1;
 		assert_ne!(monitor_writer, MONITOR_FD);
-		let err = nix::unistd::dup2(monitor_writer, MONITOR_FD).unwrap();
+		let err = dup2(monitor_writer, MONITOR_FD).unwrap();
 		assert_eq!(err, MONITOR_FD);
 		nix::unistd::close(monitor_writer).unwrap();
 		let monitor_writer = MONITOR_FD;
@@ -1080,7 +1080,7 @@ pub fn init(mut resources: Resources) {
 		if let nix::unistd::ForkResult::Parent { child } = nix::unistd::fork().unwrap() {
 			nix::unistd::close(monitor_writer).unwrap();
 			assert_ne!(monitor_reader, MONITOR_FD);
-			let err = nix::unistd::dup2(monitor_reader, MONITOR_FD).unwrap();
+			let err = dup2(monitor_reader, MONITOR_FD).unwrap();
 			assert_eq!(err, MONITOR_FD);
 			nix::unistd::close(monitor_reader).unwrap();
 			nix::unistd::close(reader).unwrap();
@@ -1090,14 +1090,13 @@ pub fn init(mut resources: Resources) {
 				nix::sys::stat::Mode::empty(),
 			).unwrap();
 			assert_ne!(fd, nix::libc::STDIN_FILENO);
-			let err = nix::unistd::dup2(fd, nix::libc::STDIN_FILENO).unwrap();
+			let err = dup2(fd, nix::libc::STDIN_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDIN_FILENO);
 			nix::unistd::close(fd).unwrap();
-			let err = nix::unistd::dup2(nix::libc::STDIN_FILENO, nix::libc::STDOUT_FILENO).unwrap();
+			let err = dup2(nix::libc::STDIN_FILENO, nix::libc::STDOUT_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDOUT_FILENO);
 			if FORWARD_STDERR {
-				let err =
-					nix::unistd::dup2(nix::libc::STDIN_FILENO, nix::libc::STDERR_FILENO).unwrap();
+				let err = dup2(nix::libc::STDIN_FILENO, nix::libc::STDERR_FILENO).unwrap();
 				assert_eq!(err, nix::libc::STDERR_FILENO);
 			}
 
@@ -1262,7 +1261,7 @@ pub fn init(mut resources: Resources) {
 				.unwrap()
 				.into_raw_fd();
 			assert_ne!(scheduler, SCHEDULER_FD);
-			let err = nix::unistd::dup2(scheduler, SCHEDULER_FD).unwrap();
+			let err = dup2(scheduler, SCHEDULER_FD).unwrap();
 			assert_eq!(err, SCHEDULER_FD);
 			nix::unistd::close(scheduler).unwrap();
 		}
@@ -1365,11 +1364,11 @@ fn forward_fd(
 	let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 	assert_ne!(reader, writer);
 	assert_ne!(writer, fd_);
-	let fd = nix::unistd::dup2(writer, fd_).unwrap();
+	let fd = dup2(writer, fd_).unwrap();
 	assert_eq!(fd, fd_);
 	nix::unistd::close(writer).unwrap();
 	if reader != use_fd {
-		let fd = nix::unistd::dup2(reader, use_fd).unwrap();
+		let fd = dup2(reader, use_fd).unwrap();
 		assert_eq!(fd, use_fd);
 		nix::unistd::close(reader).unwrap();
 	}
@@ -1410,11 +1409,11 @@ fn forward_input_fd(
 	);
 	let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 	assert_ne!(reader, fd_);
-	let fd = nix::unistd::dup2(reader, fd_).unwrap();
+	let fd = dup2(reader, fd_).unwrap();
 	assert_eq!(fd, fd_);
 	nix::unistd::close(reader).unwrap();
 	if writer != use_fd {
-		let fd = nix::unistd::dup2(writer, use_fd).unwrap();
+		let fd = dup2(writer, use_fd).unwrap();
 		assert_eq!(fd, use_fd);
 		nix::unistd::close(writer).unwrap();
 	}

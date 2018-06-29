@@ -677,7 +677,7 @@ pub fn move_fds(fds: &mut [(std::os::unix::io::RawFd, std::os::unix::io::RawFd)]
 		let flags = nix::fcntl::FdFlag::from_bits(
 			nix::fcntl::fcntl(from, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
 		).unwrap();
-		let fd = nix::unistd::dup3(
+		let fd = dup3(
 			from,
 			to,
 			if flags.contains(nix::fcntl::FdFlag::FD_CLOEXEC) {
@@ -703,7 +703,7 @@ pub fn seal(fd: std::os::unix::io::RawFd) {
 		nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
 	).unwrap();
 	nix::unistd::close(fd).unwrap();
-	nix::unistd::dup3(
+	dup3(
 		fd2,
 		fd,
 		if flags.contains(nix::fcntl::FdFlag::FD_CLOEXEC) {
@@ -713,6 +713,27 @@ pub fn seal(fd: std::os::unix::io::RawFd) {
 		},
 	).unwrap();
 	nix::unistd::close(fd2).unwrap();
+}
+
+pub fn dup2(
+	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd,
+) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	loop {
+		match nix::unistd::dup2(oldfd, newfd) {
+			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
+			a => return a,
+		}
+	}
+}
+pub fn dup3(
+	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd, flags: nix::fcntl::OFlag,
+) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	loop {
+		match nix::unistd::dup3(oldfd, newfd, flags) {
+			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
+			a => return a,
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
