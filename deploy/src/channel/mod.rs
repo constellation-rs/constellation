@@ -15,7 +15,7 @@ use std::{
 	collections::HashMap,
 	error, fmt, marker, mem, net, ops, os, ptr,
 	sync::{self, Arc},
-	thread,
+	thread, time,
 };
 
 fn getpid() -> nix::unistd::Pid {
@@ -907,20 +907,7 @@ impl InnerConnected {
 			self.recv_deserializer.pull::<T>();
 			self.recv_deserializer_given = true;
 
-			let mut progress = true;
-			loop {
-				if self.connection.recvable() {
-					while self.connection.recv_avail() && self.recv_deserializer.push_avail() {
-						self.recv_deserializer.push(self.connection.recv(executor));
-						progress = true;
-					}
-				}
-				if !progress {
-					break;
-				}
-				progress = false;
-				self.connection.poll(executor);
-			}
+			executor.add_instant(time::Instant::now()); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
 		}
 		let ret = self.recv_deserializer.pull2_avail();
 		ret
@@ -1083,20 +1070,7 @@ impl InnerConnectedLocalClosed {
 			self.recv_deserializer.pull::<T>();
 			self.recv_deserializer_given = true;
 
-			let mut progress = true;
-			loop {
-				if self.connection.recvable() {
-					while self.connection.recv_avail() && self.recv_deserializer.push_avail() {
-						self.recv_deserializer.push(self.connection.recv(executor));
-						progress = true;
-					}
-				}
-				if !progress {
-					break;
-				}
-				progress = false;
-				self.connection.poll(executor);
-			}
+			executor.add_instant(time::Instant::now()); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
 		}
 		let ret = self.recv_deserializer.pull2_avail();
 		ret
