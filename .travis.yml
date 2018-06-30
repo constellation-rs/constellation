@@ -21,9 +21,9 @@ matrix:
       dist: trusty
       sudo: false
       env: MODE=release
-    # - os: linux
-    #   dist: precise
-    #   env: MODE=release
+    - os: linux
+      dist: precise
+      env: MODE=release
     # - os: linux
     #   env: TARGET=x86_64-unknown-linux-musl MODE=debug
     #   addons:
@@ -52,7 +52,7 @@ script:
   - rustdoc --version
   - cargo fmt -- --check
   - cargo build --verbose --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
-  - cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
+  - RUST_BACKTRACE=full cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
   - cargo doc --no-deps --locked
 notifications:
   email: false

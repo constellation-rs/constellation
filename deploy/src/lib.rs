@@ -33,7 +33,7 @@ extern crate lazy_static;
 
 pub use channel::{ChannelError, Selectable};
 use deploy_common::{
-	copy_sendfile, is_valgrind, map_bincode_err, memfd_create, valgrind_start_fd, BufferedStream, Deploy, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	copy_sendfile, dup2, is_valgrind, map_bincode_err, memfd_create, spawn as thread_spawn, valgrind_start_fd, BufferedStream, Deploy, DeployOutputEvent, Envs, FdIter, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
 use either::Either;
@@ -87,8 +87,8 @@ static GLOBAL: alloc::System = alloc::System;
 
 const LISTENER_FD: os::unix::io::RawFd = 3; // from fabric
 const ARG_FD: os::unix::io::RawFd = 4; // from fabric
-const SCHEDULER_FD: os::unix::io::RawFd = 5 - 1;
-const MONITOR_FD: os::unix::io::RawFd = 6 - 1;
+const SCHEDULER_FD: os::unix::io::RawFd = 4;
+const MONITOR_FD: os::unix::io::RawFd = 5;
 
 #[derive(Clone, Deserialize, Debug)]
 struct SchedulerArg {
@@ -239,7 +239,7 @@ impl<T: serde::ser::Serialize> fmt::Debug for Sender<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<T> {
+impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<Option<T>> {
 	type SinkError = ChannelError;
 	type SinkItem = T;
 
@@ -268,9 +268,13 @@ impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<T> {
 	}
 
 	fn poll_close(
-		&mut self, _cx: &mut futures::task::Context,
+		&mut self, cx: &mut futures::task::Context,
 	) -> Result<futures::Async<()>, Self::SinkError> {
-		Ok(futures::Async::Ready(()))
+		let context = CONTEXT.read().unwrap();
+		self.0
+			.as_mut()
+			.unwrap()
+			.futures_poll_close(cx, context.as_ref().unwrap())
 	}
 }
 
@@ -412,7 +416,7 @@ impl<T: serde::de::DeserializeOwned> fmt::Debug for Receiver<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<T> {
+impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
 	type Error = ChannelError;
 	type Item = T;
 
@@ -580,7 +584,7 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 				}
 
 				if process_listener != LISTENER_FD {
-					let x = nix::unistd::dup2(process_listener, LISTENER_FD).unwrap();
+					let x = dup2(process_listener, LISTENER_FD).unwrap();
 					assert_eq!(x, LISTENER_FD);
 					nix::unistd::close(process_listener).unwrap();
 				}
@@ -639,7 +643,7 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 					).unwrap();
 					let elf_desired_fd_ = valgrind_start_fd.unwrap() - 1;
 					assert!(elf_desired_fd_ > fd);
-					nix::unistd::dup2(fd, elf_desired_fd_).unwrap();
+					dup2(fd, elf_desired_fd_).unwrap();
 					nix::unistd::close(fd).unwrap();
 					nix::unistd::fexecve(elf_desired_fd_, &argv, &envp)
 						.expect("Failed to execve /proc/self/fd/n");
@@ -884,8 +888,8 @@ pub fn init(mut resources: Resources) {
 					// logln!("parent");
 
 					nix::unistd::close(LISTENER_FD).unwrap();
-					let fd = nix::unistd::dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
-					assert_eq!(fd, LISTENER_FD);
+					let err = dup2(LISTENER_FD + 1, LISTENER_FD).unwrap();
+					assert_eq!(err, LISTENER_FD);
 
 					let context = channel::Context::with_fd(LISTENER_FD, None);
 					*CONTEXT.try_write().unwrap() = Some(context);
@@ -909,7 +913,7 @@ pub fn init(mut resources: Resources) {
 					let err = unsafe { nix::libc::atexit(at_exit) };
 					assert_eq!(err, 0);
 
-					let x = thread::spawn(|| {
+					let x = thread_spawn(String::from("bridge-waitpid"), || {
 						loop {
 							match nix::sys::wait::waitpid(None, None) {
 								Ok(nix::sys::wait::WaitStatus::Exited(_pid, code)) if code == 0 => {
@@ -1036,6 +1040,21 @@ pub fn init(mut resources: Resources) {
 		);
 		*BRIDGE.write().unwrap() = Some(bridge);
 
+		let fd = nix::fcntl::open(
+			"/dev/null",
+			nix::fcntl::OFlag::O_RDWR,
+			nix::sys::stat::Mode::empty(),
+		).unwrap(); // SCHEDULER
+		assert_eq!(fd, 4);
+		let err = dup2(fd, 5).unwrap(); // MONITOR
+		assert_eq!(err, 5);
+		let err = dup2(fd, 7).unwrap();
+		assert_eq!(err, 7);
+		let err = dup2(fd, 8).unwrap();
+		assert_eq!(err, 8);
+		let err = dup2(fd, 9).unwrap();
+		assert_eq!(err, 9);
+
 		let (bridge_sender, bridge_receiver) = mpsc::sync_channel::<ProcessOutputEvent>(0);
 		let (z1_sender, z1_receiver) = mpsc::sync_channel::<Vec<u8>>(0);
 		let y = forward_fd(nix::libc::STDOUT_FILENO, 8 - 1, bridge_sender.clone());
@@ -1049,29 +1068,39 @@ pub fn init(mut resources: Resources) {
 		let z1 = forward_input_fd(nix::libc::STDIN_FILENO, 10 - 1, z1_receiver);
 		let (monitor_reader, monitor_writer) =
 			nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
-		assert_eq!(monitor_reader, MONITOR_FD - 1);
-		assert_eq!(monitor_writer, MONITOR_FD);
+		assert_ne!(monitor_reader, MONITOR_FD - 1);
+		let err = dup2(monitor_reader, MONITOR_FD - 1).unwrap();
+		assert_eq!(err, MONITOR_FD - 1);
+		nix::unistd::close(monitor_reader).unwrap();
+		let monitor_reader = MONITOR_FD - 1;
+		assert_ne!(monitor_writer, MONITOR_FD);
+		let err = dup2(monitor_writer, MONITOR_FD).unwrap();
+		assert_eq!(err, MONITOR_FD);
+		nix::unistd::close(monitor_writer).unwrap();
+		let monitor_writer = MONITOR_FD;
+
 		let (socket_forwarder, socket_forwardee) = channel::socket_forwarder();
 		let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 		if let nix::unistd::ForkResult::Parent { child } = nix::unistd::fork().unwrap() {
 			nix::unistd::close(monitor_writer).unwrap();
-			let fd = nix::unistd::dup2(monitor_reader, MONITOR_FD).unwrap();
-			assert_eq!(fd, MONITOR_FD);
+			assert_ne!(monitor_reader, MONITOR_FD);
+			let err = dup2(monitor_reader, MONITOR_FD).unwrap();
+			assert_eq!(err, MONITOR_FD);
 			nix::unistd::close(monitor_reader).unwrap();
 			nix::unistd::close(reader).unwrap();
-			nix::unistd::close(nix::libc::STDIN_FILENO).unwrap();
-			let err = nix::fcntl::open(
+			let fd = nix::fcntl::open(
 				"/dev/null",
 				nix::fcntl::OFlag::O_RDWR,
 				nix::sys::stat::Mode::empty(),
 			).unwrap();
+			assert_ne!(fd, nix::libc::STDIN_FILENO);
+			let err = dup2(fd, nix::libc::STDIN_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDIN_FILENO);
-			nix::unistd::close(nix::libc::STDOUT_FILENO).unwrap();
-			let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+			nix::unistd::close(fd).unwrap();
+			let err = dup2(nix::libc::STDIN_FILENO, nix::libc::STDOUT_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDOUT_FILENO);
 			if FORWARD_STDERR {
-				nix::unistd::close(nix::libc::STDERR_FILENO).unwrap();
-				let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+				let err = dup2(nix::libc::STDIN_FILENO, nix::libc::STDERR_FILENO).unwrap();
 				assert_eq!(err, nix::libc::STDERR_FILENO);
 			}
 
@@ -1087,74 +1116,65 @@ pub fn init(mut resources: Resources) {
 			let receiver = Receiver::<ProcessInputEvent>::new(bridge);
 
 			let bridge_sender2 = bridge_sender.clone();
-			let x3 = thread::Builder::new()
-				.name("x3".to_string())
-				.spawn(move || {
-					let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
-					loop {
-						let event: Result<ProcessOutputEvent, _> =
-							bincode::deserialize_from(&mut &file).map_err(map_bincode_err);
-						if event.is_err() {
-							break;
-						}
-						let event = event.unwrap();
-						bridge_sender2.send(event).unwrap();
+			let x3 = thread_spawn(String::from("monitor-monitorfd-to-channel"), move || {
+				let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
+				loop {
+					let event: Result<ProcessOutputEvent, _> =
+						bincode::deserialize_from(&mut &file).map_err(map_bincode_err);
+					if event.is_err() {
+						break;
 					}
-					file.into_raw_fd();
-				})
-				.unwrap();
+					let event = event.unwrap();
+					bridge_sender2.send(event).unwrap();
+				}
+				file.into_raw_fd();
+			});
 
-			let x = thread::Builder::new()
-				.name("x".to_string())
-				.spawn(move || {
-					loop {
-						let event = bridge_receiver.recv();
-						// logln!("xxx OUTPUT {:?}", event);
-						// if event.is_err() { // TODO: get rid of this, rely on ProcessOutputEvent::Exit coming thru
-						// 	bincode::serialize_into(&mut sender, &ProcessOutputEvent::Exit(0)).unwrap(); // TODO: assert <= PIPE_BUF such that writing from parent process (after waitpid) is ok?
-						// 	break;
-						// }
-						let event = event.unwrap();
-						// bincode::serialize_into(&mut sender, &event).unwrap();
-						sender.send(event.clone()).unwrap();
-						if let ProcessOutputEvent::Exit(_) = event {
-							// logln!("xxx exit");
+			let x = thread_spawn(String::from("monitor-channel-to-bridge"), move || {
+				loop {
+					let event = bridge_receiver.recv();
+					// logln!("xxx OUTPUT {:?}", event);
+					// if event.is_err() { // TODO: get rid of this, rely on ProcessOutputEvent::Exit coming thru
+					// 	bincode::serialize_into(&mut sender, &ProcessOutputEvent::Exit(0)).unwrap(); // TODO: assert <= PIPE_BUF such that writing from parent process (after waitpid) is ok?
+					// 	break;
+					// }
+					let event = event.unwrap();
+					// bincode::serialize_into(&mut sender, &event).unwrap();
+					sender.send(event.clone()).unwrap();
+					if let ProcessOutputEvent::Exit(_) = event {
+						// logln!("xxx exit");
+						break;
+					}
+				}
+			});
+			let _x2 = thread_spawn(String::from("monitor-bridge-to-channel"), move || {
+				loop {
+					// let event: Result<ProcessInputEvent,_> = bincode::deserialize_from(&mut receiver).map_err(map_bincode_err);
+					let event: Result<ProcessInputEvent, _> = receiver.recv();
+					if event.is_err() {
+						break;
+					}
+					let event = event.unwrap();
+					match event {
+						ProcessInputEvent::Input(fd, input) => {
+							if fd == nix::libc::STDIN_FILENO {
+								// logln!("xxx INPUT {:?} {}", input, input.len());
+								z1_sender.send(input).unwrap();
+							} else {
+								unimplemented!()
+							}
+						}
+						ProcessInputEvent::Kill => {
+							// unsafe{intrinsics::abort()}
+							nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL)
+								.unwrap_or_else(|e| {
+									assert_eq!(e, nix::Error::Sys(nix::errno::Errno::ESRCH))
+								});
 							break;
 						}
 					}
-				})
-				.unwrap();
-			let _x2 = thread::Builder::new()
-				.name("x2".to_string())
-				.spawn(move || {
-					loop {
-						// let event: Result<ProcessInputEvent,_> = bincode::deserialize_from(&mut receiver).map_err(map_bincode_err);
-						let event: Result<ProcessInputEvent, _> = receiver.recv();
-						if event.is_err() {
-							break;
-						}
-						let event = event.unwrap();
-						match event {
-							ProcessInputEvent::Input(fd, input) => {
-								if fd == nix::libc::STDIN_FILENO {
-									// logln!("xxx INPUT {:?} {}", input, input.len());
-									z1_sender.send(input).unwrap();
-								} else {
-									unimplemented!()
-								}
-							}
-							ProcessInputEvent::Kill => {
-								// unsafe{intrinsics::abort()}
-								nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL)
-									.unwrap_or_else(|e| {
-										assert_eq!(e, nix::Error::Sys(nix::errno::Errno::ESRCH))
-									});
-								break;
-							}
-						}
-					}
-				})
-				.unwrap();
+				}
+			});
 			nix::unistd::close(writer).unwrap();
 
 			logln!(
@@ -1206,7 +1226,8 @@ pub fn init(mut resources: Resources) {
 			// unsafe{nix::libc::_exit(0)};
 			process::exit(0);
 		}
-		nix::unistd::close(monitor_reader).unwrap();
+		// nix::unistd::close(monitor_reader).unwrap();
+		assert_eq!(monitor_reader, SCHEDULER_FD);
 		nix::unistd::close(writer).unwrap();
 		nix::unistd::close(10 - 1).unwrap();
 		if FORWARD_STDERR {
@@ -1234,7 +1255,10 @@ pub fn init(mut resources: Resources) {
 			let scheduler = net::TcpStream::connect(scheduler.unwrap())
 				.unwrap()
 				.into_raw_fd();
-			assert_eq!(scheduler, SCHEDULER_FD);
+			assert_ne!(scheduler, SCHEDULER_FD);
+			let err = dup2(scheduler, SCHEDULER_FD).unwrap();
+			assert_eq!(err, SCHEDULER_FD);
+			nix::unistd::close(scheduler).unwrap();
 		}
 
 		let err = unsafe {
@@ -1328,18 +1352,18 @@ fn forward_fd(
 	bridge_sender: mpsc::SyncSender<ProcessOutputEvent>,
 ) -> thread::JoinHandle<()> {
 	assert_ne!(fd_, use_fd);
-	assert_eq!(
+	assert_ne!(
 		nix::fcntl::fcntl(use_fd, nix::fcntl::FcntlArg::F_GETFD),
 		Err(nix::Error::Sys(nix::errno::Errno::EBADF))
 	);
 	let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 	assert_ne!(reader, writer);
 	assert_ne!(writer, fd_);
-	let fd = nix::unistd::dup2(writer, fd_).unwrap();
+	let fd = dup2(writer, fd_).unwrap();
 	assert_eq!(fd, fd_);
 	nix::unistd::close(writer).unwrap();
 	if reader != use_fd {
-		let fd = nix::unistd::dup2(reader, use_fd).unwrap();
+		let fd = dup2(reader, use_fd).unwrap();
 		assert_eq!(fd, use_fd);
 		nix::unistd::close(reader).unwrap();
 	}
@@ -1347,44 +1371,41 @@ fn forward_fd(
 	nix::fcntl::fcntl(fd_, nix::fcntl::FcntlArg::F_GETFD).unwrap();
 	nix::fcntl::fcntl(reader, nix::fcntl::FcntlArg::F_GETFD).unwrap();
 	let reader = unsafe { fs::File::from_raw_fd(reader) };
-	thread::Builder::new()
-		.name("forward_fd".to_string())
-		.spawn(move || {
-			let reader = reader;
-			nix::fcntl::fcntl(reader.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap();
-			loop {
-				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
-				let n = (&reader).read(&mut buf).unwrap();
-				if n == 0 {
-					mem::drop(reader);
-					bridge_sender
-						.send(ProcessOutputEvent::Output(fd_, Vec::new()))
-						.unwrap();
-					break;
-				}
+	thread_spawn(String::from("monitor-forward_fd"), move || {
+		let reader = reader;
+		nix::fcntl::fcntl(reader.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap();
+		loop {
+			let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
+			let n = (&reader).read(&mut buf).unwrap();
+			if n == 0 {
+				mem::drop(reader);
 				bridge_sender
-					.send(ProcessOutputEvent::Output(fd_, buf[..n].to_owned()))
+					.send(ProcessOutputEvent::Output(fd_, Vec::new()))
 					.unwrap();
+				break;
 			}
-		})
-		.unwrap()
+			bridge_sender
+				.send(ProcessOutputEvent::Output(fd_, buf[..n].to_owned()))
+				.unwrap();
+		}
+	})
 }
 
 fn forward_input_fd(
 	fd_: os::unix::io::RawFd, use_fd: os::unix::io::RawFd, receiver: mpsc::Receiver<Vec<u8>>,
 ) -> thread::JoinHandle<()> {
 	assert_ne!(fd_, use_fd);
-	assert_eq!(
+	assert_ne!(
 		nix::fcntl::fcntl(use_fd, nix::fcntl::FcntlArg::F_GETFD),
 		Err(nix::Error::Sys(nix::errno::Errno::EBADF))
 	);
 	let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::empty()).unwrap();
 	assert_ne!(reader, fd_);
-	let fd = nix::unistd::dup2(reader, fd_).unwrap();
+	let fd = dup2(reader, fd_).unwrap();
 	assert_eq!(fd, fd_);
 	nix::unistd::close(reader).unwrap();
 	if writer != use_fd {
-		let fd = nix::unistd::dup2(writer, use_fd).unwrap();
+		let fd = dup2(writer, use_fd).unwrap();
 		assert_eq!(fd, use_fd);
 		nix::unistd::close(writer).unwrap();
 	}
@@ -1392,24 +1413,21 @@ fn forward_input_fd(
 	nix::fcntl::fcntl(fd_, nix::fcntl::FcntlArg::F_GETFD).unwrap();
 	nix::fcntl::fcntl(writer, nix::fcntl::FcntlArg::F_GETFD).unwrap();
 	let writer = unsafe { fs::File::from_raw_fd(writer) };
-	thread::Builder::new()
-		.name("forward_input_fd".to_string())
-		.spawn(move || {
-			let writer = writer;
-			nix::fcntl::fcntl(writer.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap();
-			for input in receiver {
-				if input.len() > 0 {
-					if (&writer).write_all(&input).is_err() {
-						mem::drop(writer);
-						break;
-					}
-				} else {
+	thread_spawn(String::from("monitor-forward_input_fd"), move || {
+		let writer = writer;
+		nix::fcntl::fcntl(writer.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap();
+		for input in receiver {
+			if input.len() > 0 {
+				if (&writer).write_all(&input).is_err() {
 					mem::drop(writer);
 					break;
 				}
+			} else {
+				mem::drop(writer);
+				break;
 			}
-		})
-		.unwrap()
+		}
+	})
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -178,21 +178,20 @@
 
 #![deny(warnings, deprecated)]
 extern crate deploy;
-extern crate futures;
 use deploy::*;
-use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
 
 fn sub(parent: Pid, arg: u32) {
 	println!("hi {}", arg);
-	let (receiver, sender) = (
-		Receiver::<Option<String>>::new(parent),
-		Sender::<Option<String>>::new(parent),
-	);
-	let () = futures::executor::block_on(
-		receiver.forward(sender)
-		.and_then(|(_stream,sink)|sink.close()) // https://github.com/rust-lang-nursery/futures-rs/commit/72d1203219a47242617cf8bead943773e641e696
-		.map(|_sink:Sender<_>|()),
-	).unwrap();
+	let receiver = Receiver::<Option<String>>::new(parent);
+	let sender = Sender::<Option<String>>::new(parent);
+	loop {
+		let x = receiver.recv().unwrap();
+		let end = x.is_none();
+		sender.send(x).unwrap();
+		if end {
+			break;
+		}
+	}
 	println!("done {}", arg);
 }
 
@@ -201,33 +200,51 @@ fn main() {
 		mem: 20 * 1024 * 1024,
 		..Resources::default()
 	});
-	let x = futures::executor::block_on(futures::future::join_all((0..10).map(|i| {
-		let pid = spawn(
-			sub,
-			i,
-			Resources {
-				mem: 20 * 1024 * 1024,
-				..Resources::default()
-			},
-		).expect("SPAWN FAILED");
-		let (sender, receiver) = (
-			Sender::<Option<String>>::new(pid),
-			Receiver::<Option<String>>::new(pid),
-		);
-		futures::stream::iter_ok(vec![
-			String::from("abc"),
-			String::from("def"),
-			String::from("ghi"),
-			String::from("jkl"),
-			String::from("mno"),
-		]).forward(sender)
-		.and_then(|(_stream,sink)|sink.close()) // https://github.com/rust-lang-nursery/futures-rs/commit/72d1203219a47242617cf8bead943773e641e696
-		.map(|_sink:Sender<_>|())
-			.join(
-				receiver
-					.fold(String::new(), |acc, x| futures::future::ok(acc + &x)),
+	let workers = (0..10)
+		.map(|i| {
+			let pid = spawn(
+				sub,
+				i,
+				Resources {
+					mem: 20 * 1024 * 1024,
+					..Resources::default()
+				},
+			).expect("SPAWN FAILED");
+			(
+				Sender::<Option<String>>::new(pid),
+				Receiver::<Option<String>>::new(pid),
 			)
-			.map(|(_, res)| res)
-	}))).unwrap();
+		})
+		.collect::<Vec<_>>();
+	let xx = vec![
+		String::from("abc"),
+		String::from("def"),
+		String::from("ghi"),
+		String::from("jkl"),
+		String::from("mno"),
+	];
+	for &(ref sender, _) in &workers {
+		for x in &xx {
+			sender.send(Some(x.clone())).unwrap();
+		}
+		sender.send(None).unwrap();
+	}
+	let x = workers
+		.iter()
+		.map(|&(_, ref receiver)| {
+			let x = xx
+				.iter()
+				.map(|x| {
+					let y = receiver.recv().unwrap();
+					assert_eq!(Some(x.clone()), y);
+					y.unwrap()
+				})
+				.collect::<Vec<_>>()
+				.join("");
+			let y = receiver.recv().unwrap();
+			assert_eq!(None, y);
+			x
+		})
+		.collect::<Vec<_>>();
 	println!("{:?}", x);
 }
