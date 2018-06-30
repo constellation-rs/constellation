@@ -1,0 +1,30 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: ubuntu:latest
+    steps:
+      - checkout
+      - restore_cache:
+          key: cache
+      - run:
+          command: |
+            apt update && apt install --yes gcc curl
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly-2018-06-10
+            source $HOME/.cargo/env
+            rustup component add rustfmt-preview
+            rustc --version
+            cargo fmt --version
+            rustdoc --version
+            cargo fmt -- --check
+            cargo build --verbose --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
+            RUST_BACKTRACE=full cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
+            cargo doc --no-deps --locked &>/dev/null
+      - save_cache:
+          key: cache
+          paths:
+            - "~/.cargo"
+            - "./target"
+
+
+

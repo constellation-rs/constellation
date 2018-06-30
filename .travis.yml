@@ -53,6 +53,6 @@ script:
   - cargo fmt -- --check
   - cargo build --verbose --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
   - RUST_BACKTRACE=full cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
-  - cargo doc --no-deps --locked
+  - cargo doc --no-deps --locked &>/dev/null
 notifications:
   email: false
