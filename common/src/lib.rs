@@ -22,7 +22,7 @@ use std::{
 		self,
 		unix::io::{AsRawFd, IntoRawFd},
 	},
-	path, ptr,
+	path, ptr, sync, thread,
 };
 
 /// An opaque identifier for a process.
@@ -718,6 +718,7 @@ pub fn seal(fd: std::os::unix::io::RawFd) {
 pub fn dup2(
 	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd,
 ) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	assert_ne!(oldfd, newfd);
 	loop {
 		match nix::unistd::dup2(oldfd, newfd) {
 			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
@@ -728,6 +729,7 @@ pub fn dup2(
 pub fn dup3(
 	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd, flags: nix::fcntl::OFlag,
 ) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	assert_ne!(oldfd, newfd);
 	loop {
 		match nix::unistd::dup3(oldfd, newfd, flags) {
 			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
@@ -736,7 +738,30 @@ pub fn dup3(
 	}
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn spawn<F, T>(name: String, f: F) -> thread::JoinHandle<T>
+where
+	F: FnOnce() -> T,
+	F: Send + 'static,
+	T: Send + 'static,
+{
+	let (sender, receiver) = sync::mpsc::channel::<()>();
+	let ret = thread::Builder::new()
+		.name(name)
+		.spawn(move || {
+			mem::drop(sender);
+			f()
+		})
+		.unwrap();
+	if let Err(sync::mpsc::RecvError) = receiver.recv() {
+	} else {
+		unreachable!()
+	}
+	ret
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct FdIter(*mut nix::libc::DIR);
 impl FdIter {
