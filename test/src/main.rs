@@ -118,6 +118,7 @@ impl OutputTest {
 fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::Error>> {
 	if output.stderr.len() != 0 {
 		return Err(None);
+		// println!("{}", std::str::from_utf8(&output.stderr).unwrap()); // Useful if FORWARD_STDERR is disabled
 	}
 	let mut log = HashMap::new();
 	let mut top = None;
@@ -181,6 +182,7 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 			output: output
 				.0
 				.into_iter()
+				// .chain(iter::once((2,(vec![],true)))) // Useful if FORWARD_STDERR is disabled
 				.map(|(k, (v, v1))| {
 					(
 						k,
