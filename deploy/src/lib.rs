@@ -239,7 +239,7 @@ impl<T: serde::ser::Serialize> fmt::Debug for Sender<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<T> {
+impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<Option<T>> {
 	type SinkError = ChannelError;
 	type SinkItem = T;
 
@@ -268,9 +268,13 @@ impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<T> {
 	}
 
 	fn poll_close(
-		&mut self, _cx: &mut futures::task::Context,
+		&mut self, cx: &mut futures::task::Context,
 	) -> Result<futures::Async<()>, Self::SinkError> {
-		Ok(futures::Async::Ready(()))
+		let context = CONTEXT.read().unwrap();
+		self.0
+			.as_mut()
+			.unwrap()
+			.futures_poll_close(cx, context.as_ref().unwrap())
 	}
 }
 
@@ -412,7 +416,7 @@ impl<T: serde::de::DeserializeOwned> fmt::Debug for Receiver<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<T> {
+impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
 	type Error = ChannelError;
 	type Item = T;
 
