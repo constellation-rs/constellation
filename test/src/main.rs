@@ -24,7 +24,7 @@ use std::{
 	io::{self, BufRead},
 	iter, os,
 	path::{Path, PathBuf},
-	process, str, time,
+	process, str, thread, time,
 };
 
 const DEPLOY: &'static str = "deploy/src/bin/deploy.rs";
@@ -118,6 +118,7 @@ impl OutputTest {
 fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::Error>> {
 	if output.stderr.len() != 0 {
 		return Err(None);
+		// println!("{}", std::str::from_utf8(&output.stderr).unwrap()); // Useful if FORWARD_STDERR is disabled
 	}
 	let mut log = HashMap::new();
 	let mut top = None;
@@ -181,6 +182,7 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 			output: output
 				.0
 				.into_iter()
+				// .chain(iter::once((2,(vec![],true)))) // Useful if FORWARD_STDERR is disabled
 				.map(|(k, (v, v1))| {
 					(
 						k,
@@ -204,6 +206,12 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 
 fn main() {
 	let start = time::Instant::now();
+	thread::Builder::new()
+		.spawn(move || loop {
+			thread::sleep(time::Duration::new(10, 0));
+			println!("{:?}", start.elapsed());
+		})
+		.unwrap();
 	let current_dir = env::current_dir().unwrap();
 	let mut products = HashMap::new();
 	let args = iter::once(String::from("build"))
@@ -272,7 +280,7 @@ fn main() {
 		if start_.elapsed() > time::Duration::new(2, 0) {
 			panic!("Fabric not up within 2s");
 		}
-		std::thread::sleep(std::time::Duration::new(0, 1_000_000));
+		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 	let start_ = time::Instant::now();
 	while let Err(_) = std::net::TcpStream::connect(BRIDGE_ADDR) {
@@ -280,7 +288,7 @@ fn main() {
 		if start_.elapsed() > time::Duration::new(10, 0) {
 			panic!("Bridge not up within 10s");
 		}
-		std::thread::sleep(std::time::Duration::new(0, 1_000_000));
+		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 
 	let mut products = products

@@ -22,7 +22,7 @@ use std::{
 		self,
 		unix::io::{AsRawFd, IntoRawFd},
 	},
-	path, ptr,
+	path, ptr, sync, thread,
 };
 
 /// An opaque identifier for a process.
@@ -677,7 +677,7 @@ pub fn move_fds(fds: &mut [(std::os::unix::io::RawFd, std::os::unix::io::RawFd)]
 		let flags = nix::fcntl::FdFlag::from_bits(
 			nix::fcntl::fcntl(from, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
 		).unwrap();
-		let fd = nix::unistd::dup3(
+		let fd = dup3(
 			from,
 			to,
 			if flags.contains(nix::fcntl::FdFlag::FD_CLOEXEC) {
@@ -703,7 +703,7 @@ pub fn seal(fd: std::os::unix::io::RawFd) {
 		nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).unwrap(),
 	).unwrap();
 	nix::unistd::close(fd).unwrap();
-	nix::unistd::dup3(
+	dup3(
 		fd2,
 		fd,
 		if flags.contains(nix::fcntl::FdFlag::FD_CLOEXEC) {
@@ -715,7 +715,53 @@ pub fn seal(fd: std::os::unix::io::RawFd) {
 	nix::unistd::close(fd2).unwrap();
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub fn dup2(
+	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd,
+) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	assert_ne!(oldfd, newfd);
+	loop {
+		match nix::unistd::dup2(oldfd, newfd) {
+			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
+			a => return a,
+		}
+	}
+}
+pub fn dup3(
+	oldfd: std::os::unix::io::RawFd, newfd: std::os::unix::io::RawFd, flags: nix::fcntl::OFlag,
+) -> Result<std::os::unix::io::RawFd, nix::Error> {
+	assert_ne!(oldfd, newfd);
+	loop {
+		match nix::unistd::dup3(oldfd, newfd, flags) {
+			Err(nix::Error::Sys(nix::errno::Errno::EBUSY)) => continue, // only occurs on Linux
+			a => return a,
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn spawn<F, T>(name: String, f: F) -> thread::JoinHandle<T>
+where
+	F: FnOnce() -> T,
+	F: Send + 'static,
+	T: Send + 'static,
+{
+	let (sender, receiver) = sync::mpsc::channel::<()>();
+	let ret = thread::Builder::new()
+		.name(name)
+		.spawn(move || {
+			mem::drop(sender);
+			f()
+		})
+		.unwrap();
+	if let Err(sync::mpsc::RecvError) = receiver.recv() {
+	} else {
+		unreachable!()
+	}
+	ret
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct FdIter(*mut nix::libc::DIR);
 impl FdIter {
@@ -842,7 +888,10 @@ pub fn memfd_create(
 	match nix::sys::memfd::memfd_create(name, flags) {
 		Err(nix::Error::Sys(nix::errno::Errno::ENOSYS)) => {
 			let mut random: [u8; 32] = unsafe { mem::uninitialized() };
-			rand::thread_rng().fill(&mut random);
+			// thread_rng uses getrandom(2) on >=3.17 (same as memfd_create), permanently opens /dev/urandom on fail, which messes our fd numbers. TODO: less assumptive about fd numbers..
+			let rand = fs::File::open("/dev/urandom").expect("Couldn't open /dev/urandom");
+			(&rand).read_exact(&mut random).unwrap();
+			mem::drop(rand);
 			let name = path::PathBuf::from(format!("/{}", random.to_hex()));
 			nix::sys::mman::shm_open(
 				&name,

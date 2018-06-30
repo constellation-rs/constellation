@@ -83,7 +83,7 @@ use std::{
 };
 
 use deploy_common::{
-	copy, is_valgrind, map_bincode_err, memfd_create, move_fds, parse_binary_size, seal, valgrind_start_fd, BufferedStream, Resources
+	copy, dup2, is_valgrind, map_bincode_err, memfd_create, move_fds, parse_binary_size, seal, valgrind_start_fd, BufferedStream, Resources
 };
 
 #[global_allocator]
@@ -408,7 +408,7 @@ fn main() {
 									nix::sys::socket::SockProtocol::Tcp,
 								).unwrap();
 								if fd != socket {
-									let new_fd = nix::unistd::dup2(fd, socket).unwrap();
+									let new_fd = dup2(fd, socket).unwrap();
 									assert_eq!(new_fd, socket);
 									nix::unistd::close(fd).unwrap();
 								}
@@ -466,7 +466,7 @@ fn main() {
 								if is_valgrind() {
 									let elf_desired_fd_ = valgrind_start_fd() - 1;
 									assert!(elf_desired_fd_ > elf_desired_fd);
-									nix::unistd::dup2(elf_desired_fd, elf_desired_fd_).unwrap();
+									dup2(elf_desired_fd, elf_desired_fd_).unwrap();
 									nix::unistd::close(elf_desired_fd).unwrap();
 									elf_desired_fd = elf_desired_fd_;
 								}

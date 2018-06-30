@@ -1201,7 +1201,7 @@ impl LinuxTcpConnecter {
 					} else {
 						executor.remove_fd(fd);
 						nix::unistd::close(fd).unwrap();
-						let timeout = time::Instant::now() + time::Duration::new(0, 100_000);
+						let timeout = time::Instant::now() + time::Duration::new(0, 1_000_000);
 						logln!(
 							"{:?}: {}: queue timeout {:?}",
 							nix::unistd::getpid(),

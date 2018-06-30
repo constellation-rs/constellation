@@ -15,7 +15,7 @@ use std::{
 	collections::HashMap,
 	error, fmt, marker, mem, net, ops, os, ptr,
 	sync::{self, Arc},
-	thread,
+	thread, time,
 };
 
 fn getpid() -> nix::unistd::Pid {
@@ -903,27 +903,13 @@ impl InnerConnected {
 	) -> bool {
 		// logln!("{:?}:{:?} recv_avail {:?}", 0000, self as *mut InnerConnected , unsafe{intrinsics::type_name::<T>()});
 		if !self.recv_deserializer_given {
-			// logln!("{:?}:{:?} recv_deserializer_given {:?}", 0000, self as *mut InnerConnected , unsafe{intrinsics::type_name::<T>()});
+			// logln!("{}: recv_deserializer_given {:?} {:?}", ::pid(), self as *mut InnerConnected, unsafe{intrinsics::type_name::<T>()});
 			self.recv_deserializer.pull::<T>();
 			self.recv_deserializer_given = true;
 
-			let mut progress = true;
-			loop {
-				if self.connection.recvable() {
-					while self.connection.recv_avail() && self.recv_deserializer.push_avail() {
-						self.recv_deserializer.push(self.connection.recv(executor));
-						progress = true;
-					}
-				}
-				if !progress {
-					break;
-				}
-				progress = false;
-				self.connection.poll(executor);
-			}
+			executor.add_instant(time::Instant::now()); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
 		}
-		let ret = self.recv_deserializer.pull2_avail();
-		ret
+		self.recv_deserializer.pull2_avail()
 	}
 
 	fn recv<T: serde::de::DeserializeOwned + 'static>(
@@ -1079,27 +1065,13 @@ impl InnerConnectedLocalClosed {
 	) -> bool {
 		// logln!("{:?}:{:?} recv_avail {:?}", 0000, self as *mut InnerConnectedLocalClosed, unsafe{intrinsics::type_name::<T>()});
 		if !self.recv_deserializer_given {
-			// logln!("{:?}:{:?} recv_deserializer_given {:?}", 0000, self as *mut InnerConnectedLocalClosed, unsafe{intrinsics::type_name::<T>()});
+			// logln!("{}: recv_deserializer_given {:?} {:?}", ::pid(), self as *mut InnerConnectedLocalClosed, unsafe{intrinsics::type_name::<T>()});
 			self.recv_deserializer.pull::<T>();
 			self.recv_deserializer_given = true;
 
-			let mut progress = true;
-			loop {
-				if self.connection.recvable() {
-					while self.connection.recv_avail() && self.recv_deserializer.push_avail() {
-						self.recv_deserializer.push(self.connection.recv(executor));
-						progress = true;
-					}
-				}
-				if !progress {
-					break;
-				}
-				progress = false;
-				self.connection.poll(executor);
-			}
+			executor.add_instant(time::Instant::now()); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
 		}
-		let ret = self.recv_deserializer.pull2_avail();
-		ret
+		self.recv_deserializer.pull2_avail()
 	}
 
 	fn recv<T: serde::de::DeserializeOwned + 'static>(
@@ -1378,25 +1350,27 @@ impl<T: serde::ser::Serialize> Sender<T> {
 			logln!("channel.try_unwrap drop 1 success");
 		}
 	}
-
+}
+impl<T: serde::ser::Serialize> Sender<Option<T>> {
 	pub fn futures_poll_ready(
 		&mut self, cx: &mut futures::task::Context, context: &Context,
 	) -> Result<futures::Async<()>, ChannelError>
 	where
 		T: 'static,
 	{
-		if let Some(_recv) = self.xxx_send(context) {
+		self.channel
+			.as_ref()
+			.unwrap()
+			.write()
+			.unwrap()
+			.as_mut()
+			.unwrap()
+			.senders_futures
+			.push(cx.waker().clone());
+		if let Some(_send) = self.xxx_send(context) {
+			// TODO: remove from senders_futures
 			Ok(futures::Async::Ready(()))
 		} else {
-			self.channel
-				.as_ref()
-				.unwrap()
-				.write()
-				.unwrap()
-				.as_mut()
-				.unwrap()
-				.senders_futures
-				.push(cx.waker().clone());
 			Ok(futures::Async::Pending)
 		}
 	}
@@ -1407,7 +1381,30 @@ impl<T: serde::ser::Serialize> Sender<T> {
 	{
 		self.xxx_send(context).expect(
 			"called futures::Sink::start_send without the go-ahead from futures::Sink::poll_ready",
-		)(item, context)
+		)(Some(item), context)
+	}
+
+	pub fn futures_poll_close(
+		&mut self, cx: &mut futures::task::Context, context: &Context,
+	) -> Result<futures::Async<()>, ChannelError>
+	where
+		T: 'static,
+	{
+		self.channel
+			.as_ref()
+			.unwrap()
+			.write()
+			.unwrap()
+			.as_mut()
+			.unwrap()
+			.senders_futures
+			.push(cx.waker().clone());
+		if let Some(send) = self.xxx_send(context) {
+			// TODO: remove from senders_futures
+			send(None, context).map(|()| futures::Async::Ready(()))
+		} else {
+			Ok(futures::Async::Pending)
+		}
 	}
 }
 impl<T: serde::ser::Serialize> ops::Drop for Sender<T> {
@@ -1668,28 +1665,30 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 			logln!("channel.try_unwrap drop 2 success");
 		}
 	}
-
+}
+impl<T: serde::de::DeserializeOwned> Receiver<Option<T>> {
 	pub fn futures_poll_next(
 		&mut self, cx: &mut futures::task::Context, context: &Context,
 	) -> Result<futures::Async<Option<T>>, ChannelError>
 	where
 		T: 'static,
 	{
+		self.channel
+			.as_ref()
+			.unwrap()
+			.write()
+			.unwrap()
+			.as_mut()
+			.unwrap()
+			.receivers_futures
+			.push(cx.waker().clone());
 		if let Some(recv) = self.xxx_recv(context) {
+			// TODO: remove from receivers_futures
 			match recv(context) {
-				Ok(t) => Ok(futures::Async::Ready(Some(t))),
+				Ok(t) => Ok(futures::Async::Ready(t)),
 				Err(err) => Err(err),
 			}
 		} else {
-			self.channel
-				.as_ref()
-				.unwrap()
-				.write()
-				.unwrap()
-				.as_mut()
-				.unwrap()
-				.receivers_futures
-				.push(cx.waker().clone());
 			Ok(futures::Async::Pending)
 		}
 	}
