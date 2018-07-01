@@ -8,6 +8,10 @@ cache:
   - apt
   - cargo
 env:
+  global:
+    - DOCS_RS_VERSION=nightly-2018-06-05
+  matrix:
+    -
 matrix:
   include:
     - os: linux
@@ -24,35 +28,28 @@ matrix:
     - os: linux
       dist: precise
       env: MODE=release
-    # - os: linux
-    #   env: TARGET=x86_64-unknown-linux-musl MODE=debug
-    #   addons:
-    #     apt:
-    #       packages:
-    #         - musl-tools
-    # - os: linux
-    #   env: TARGET=x86_64-unknown-linux-musl MODE=release
-    #   addons:
-    #     apt:
-    #       packages:
-    #         - musl-tools
-    # - os: osx
-    #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=debug
-    # - os: osx
-    #   env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=release
+    - os: linux
+      env: TARGET=x86_64-unknown-linux-musl MODE=debug
+    - os: linux
+      env: TARGET=x86_64-unknown-linux-musl MODE=release
+    - os: osx
+      env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=debug NO_RUN=1
+    - os: osx
+      env: TARGET=x86_64-unknown-linux-musl RUSTFLAGS=-Zlinker-flavor=ld.lld MODE=release NO_RUN=1
   exclude:
     - env:
 before_script:
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install FiloSottile/musl-cross/musl-cross && ln -s /usr/local/bin/x86_64-linux-musl-gcc /usr/local/bin/musl-gcc; fi
   - if [ -n "$TARGET" ]; then rustup target add "$TARGET"; fi
   - rustup component add rustfmt-preview
+  - rustup toolchain add $DOCS_RS_VERSION # https://docs.rs/about
+  - if [ -n "$TARGET" ]; then rustup target add --toolchain $DOCS_RS_VERSION "$TARGET"; fi
 script:
   - rustc --version
   - cargo fmt --version
   - rustdoc --version
   - cargo fmt -- --check
   - cargo build --verbose --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
-  - RUST_BACKTRACE=full cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi)
-  - cargo doc --no-deps --locked &>/dev/null
+  - if [ "$NO_RUN" != "1" ]; then RUST_BACKTRACE=full cargo run -p test --bin test --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) -- --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi); fi
+  - cargo +$DOCS_RS_VERSION doc --no-deps --locked $(if [ -n "$TARGET" ]; then echo "--target $TARGET"; fi) $(if [ "$MODE" = "release" ]; then echo "--release"; fi) &>/dev/null
 notifications:
   email: false
