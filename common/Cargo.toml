@@ -22,8 +22,4 @@ nix = "0.11"
 ansi_term = "0.11"
 rand = "0.5"
 bincode = "1.0"
-cargo_metadata = "0.5"
-
-# fixes for cargo update -Z minimal-versions
-cfg-if = "0.1.2"
-proc-macro2 = "0.4.3"
+cargo_metadata = {git = "https://github.com/alecmocatta/cargo_metadata.git", version = "0.5", default-features = false}
