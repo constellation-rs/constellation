@@ -1,6 +1,6 @@
 [package]
 name = "deploy"
-version = "0.1.2"
+version = "0.1.3"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -14,10 +14,10 @@ documentation = "https://docs.rs/deploy"
 readme = "../README.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.2"}
-# nix = {git = "https://github.com/alecmocatta/nix", rev = "a613f105"}
+deploy-common = {path = "../common", version = "=0.1.3"}
 nix = "0.11"
-fringe = {git = "https://github.com/alecmocatta/libfringe", rev = "3aa6d2d0", features = ["valgrind"]}
+# deploy-temp-fringe = {version = "1.2.3", features = ["valgrind"]}
+fringe = {git = "https://github.com/alecmocatta/libfringe", features = ["valgrind"]}
 bincode = "1.0"
 crossbeam = "0.3"
 serde_derive = "1.0"

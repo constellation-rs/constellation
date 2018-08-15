@@ -10,8 +10,15 @@
 //! The only requirement to use is that [init()](init) must be called immediately inside your application's `main()` function.
 
 #![doc(html_root_url = "https://docs.rs/deploy/0.1.2")]
-#![feature(global_allocator, allocator_api, read_initializer, linkage, core_intrinsics, nll)]
-#![deny(missing_docs, warnings, deprecated)]
+#![feature(
+	allocator_api,
+	read_initializer,
+	linkage,
+	core_intrinsics,
+	global_allocator,
+	nll
+)]
+#![deny(missing_docs, deprecated)]
 #![allow(dead_code)]
 
 extern crate ansi_term;
@@ -19,6 +26,7 @@ extern crate atty;
 extern crate bincode;
 extern crate deploy_common;
 extern crate either;
+// extern crate deploy_temp_fringe as fringe;
 extern crate fringe;
 extern crate futures;
 extern crate itertools;
@@ -38,16 +46,9 @@ use deploy_common::{
 pub use deploy_common::{Pid, Resources, DEPLOY_RESOURCES_DEFAULT};
 use either::Either;
 use std::{
-	alloc, ffi, fmt, fs, intrinsics,
-	io::{self, Read, Write},
-	iter, marker, mem, net, ops,
-	os::{
-		self,
-		unix::io::{AsRawFd, FromRawFd, IntoRawFd},
-	},
-	path, process, str,
-	sync::{self, mpsc},
-	thread,
+	alloc, ffi, fmt, fs, intrinsics, io::{self, Read, Write}, iter, marker, mem, net, ops, os::{
+		self, unix::io::{AsRawFd, FromRawFd, IntoRawFd}
+	}, path, process, str, sync::{self, mpsc}, thread
 };
 
 // macro_rules! log { // prints to STDOUT
@@ -517,12 +518,10 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 					ffi::CString::new(os::unix::ffi::OsStringExt::into_vec(x.clone())).unwrap(),
 					ffi::CString::new(os::unix::ffi::OsStringExt::into_vec(y.clone())).unwrap(),
 				)
-			})
-			.chain(iter::once((
+			}).chain(iter::once((
 				ffi::CString::new("DEPLOY_RESOURCES").unwrap(),
 				ffi::CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
-			)))
-			.collect(); //envp.split('\0').map(|x|{let (a,b) = x.split_at(x.chars().position(|x|x=='=').unwrap_or_else(||panic!("invalid envp {:?}", x)));(ffi::CString::new(a).unwrap(),ffi::CString::new(&b[1..]).unwrap())}).collect();
+			))).collect(); //envp.split('\0').map(|x|{let (a,b) = x.split_at(x.chars().position(|x|x=='=').unwrap_or_else(||panic!("invalid envp {:?}", x)));(ffi::CString::new(a).unwrap(),ffi::CString::new(&b[1..]).unwrap())}).collect();
 
 		let our_pid = pid();
 
@@ -625,8 +624,7 @@ pub fn spawn<T: serde::ser::Serialize + serde::de::DeserializeOwned>(
 							key.to_str().unwrap(),
 							value.to_str().unwrap()
 						)).unwrap()
-					})
-					.collect::<Vec<_>>();
+					}).collect::<Vec<_>>();
 				if !is_valgrind() {
 					nix::unistd::execve(
 						&ffi::CStr::from_bytes_with_nul(b"/proc/self/exe\0")
@@ -961,8 +959,7 @@ pub fn init(mut resources: Resources) {
 										},
 										|e| panic!("{:?}", e),
 									)) as Box<Selectable>
-								})
-								.collect(),
+								}).collect(),
 						);
 						// logln!("/select");
 						mem::drop(event_);
@@ -1482,8 +1479,7 @@ mod get_env {
 									os::unix::ffi::OsStringExt::from_vec(b[1..].to_vec()),
 								)
 							})
-						})
-						.collect::<Vec<_>>()
+						}).collect::<Vec<_>>()
 						.into_iter(),
 				)
 			}
@@ -1500,16 +1496,15 @@ mod get_env {
 							if !(**environ_).is_null() {
 								let x = ffi::CStr::from_ptr(**environ_).to_bytes();
 								*environ_ = environ_.offset(1);
-								if let Some(x) = x.iter().skip(1).position(|&x| x == b'=').map(
-									|position| {
+								if let Some(x) =
+									x.iter().skip(1).position(|&x| x == b'=').map(|position| {
 										// https://github.com/rust-lang/rust/blob/c08480fce0f39f5c9c6db6dde0dccb375ca0ab14/src/libstd/sys/unix/os.rs#L434
 										let (a, b) = x.split_at(position + 1);
 										(
 											os::unix::ffi::OsStringExt::from_vec(a.to_vec()),
 											os::unix::ffi::OsStringExt::from_vec(b[1..].to_vec()),
 										)
-									},
-								) {
+									}) {
 									return Some(x);
 								}
 							} else {

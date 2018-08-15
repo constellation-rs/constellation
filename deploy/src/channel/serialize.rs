@@ -124,13 +124,12 @@ impl Serializer {
 	pub fn push<T: serde::ser::Serialize + 'static>(&mut self, t: T) {
 		assert!(self.done);
 		self.done = false;
-		if self.serializer.is_none()
-			|| !self
-				.serializer
-				.as_ref()
-				.unwrap()
-				.as_any_ref()
-				.is::<SerializerInner<T>>()
+		if self.serializer.is_none() || !self
+			.serializer
+			.as_ref()
+			.unwrap()
+			.as_any_ref()
+			.is::<SerializerInner<T>>()
 		{
 			self.serializer = Some(Box::new(SerializerInner::<T>::new())); // TODO: reuse OsStack
 		}
@@ -343,13 +342,12 @@ impl Deserializer {
 	pub fn pull<T: serde::de::DeserializeOwned + 'static>(&mut self) {
 		assert!(self.done);
 		self.done = false;
-		if self.deserializer.is_none()
-			|| !self
-				.deserializer
-				.as_ref()
-				.unwrap()
-				.as_any_ref()
-				.is::<DeserializerInner<T>>()
+		if self.deserializer.is_none() || !self
+			.deserializer
+			.as_ref()
+			.unwrap()
+			.as_any_ref()
+			.is::<DeserializerInner<T>>()
 		{
 			self.deserializer = Some(Box::new(DeserializerInner::<T>::new()));
 		}

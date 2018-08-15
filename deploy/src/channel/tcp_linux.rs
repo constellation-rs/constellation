@@ -1,19 +1,10 @@
-use super::{
-	circularbuffer::{
-		CircularBuffer, CircularBufferReadToFd, CircularBufferWriteFromFd, Readable, ReadableFd, Writable, WritableFd
-	},
-	heap,
-};
+use super::{circular_buffer::CircularBuffer, heap};
 use deploy_common::PidInternal;
 use either::Either;
 use itertools;
 use nix::{self, libc};
 use std::{
-	cmp,
-	collections::HashSet,
-	fmt, mem, net, ops,
-	os::{self, unix::io::IntoRawFd},
-	ptr, sync, time,
+	cmp, collections::HashSet, fmt, mem, net, ops, os::{self, unix::io::IntoRawFd}, ptr, sync, time
 };
 
 const INCOMING_MAGIC: u64 = 123456789098765432;
@@ -618,8 +609,7 @@ impl LinuxTcpListener {
 			net::SocketAddr,
 			fn(&EpollExecutorContext, &LinuxTcp),
 		),
-	>
-	          + 'a {
+	> + 'a {
 		itertools::unfold((), move |_| {
 			loop {
 				let fd = if !self.xxx {
@@ -646,7 +636,8 @@ impl LinuxTcpListener {
 							nix::unistd::close(self.fd).unwrap();
 							assert!(
 								nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL).unwrap()
-									& nix::fcntl::OFlag::O_NONBLOCK.bits() != 0
+									& nix::fcntl::OFlag::O_NONBLOCK.bits()
+									!= 0
 							);
 							executor.add_fd(fd);
 							self.fd = fd;
@@ -1181,9 +1172,8 @@ impl LinuxTcpConnecter {
 							false
 						}
 						err => panic!("{:?}", err),
-					}
-						&& nix::sys::socket::getsockopt(fd, nix::sys::socket::sockopt::SocketError)
-							.unwrap() == 0
+					} && nix::sys::socket::getsockopt(fd, nix::sys::socket::sockopt::SocketError)
+						.unwrap() == 0
 					{
 						// sometimes ECONNRESET; sometimes ECONNREFUSED (after remote segfaulted?)
 						logln!(
@@ -1884,13 +1874,13 @@ impl LinuxTcpConnection {
 			return Either::Right(None);
 		}
 		match self.send.read_to_fd(self.fd) {
-			CircularBufferReadToFd::Written(_written) => (),
-			CircularBufferReadToFd::Killed => return Either::Right(None),
+			Ok(_written) => (),
+			Err(_err) => return Either::Right(None),
 		}
 		if !self.remote_closed {
 			match self.recv.write_from_fd(self.fd) {
-				CircularBufferWriteFromFd::Read(_read, false) => (),
-				CircularBufferWriteFromFd::Read(_read, true) => {
+				Ok((_read, false)) => (),
+				Ok((_read, true)) => {
 					logln!(
 						"{}: LinuxTcpConnection got closed {}",
 						::pid(),
@@ -1898,7 +1888,7 @@ impl LinuxTcpConnection {
 					);
 					self.remote_closed = true;
 				}
-				CircularBufferWriteFromFd::Killed => return Either::Right(None),
+				Err(_err) => return Either::Right(None),
 			}
 		}
 		if !self.remote_closed || self.recv.read_available() > 0 {
@@ -1921,10 +1911,8 @@ impl LinuxTcpConnection {
 	}
 
 	pub fn recv(&mut self, _executor: &EpollExecutorContext) -> u8 {
-		let mut byte = [0];
-		self.recv.read(&mut byte);
+		self.recv.read().unwrap()()
 		// self.poll(executor);
-		byte[0]
 	}
 
 	pub fn send_avail(&self) -> bool {
@@ -1932,7 +1920,7 @@ impl LinuxTcpConnection {
 	}
 
 	pub fn send(&mut self, x: u8, _executor: &EpollExecutorContext) {
-		self.send.write(&[x]);
+		self.send.write().unwrap()(x);
 		// self.poll(executor);
 	}
 
@@ -2005,8 +1993,8 @@ impl LinuxTcpConnectionRemoteClosed {
 			return None;
 		}
 		match self.send.read_to_fd(self.fd) {
-			CircularBufferReadToFd::Written(_written) => Some(self),
-			CircularBufferReadToFd::Killed => None,
+			Ok(_written) => Some(self),
+			Err(_err) => None,
 		}
 	}
 
@@ -2015,7 +2003,7 @@ impl LinuxTcpConnectionRemoteClosed {
 	}
 
 	pub fn send(&mut self, x: u8, _executor: &EpollExecutorContext) {
-		self.send.write(&[x]);
+		self.send.write().unwrap()(x);
 		// self.poll(executor);
 	}
 
@@ -2079,14 +2067,14 @@ impl LinuxTcpConnectionLocalClosed {
 		}
 		if !self.local_closed_given {
 			match self.send.read_to_fd(self.fd) {
-				CircularBufferReadToFd::Written(_written) => (),
-				CircularBufferReadToFd::Killed => return Either::Right(None),
+				Ok(_written) => (),
+				Err(_err) => return Either::Right(None),
 			}
 		}
 		if !self.remote_closed {
 			match self.recv.write_from_fd(self.fd) {
-				CircularBufferWriteFromFd::Read(_read, false) => (),
-				CircularBufferWriteFromFd::Read(_read, true) => {
+				Ok((_read, false)) => (),
+				Ok((_read, true)) => {
 					logln!(
 						"{}: LinuxTcpConnectionLocalClosed got closed {}",
 						::pid(),
@@ -2094,7 +2082,7 @@ impl LinuxTcpConnectionLocalClosed {
 					);
 					self.remote_closed = true;
 				}
-				CircularBufferWriteFromFd::Killed => return Either::Right(None),
+				Err(_err) => return Either::Right(None),
 			}
 		}
 		if !self.local_closed_given && self.send.read_available() == 0 {
@@ -2131,10 +2119,8 @@ impl LinuxTcpConnectionLocalClosed {
 	}
 
 	pub fn recv(&mut self, _executor: &EpollExecutorContext) -> u8 {
-		let mut byte = [0];
-		self.recv.read(&mut byte);
+		self.recv.read().unwrap()()
 		// self.poll(executor);
-		byte[0]
 	}
 }
 // impl io::Read for LinuxTcpConnectionLocalClosed {
@@ -2185,8 +2171,8 @@ impl LinuxTcpClosing {
 			return Either::Right(None);
 		}
 		match self.send.read_to_fd(self.fd) {
-			CircularBufferReadToFd::Written(_written) => (),
-			CircularBufferReadToFd::Killed => return Either::Right(None),
+			Ok(_written) => (),
+			Err(_err) => return Either::Right(None),
 		}
 		if !self.local_closed_given && self.send.read_available() == 0 {
 			match nix::sys::socket::shutdown(self.fd, nix::sys::socket::Shutdown::Write) {

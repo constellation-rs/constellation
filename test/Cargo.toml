@@ -14,8 +14,8 @@ documentation = "https://docs.rs/deploy"
 readme = "../TESTING.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.2"}
-deploy = {path = "../deploy", version = "=0.1.2"}
+deploy-common = {path = "../common"}
+deploy = {path = "../deploy"}
 multiset = {git = "https://github.com/jmitchell/multiset", rev = "0fd00e5e"}
 serde = "1.0"
 serde_derive = "1.0"

@@ -51,8 +51,8 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
-#![feature(global_allocator, allocator_api)]
-#![deny(missing_docs, warnings, deprecated)]
+#![feature(allocator_api, global_allocator)]
+#![deny(missing_docs, deprecated)]
 
 extern crate bincode;
 extern crate crossbeam;
@@ -68,18 +68,9 @@ mod scheduler;
 
 use either::Either;
 use std::{
-	collections::HashMap,
-	env, ffi, fs,
-	io::{self, Read, Write},
-	iter, mem, net,
-	os::unix::{
-		self,
-		io::{AsRawFd, FromRawFd, IntoRawFd},
-	},
-	path::PathBuf,
-	process,
-	sync::{self, mpsc},
-	thread,
+	collections::HashMap, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, os::unix::{
+		self, io::{AsRawFd, FromRawFd, IntoRawFd}
+	}, path::PathBuf, process, sync::{self, mpsc}, thread
 };
 
 use deploy_common::{
@@ -236,7 +227,8 @@ fn parse_request<R: Read>(
 	let resources = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let ports: Vec<net::SocketAddr> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args: Vec<ffi::OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let args: Vec<ffi::OsString> =
+		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(ffi::OsString, ffi::OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
@@ -252,7 +244,7 @@ fn parse_request<R: Read>(
 		nix::fcntl::FdFlag::from_bits(
 			nix::fcntl::fcntl(elf.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
 		).unwrap()
-			.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
+		.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
 	);
 	nix::unistd::ftruncate(elf.as_raw_fd(), len as i64).unwrap();
 	copy(stream, &mut elf, len as usize)?;
@@ -307,11 +299,9 @@ fn main() {
 										),
 									)
 								},
-							)
-							.collect::<HashMap<_, _>>(),
+							).collect::<HashMap<_, _>>(),
 					); // TODO: error on clash
-				})
-				.unwrap();
+				}).unwrap();
 			(scheduler_addr.ip(), fabric)
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
@@ -431,23 +421,18 @@ fn main() {
 								ffi::CString::new("DEPLOY_RESOURCES").unwrap(),
 								ffi::CString::new(serde_json::to_string(&resources).unwrap())
 									.unwrap(),
-							)))
-								.chain(vars.into_iter().map(|(x, y)| {
-									(
-										ffi::CString::new(unix::ffi::OsStringExt::into_vec(x))
-											.unwrap(),
-										ffi::CString::new(unix::ffi::OsStringExt::into_vec(y))
-											.unwrap(),
-									)
-								}))
-								.map(|(key, value)| {
-									ffi::CString::new(format!(
-										"{}={}",
-										key.to_str().unwrap(),
-										value.to_str().unwrap()
-									)).unwrap()
-								})
-								.collect::<Vec<_>>();
+							))).chain(vars.into_iter().map(|(x, y)| {
+								(
+									ffi::CString::new(unix::ffi::OsStringExt::into_vec(x)).unwrap(),
+									ffi::CString::new(unix::ffi::OsStringExt::into_vec(y)).unwrap(),
+								)
+							})).map(|(key, value)| {
+								ffi::CString::new(format!(
+									"{}={}",
+									key.to_str().unwrap(),
+									value.to_str().unwrap()
+								)).unwrap()
+							}).collect::<Vec<_>>();
 							if false {
 								nix::unistd::execve(
 									&ffi::CString::new(unix::ffi::OsStringExt::into_vec(
@@ -458,8 +443,7 @@ fn main() {
 										.map(|x| {
 											ffi::CString::new(unix::ffi::OsStringExt::into_vec(x))
 												.unwrap()
-										})
-										.collect::<Vec<_>>(),
+										}).collect::<Vec<_>>(),
 									&vars,
 								).expect("Failed to fexecve ELF");
 							} else {
@@ -477,8 +461,7 @@ fn main() {
 										.map(|x| {
 											ffi::CString::new(unix::ffi::OsStringExt::into_vec(x))
 												.unwrap()
-										})
-										.collect::<Vec<_>>(),
+										}).collect::<Vec<_>>(),
 									&vars,
 								).expect("Failed to fexecve ELF");
 							}

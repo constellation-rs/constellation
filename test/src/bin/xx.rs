@@ -214,8 +214,7 @@ fn main() {
 				Sender::<Option<String>>::new(pid),
 				Receiver::<Option<String>>::new(pid),
 			)
-		})
-		.collect::<Vec<_>>();
+		}).collect::<Vec<_>>();
 	let xx = vec![
 		String::from("abc"),
 		String::from("def"),
@@ -238,13 +237,11 @@ fn main() {
 					let y = receiver.recv().unwrap();
 					assert_eq!(Some(x.clone()), y);
 					y.unwrap()
-				})
-				.collect::<Vec<_>>()
+				}).collect::<Vec<_>>()
 				.join("");
 			let y = receiver.recv().unwrap();
 			assert_eq!(None, y);
 			x
-		})
-		.collect::<Vec<_>>();
+		}).collect::<Vec<_>>();
 	println!("{:?}", x);
 }

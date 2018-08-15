@@ -208,8 +208,7 @@ fn main() {
 					..Resources::default()
 				},
 			).expect("SPAWN FAILED")
-		})
-		.collect::<Vec<_>>();
+		}).collect::<Vec<_>>();
 	let channels = pids
 		.iter()
 		.map(|&pid| (Sender::<String>::new(pid), Receiver::<usize>::new(pid)))

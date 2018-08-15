@@ -18,12 +18,10 @@ pub mod serialize_as_regex_string {
 pub mod serde_regex {
 	// https://github.com/tailhook/serde-regex
 	use regex::{
-		self,
-		bytes::{Regex, RegexBuilder},
+		self, bytes::{Regex, RegexBuilder}
 	};
 	use serde::{
-		de::{Error, Visitor},
-		Deserializer, Serializer,
+		de::{Error, Visitor}, Deserializer, Serializer
 	};
 	use std::{fmt, hash};
 
@@ -107,8 +105,7 @@ pub mod string {
 
 pub mod hashmap {
 	use std::{
-		collections::hash_map::{self, HashMap},
-		hash,
+		collections::hash_map::{self, HashMap}, hash
 	};
 
 	pub fn intersection<'a, K: 'a + Eq + hash::Hash, V1: 'a, V2: 'a, S: 'a + hash::BuildHasher>(
@@ -149,8 +146,7 @@ pub mod hashmap {
 pub mod serde_multiset {
 	use multiset;
 	use serde::{
-		de,
-		ser::{self, SerializeSeq},
+		de, ser::{self, SerializeSeq}
 	};
 	use std::{fmt, hash, marker};
 
@@ -199,8 +195,7 @@ pub mod serde_multiset {
 pub mod binary_string {
 	use serde::{Deserialize, Deserializer, Serializer};
 	use std::{
-		char,
-		fmt::{self, Write},
+		char, fmt::{self, Write}
 	};
 	#[derive(PartialEq, Eq, Hash, Serialize, Debug)]
 	struct BinaryString(#[serde(with = "self")] Vec<u8>);
@@ -220,8 +215,7 @@ pub mod binary_string {
 				let x = x as u32;
 				assert!(x < 256);
 				x as u8
-			})
-			.collect())
+			}).collect())
 	}
 	struct Abc<'a>(&'a [u8]);
 	impl<'a> fmt::Display for Abc<'a> {

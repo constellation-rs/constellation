@@ -174,8 +174,7 @@ impl<T: Ord> Heap<T> {
 				.filter(|slot| match **slot {
 					SlabSlot::Full { .. } => true,
 					SlabSlot::Empty { .. } => false,
-				})
-				.count()
+				}).count()
 		);
 
 		for (i, &(_, j)) in self.items.iter().enumerate() {

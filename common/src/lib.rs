@@ -1,5 +1,5 @@
 #![feature(asm)]
-#![deny(warnings, deprecated)]
+#![deny(deprecated)]
 
 extern crate serde;
 #[macro_use]
@@ -15,14 +15,9 @@ extern crate serde_json;
 
 use rand::{Rng, SeedableRng};
 use std::{
-	borrow, env, ffi, fmt, fs,
-	io::{self, Read, Write},
-	mem, net, ops,
-	os::{
-		self,
-		unix::io::{AsRawFd, IntoRawFd},
-	},
-	path, ptr, sync, thread,
+	borrow, env, ffi, fmt, fs, io::{self, Read, Write}, mem, net, ops, os::{
+		self, unix::io::{AsRawFd, IntoRawFd}
+	}, path, ptr, sync, thread
 };
 
 /// An opaque identifier for a process.
@@ -123,11 +118,10 @@ pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
 		index += 1;
 		let _zeros = input[index..].chars().position(|c| c != '0').unwrap_or(0);
 		let index1 = index;
-		index = index
-			+ input[index..]
-				.chars()
-				.position(|c| !c.is_ascii_digit())
-				.unwrap_or(input.len() - index);
+		index = index + input[index..]
+			.chars()
+			.position(|c| !c.is_ascii_digit())
+			.unwrap_or(input.len() - index);
 		if index != index1 {
 			input[index1..index].parse().unwrap()
 		} else {
@@ -212,8 +206,7 @@ impl Envs {
 
 	pub fn from(env: &Vec<(ffi::OsString, ffi::OsString)>) -> Envs {
 		let deploy = env.iter().find(|x| &x.0 == "DEPLOY").map(|x| {
-			x.1
-				.clone()
+			x.1.clone()
 				.into_string()
 				.ok()
 				.and_then(|x| match &*x.to_ascii_lowercase() {
@@ -236,8 +229,7 @@ impl Envs {
 			})
 		});
 		let format = env.iter().find(|x| &x.0 == "DEPLOY_FORMAT").map(|x| {
-			x.1
-				.clone()
+			x.1.clone()
 				.into_string()
 				.ok()
 				.and_then(|x| match &*x.to_ascii_lowercase() {
@@ -247,8 +239,7 @@ impl Envs {
 				})
 		}); // TODO: use serde?
 		let resources = env.iter().find(|x| &x.0 == "DEPLOY_RESOURCES").map(|x| {
-			x.1
-				.clone()
+			x.1.clone()
 				.into_string()
 				.ok()
 				.and_then(|x| serde_json::from_str(&x).ok())
@@ -329,12 +320,14 @@ pub enum Signal {
 	SIGPIPE = nix::libc::SIGPIPE,
 	SIGALRM = nix::libc::SIGALRM,
 	SIGTERM = nix::libc::SIGTERM,
-	#[cfg(
-		all(
-			any(target_os = "linux", target_os = "android", target_os = "emscripten"),
-			not(any(target_arch = "mips", target_arch = "mips64"))
-		)
-	)]
+	#[cfg(all(
+		any(
+			target_os = "linux",
+			target_os = "android",
+			target_os = "emscripten"
+		),
+		not(any(target_arch = "mips", target_arch = "mips64"))
+	))]
 	SIGSTKFLT = nix::libc::SIGSTKFLT,
 	SIGCHLD = nix::libc::SIGCHLD,
 	SIGCONT = nix::libc::SIGCONT,
@@ -349,12 +342,24 @@ pub enum Signal {
 	SIGPROF = nix::libc::SIGPROF,
 	SIGWINCH = nix::libc::SIGWINCH,
 	SIGIO = nix::libc::SIGIO,
-	#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
+	#[cfg(any(
+		target_os = "linux",
+		target_os = "android",
+		target_os = "emscripten"
+	))]
 	SIGPWR = nix::libc::SIGPWR,
 	SIGSYS = nix::libc::SIGSYS,
-	#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
+	#[cfg(not(any(
+		target_os = "linux",
+		target_os = "android",
+		target_os = "emscripten"
+	)))]
 	SIGEMT = nix::libc::SIGEMT,
-	#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
+	#[cfg(not(any(
+		target_os = "linux",
+		target_os = "android",
+		target_os = "emscripten"
+	)))]
 	SIGINFO = nix::libc::SIGINFO,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -752,8 +757,7 @@ where
 		.spawn(move || {
 			mem::drop(sender);
 			f()
-		})
-		.unwrap();
+		}).unwrap();
 	if let Err(sync::mpsc::RecvError) = receiver.recv() {
 	} else {
 		unreachable!()
@@ -959,8 +963,7 @@ pub mod cargo_metadata {
 
 mod bufferedstream {
 	use std::{
-		io::{self, Write},
-		ops,
+		io::{self, Write}, ops
 	};
 	pub struct BufferedStream<T: io::Read + io::Write> {
 		stream: io::BufReader<T>,

@@ -3,12 +3,7 @@ use crossbeam;
 use deploy_common::{copy, map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
 use either::Either;
 use std::{
-	collections::{HashMap, HashSet, VecDeque},
-	env, ffi, fs,
-	io::{self, Read, Write},
-	mem, net, path,
-	sync::mpsc,
-	thread,
+	collections::{HashMap, HashSet, VecDeque}, env, ffi, fs, io::{self, Read, Write}, mem, net, path, sync::mpsc, thread
 };
 
 #[derive(Debug)]
@@ -121,9 +116,9 @@ pub fn run(
 					});
 					scope.spawn(|| {
 						let sender = sender;
-						while let Ok(done) = bincode::deserialize_from::<_, Either<u16, u16>>(
-							&mut stream_read,
-						).map_err(map_bincode_err)
+						while let Ok(done) =
+							bincode::deserialize_from::<_, Either<u16, u16>>(&mut stream_read)
+								.map_err(map_bincode_err)
 						{
 							sender.send(Either::Right((i, done))).unwrap();
 						}
@@ -156,15 +151,13 @@ pub fn run(
 							sender_,
 							Some(i),
 							ports,
-						)))
-						.unwrap();
+						))).unwrap();
 					let pid: Option<Pid> = receiver.recv().unwrap();
 					println!("bridge at {:?}", pid.unwrap());
 				});
 			}
 			(sender_a, node, addr.ip(), local_addr, VecDeque::new())
-		})
-		.collect::<Vec<_>>();
+		}).collect::<Vec<_>>();
 
 	let listener = net::TcpListener::bind(addr).unwrap();
 	thread::spawn(move || {
@@ -187,8 +180,7 @@ pub fn run(
 							sender_,
 							None,
 							vec![],
-						)))
-						.unwrap();
+						))).unwrap();
 					let pid: Option<Pid> = receiver.recv().unwrap();
 					// let mut stream_write = stream_write.write();
 					if let Err(_) = bincode::serialize_into(&mut stream_write, &pid) {

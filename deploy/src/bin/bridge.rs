@@ -7,7 +7,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 */
 
 #![feature(nll)]
-#![deny(missing_docs, warnings, deprecated)]
+#![deny(missing_docs, deprecated)]
 
 extern crate bincode;
 extern crate crossbeam;
@@ -18,19 +18,11 @@ extern crate nix;
 
 use either::Either;
 use std::{
-	collections::HashMap,
-	env, ffi, fs,
-	io::{self, Read},
-	mem,
-	os::{
-		self,
-		unix::{
-			self,
-			io::{AsRawFd, FromRawFd, IntoRawFd},
-		},
-	},
-	sync::{self, mpsc},
-	thread, *,
+	collections::HashMap, env, ffi, fs, io::{self, Read}, mem, os::{
+		self, unix::{
+			self, io::{AsRawFd, FromRawFd, IntoRawFd}
+		}
+	}, sync::{self, mpsc}, thread, *
 };
 
 use deploy_common::{
@@ -88,7 +80,8 @@ fn parse_request<R: Read>(
 	io::Error,
 > {
 	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args: Vec<ffi::OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let args: Vec<ffi::OsString> =
+		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(ffi::OsString, ffi::OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
@@ -106,7 +99,7 @@ fn parse_request<R: Read>(
 		nix::fcntl::FdFlag::from_bits(
 			nix::fcntl::fcntl(elf.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
 		).unwrap()
-			.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
+		.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
 	);
 	nix::unistd::ftruncate(elf.as_raw_fd(), len as i64).unwrap();
 	copy(stream, &mut elf, len as usize)?;
@@ -167,8 +160,7 @@ fn monitor_process(
 					.name(String::from("d"))
 					.spawn(move || {
 						monitor_process(new_pid, sender_, receiver1);
-					})
-					.unwrap();
+					}).unwrap();
 			}
 			ProcessOutputEvent::Output(fd, output) => {
 				sender_
@@ -201,21 +193,18 @@ fn recce(
 		)).chain(iter::once((
 			ffi::CString::new("DEPLOY_RECCE").unwrap(),
 			ffi::CString::new("1").unwrap(),
-		)))
-			.chain(vars.into_iter().map(|(x, y)| {
-				(
-					ffi::CString::new(unix::ffi::OsStringExt::into_vec(x.clone())).unwrap(),
-					ffi::CString::new(unix::ffi::OsStringExt::into_vec(y.clone())).unwrap(),
-				)
-			}))
-			.map(|(key, value)| {
-				ffi::CString::new(format!(
-					"{}={}",
-					key.to_str().unwrap(),
-					value.to_str().unwrap()
-				)).unwrap()
-			})
-			.collect::<Vec<_>>();
+		))).chain(vars.into_iter().map(|(x, y)| {
+			(
+				ffi::CString::new(unix::ffi::OsStringExt::into_vec(x.clone())).unwrap(),
+				ffi::CString::new(unix::ffi::OsStringExt::into_vec(y.clone())).unwrap(),
+			)
+		})).map(|(key, value)| {
+			ffi::CString::new(format!(
+				"{}={}",
+				key.to_str().unwrap(),
+				value.to_str().unwrap()
+			)).unwrap()
+		}).collect::<Vec<_>>();
 		nix::unistd::close(reader).unwrap();
 		for fd in FdIter::new().filter(|&fd| fd != elf.as_raw_fd() && fd != writer) {
 			nix::unistd::close(fd).unwrap();
@@ -238,8 +227,7 @@ fn recce(
 					.into_iter()
 					.map(|x| {
 						ffi::CString::new(unix::ffi::OsStringExt::into_vec(x.clone())).unwrap()
-					})
-					.collect::<Vec<_>>(),
+					}).collect::<Vec<_>>(),
 				&vars,
 			).expect("Failed to fexecve ELF");
 		} else {
@@ -255,8 +243,7 @@ fn recce(
 					.into_iter()
 					.map(|x| {
 						ffi::CString::new(unix::ffi::OsStringExt::into_vec(x.clone())).unwrap()
-					})
-					.collect::<Vec<_>>(),
+					}).collect::<Vec<_>>(),
 				&vars,
 			).expect("Failed to fexecve ELF");
 		}
@@ -267,8 +254,7 @@ fn recce(
 		.spawn(move || {
 			thread::sleep(time::Duration::new(1, 0));
 			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-		})
-		.unwrap();
+		}).unwrap();
 	match nix::sys::wait::waitpid(child, None).unwrap() {
 		nix::sys::wait::WaitStatus::Exited(pid, code) if code == 0 => assert_eq!(pid, child),
 		nix::sys::wait::WaitStatus::Signaled(pid, signal, _)

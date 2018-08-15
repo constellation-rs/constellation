@@ -15,7 +15,7 @@
 //!
 //! Note: --format can also be given as an env var, such as DEPLOY_FORMAT=json
 
-#![deny(missing_docs, warnings, deprecated)]
+#![deny(missing_docs, deprecated)]
 
 extern crate deploy_common;
 extern crate serde_json;

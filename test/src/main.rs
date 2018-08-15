@@ -3,8 +3,8 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
-#![feature(global_allocator, allocator_api)]
-#![deny(missing_docs, warnings, deprecated)]
+#![feature(allocator_api, global_allocator)]
+#![deny(missing_docs, deprecated)]
 
 extern crate serde;
 #[macro_use]
@@ -19,12 +19,7 @@ extern crate serde_json;
 mod ext;
 
 use std::{
-	collections::HashMap,
-	env, fs, hash,
-	io::{self, BufRead},
-	iter, os,
-	path::{Path, PathBuf},
-	process, str, thread, time,
+	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, os, path::{Path, PathBuf}, process, str, thread, time
 };
 
 const DEPLOY: &'static str = "deploy/src/bin/deploy.rs";
@@ -210,8 +205,7 @@ fn main() {
 		.spawn(move || loop {
 			thread::sleep(time::Duration::new(10, 0));
 			println!("{:?}", start.elapsed());
-		})
-		.unwrap();
+		}).unwrap();
 	let current_dir = env::current_dir().unwrap();
 	let mut products = HashMap::new();
 	let args = iter::once(String::from("build"))
@@ -268,8 +262,7 @@ fn main() {
 			"4",
 			bridge.to_str().unwrap(),
 			BRIDGE_ADDR,
-		])
-		.stdin(process::Stdio::null())
+		]).stdin(process::Stdio::null())
 		.stdout(process::Stdio::null())
 		.stderr(process::Stdio::null())
 		.spawn()

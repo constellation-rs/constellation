@@ -294,8 +294,7 @@ fn main() {
 						..Resources::default()
 					},
 				).expect("SPAWN FAILED")
-			})
-			.collect();
+			}).collect();
 		let senders: Vec<Sender<std::vec::Vec<deploy::Pid>>> =
 			pids.iter().map(|&pid| Sender::new(pid)).collect();
 		for sender in senders {

@@ -15,8 +15,8 @@
 //!
 //! Note: --format can also be given as an env var, such as DEPLOY_FORMAT=json
 
-#![feature(nll, global_allocator, allocator_api)]
-#![deny(missing_docs, warnings, deprecated)]
+#![feature(nll, allocator_api, global_allocator)]
+#![deny(missing_docs, deprecated)]
 
 extern crate bincode;
 extern crate crossbeam;
@@ -34,10 +34,7 @@ use deploy_common::{
 };
 use either::Either;
 use std::{
-	collections::HashSet,
-	env, ffi, fs,
-	io::{self, Read, Write},
-	iter, mem, net, path, process,
+	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
 };
 
 #[global_allocator]
@@ -72,18 +69,16 @@ fn main() {
 	let args: Args = docopt::Docopt::new(USAGE)
 		.and_then(|d| d.deserialize())
 		.unwrap_or_else(|e| e.exit());
-	let _version = args.flag_version
-		|| envs
-			.version
-			.map(|x| x.expect("DEPLOY_VERSION must be 0 or 1"))
-			.unwrap_or(false);
+	let _version = args.flag_version || envs
+		.version
+		.map(|x| x.expect("DEPLOY_VERSION must be 0 or 1"))
+		.unwrap_or(false);
 	let format = args
 		.flag_format
 		.or_else(|| {
 			envs.format
 				.map(|x| x.expect("DEPLOY_FORMAT must be json or human"))
-		})
-		.unwrap_or(Format::Human);
+		}).unwrap_or(Format::Human);
 	let bridge_address: net::SocketAddr = args.arg_host.parse().unwrap();
 	let path = args.arg_binary;
 	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(path.clone()))

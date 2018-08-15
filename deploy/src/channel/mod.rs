@@ -1,4 +1,4 @@
-mod circularbuffer;
+mod circular_buffer;
 mod heap;
 mod serialize;
 mod tcp_linux;
@@ -11,11 +11,7 @@ use nix;
 use rand;
 use serde;
 use std::{
-	cell,
-	collections::HashMap,
-	error, fmt, marker, mem, net, ops, os, ptr,
-	sync::{self, Arc},
-	thread, time,
+	cell, collections::HashMap, error, fmt, marker, mem, net, ops, os, ptr, sync::{self, Arc}, thread, time
 };
 
 fn getpid() -> nix::unistd::Pid {
@@ -149,8 +145,7 @@ impl Context {
 					&Inner::Killed | &Inner::Closed/* | &Inner::Connecting(_)*/ => false,
 					_a => {/*logln!("{:?}: laggard: {:?}", gettid(), a);*/ true},
 				}
-						})
-						.count() > 0
+						}).count() > 0
 				{
 					if let &Some(ref socket) = &done {
 						logln!(
@@ -282,8 +277,7 @@ impl Context {
 									let mut channel = channel_arc.write().unwrap();
 									assert_eq!(
 										sync::Arc::strong_count(&channel_arc),
-										1
-											+ channel.as_ref().unwrap().senders_count
+										1 + channel.as_ref().unwrap().senders_count
 											+ channel.as_ref().unwrap().receivers_count,
 										"{:?}:{:?} {:?}",
 										getpid(),
@@ -308,22 +302,19 @@ impl Context {
 										}
 										// logln!("unk: {:?}, {:?}", data, events);
 										channel.senders_count == 0
-											&& channel.receivers_count == 0
-											&& inner.closed()
+											&& channel.receivers_count == 0 && inner.closed()
 									} {
 										let x = channel.take().unwrap();
 										assert!(
 											x.senders_count == 0
-												&& x.receivers_count == 0
-												&& x.inner.closed()
+												&& x.receivers_count == 0 && x.inner.closed()
 										);
 										let key = sockets
 											.iter()
 											.find(|&(_key, channel)| {
 												let executor_key2: *const sync::RwLock<Option<Channel>> = &**channel;
 												executor_key2 == executor_key
-											})
-											.unwrap()
+											}).unwrap()
 											.0
 											.clone();
 										mem::drop(channel);
@@ -357,8 +348,7 @@ impl Context {
 									let mut channel = channel_arc.write().unwrap();
 									assert_eq!(
 										sync::Arc::strong_count(&channel_arc),
-										1
-											+ channel.as_ref().unwrap().senders_count
+										1 + channel.as_ref().unwrap().senders_count
 											+ channel.as_ref().unwrap().receivers_count,
 										"{:?}:{:?} {:?}",
 										getpid(),
@@ -373,22 +363,19 @@ impl Context {
 											inner.close(executor);
 										}
 										channel.senders_count == 0
-											&& channel.receivers_count == 0
-											&& inner.closed()
+											&& channel.receivers_count == 0 && inner.closed()
 									} {
 										let x = channel.take().unwrap();
 										assert!(
 											x.senders_count == 0
-												&& x.receivers_count == 0
-												&& x.inner.closed()
+												&& x.receivers_count == 0 && x.inner.closed()
 										);
 										let key = sockets
 											.iter()
 											.find(|&(_key, channel)| {
 												let executor_key2: *const sync::RwLock<Option<Channel>> = &**channel;
 												executor_key2 == executor_key
-											})
-											.unwrap()
+											}).unwrap()
 											.0
 											.clone();
 										mem::drop(channel);
@@ -425,8 +412,7 @@ impl Context {
 					});
 				}
 				logln!("{:?}: {}: /close", nix::unistd::getpid(), ::pid());
-			})
-			.unwrap();
+			}).unwrap();
 		Handle {
 			trigger: triggerer,
 			tcp_thread: Some(tcp_thread),
@@ -1331,8 +1317,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 				.find(|&(_key, channel)| {
 					let executor_key2: *const sync::RwLock<Option<Channel>> = &**channel;
 					executor_key2 == executor_key
-				})
-				.unwrap()
+				}).unwrap()
 				.0
 				.clone();
 			mem::drop(channel);
@@ -1646,8 +1631,7 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 				.find(|&(_key, channel)| {
 					let executor_key2: *const sync::RwLock<Option<Channel>> = &**channel;
 					executor_key2 == executor_key
-				})
-				.unwrap()
+				}).unwrap()
 				.0
 				.clone();
 			mem::drop(channel);

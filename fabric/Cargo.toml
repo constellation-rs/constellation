@@ -14,7 +14,7 @@ documentation = "https://docs.rs/fabric"
 readme = "README.md"
 
 [dependencies]
-deploy-common = {path = "../common", version = "=0.1.2"}
+deploy-common = {path = "../common", version = "=0.1.3"}
 nix = "0.11"
 bincode = "1.0"
 serde = "1.0"
