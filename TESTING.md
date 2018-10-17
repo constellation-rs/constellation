@@ -1,10 +1,10 @@
 # Testing
 
-deploy has its own testsuite, in test/src/main.rs. It can be invoked with:
+constellation has its own testsuite, in [tests/tester/main.rs]. It can be invoked with:
 ```
-cargo run -p test --bin test --release -- --release
+cargo test --test tester --release -- --release
 ```
-Note that under the hood, test invokes cargo build with the same arguments given to it. Hence the `--release` after the `--`, which `cargo run` forwards to test, is in turn forwarded to the invocation of cargo build.
+Note that under the hood, test invokes cargo build with the same arguments given to it. Hence the `--release` after the `--`, which `cargo test` forwards to the testsuite, is in turn forwarded to the invocation of cargo build.
 
 ### Valgrind
 

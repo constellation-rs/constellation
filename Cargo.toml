@@ -1,7 +1,147 @@
+[package]
+name = "constellation-rs"
+version = "0.1.4"
+license = "Apache-2.0"
+authors = ["Alec Mocatta <alec@mocatta.net>"]
+categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
+keywords = ["constellation","deploy","distributed","cluster"]
+description = """
+The `constellation` framework to aide writing and debugging of distributed programs, as well as tooling to run them across a cluster.
+"""
+repository = "https://github.com/alecmocatta/constellation"
+homepage = "https://github.com/alecmocatta/constellation"
+documentation = "https://docs.rs/constellation"
+readme = "../README.md"
+autotests = true
+
 [workspace]
 members = [
-	"deploy",
-	"examples",
-	"test",
-	"fabric",
+	"./",
+	"constellation-internal",
 ]
+
+[lib]
+name = "constellation"
+
+[dependencies]
+bincode = "1.0"
+crossbeam = "0.4"
+serde_derive = "1.0"
+serde = "1.0"
+serde_json = "1.0"
+lazy_static = "1.0"
+either = "1.5"
+rand = "0.5"
+atty = "0.2"
+docopt = "1.0"
+log = "0.4"
+futures-preview = "=0.3.0-alpha.7"
+constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
+proc_self = { version = "0.1" } #, path = "../proc_self"}
+serde_pipe = { version = "0.1" } #, path = "../serde_pipe"}
+get_env = { version = "0.1" } #, path = "../get_env"}
+serde_closure = { version = "0.1.3" } #, path = "../serde_closure"}
+tcp_typed = { version = "0.1" } #, path = "../tcp_typed"}
+notifier = { version = "0.1", features = ["tcp_typed"] } #, path = "../notifier"}
+palaver = { version = "0.1" } #, path = "../palaver"}
+
+[target.'cfg(unix)'.dependencies]
+nix = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
+
+[dev-dependencies]
+itertools = "0.7"
+multiset = {git = "https://github.com/jmitchell/multiset", rev = "0fd00e5e"}
+regex = "1.0"
+sha1 = "0.6"
+hex = "0.3"
+escargot = "0.3"
+serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
+
+# Hopefully we won't need to exhaustively list in future:
+# https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
+
+[[test]]
+name = "tester"
+harness = false
+
+[[test]]
+name = "a"
+harness = false
+[[test]]
+name = "b"
+harness = false
+[[test]]
+name = "c"
+harness = false
+[[test]]
+name = "d"
+harness = false
+[[test]]
+name = "e"
+harness = false
+[[test]]
+name = "f"
+harness = false
+[[test]]
+name = "g"
+harness = false
+[[test]]
+name = "h"
+harness = false
+[[test]]
+name = "i"
+harness = false
+[[test]]
+name = "j"
+harness = false
+[[test]]
+name = "k"
+harness = false
+[[test]]
+name = "l"
+harness = false
+[[test]]
+name = "m"
+harness = false
+[[test]]
+name = "n"
+harness = false
+[[test]]
+name = "o"
+harness = false
+[[test]]
+name = "p"
+harness = false
+[[test]]
+name = "q"
+harness = false
+[[test]]
+name = "r"
+harness = false
+[[test]]
+name = "s"
+harness = false
+[[test]]
+name = "t"
+harness = false
+[[test]]
+name = "u"
+harness = false
+[[test]]
+name = "v"
+harness = false
+[[test]]
+name = "w"
+harness = false
+[[test]]
+name = "xx"
+harness = false
+[[test]]
+name = "y"
+harness = false
+[[test]]
+name = "z"
+harness = false
