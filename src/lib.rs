@@ -51,7 +51,7 @@ extern crate atty;
 extern crate bincode;
 extern crate constellation_internal;
 extern crate either;
-extern crate futures;
+// extern crate futures;
 extern crate get_env;
 extern crate nix;
 extern crate notifier;
@@ -91,7 +91,7 @@ use std::{
 		self, unix::{
 			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 		}
-	}, path, pin, process, str, sync::{self, mpsc}, thread
+	}, path, process, str, sync::{self, mpsc}, thread
 };
 
 #[cfg(target_family = "unix")]
@@ -253,44 +253,44 @@ impl<T: serde::ser::Serialize> fmt::Debug for Sender<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<Option<T>> {
-	type SinkError = !;
-	type SinkItem = T;
+// impl<T: 'static + serde::ser::Serialize> futures::sink::Sink for Sender<Option<T>> {
+// 	type SinkError = !;
+// 	type SinkItem = T;
 
-	fn poll_ready(
-		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
-	) -> futures::task::Poll<Result<(), Self::SinkError>> {
-		let context = REACTOR.read().unwrap();
-		self.0
-			.as_ref()
-			.unwrap()
-			.futures_poll_ready(cx, context.as_ref().unwrap())
-	}
+// 	fn poll_ready(
+// 		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
+// 	) -> futures::task::Poll<Result<(), Self::SinkError>> {
+// 		let context = REACTOR.read().unwrap();
+// 		self.0
+// 			.as_ref()
+// 			.unwrap()
+// 			.futures_poll_ready(cx, context.as_ref().unwrap())
+// 	}
 
-	fn start_send(self: pin::Pin<&mut Self>, item: Self::SinkItem) -> Result<(), Self::SinkError> {
-		let context = REACTOR.read().unwrap();
-		self.0
-			.as_ref()
-			.unwrap()
-			.futures_start_send(item, context.as_ref().unwrap())
-	}
+// 	fn start_send(self: pin::Pin<&mut Self>, item: Self::SinkItem) -> Result<(), Self::SinkError> {
+// 		let context = REACTOR.read().unwrap();
+// 		self.0
+// 			.as_ref()
+// 			.unwrap()
+// 			.futures_start_send(item, context.as_ref().unwrap())
+// 	}
 
-	fn poll_flush(
-		self: pin::Pin<&mut Self>, _cx: &futures::task::LocalWaker,
-	) -> futures::task::Poll<Result<(), Self::SinkError>> {
-		futures::task::Poll::Ready(Ok(()))
-	}
+// 	fn poll_flush(
+// 		self: pin::Pin<&mut Self>, _cx: &futures::task::LocalWaker,
+// 	) -> futures::task::Poll<Result<(), Self::SinkError>> {
+// 		futures::task::Poll::Ready(Ok(()))
+// 	}
 
-	fn poll_close(
-		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
-	) -> futures::task::Poll<Result<(), Self::SinkError>> {
-		let context = REACTOR.read().unwrap();
-		self.0
-			.as_ref()
-			.unwrap()
-			.futures_poll_close(cx, context.as_ref().unwrap())
-	}
-}
+// 	fn poll_close(
+// 		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
+// 	) -> futures::task::Poll<Result<(), Self::SinkError>> {
+// 		let context = REACTOR.read().unwrap();
+// 		self.0
+// 			.as_ref()
+// 			.unwrap()
+// 			.futures_poll_close(cx, context.as_ref().unwrap())
+// 	}
+// }
 
 /// The receiving half of a channel.
 ///
@@ -429,19 +429,19 @@ impl<T: serde::de::DeserializeOwned> fmt::Debug for Receiver<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
-	type Item = Result<T, ChannelError>;
+// impl<T: 'static + serde::de::DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
+// 	type Item = Result<T, ChannelError>;
 
-	fn poll_next(
-		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
-	) -> futures::task::Poll<Option<Self::Item>> {
-		let context = REACTOR.read().unwrap();
-		self.0
-			.as_ref()
-			.unwrap()
-			.futures_poll_next(cx, context.as_ref().unwrap())
-	}
-}
+// 	fn poll_next(
+// 		self: pin::Pin<&mut Self>, cx: &futures::task::LocalWaker,
+// 	) -> futures::task::Poll<Option<Self::Item>> {
+// 		let context = REACTOR.read().unwrap();
+// 		self.0
+// 			.as_ref()
+// 			.unwrap()
+// 			.futures_poll_next(cx, context.as_ref().unwrap())
+// 	}
+// }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

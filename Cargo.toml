@@ -35,7 +35,7 @@ rand = "0.5"
 atty = "0.2"
 docopt = "1.0"
 log = "0.4"
-futures-preview = "=0.3.0-alpha.7"
+# futures-preview = "=0.3.0-alpha.8"
 constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
 proc_self = { version = "0.1" } #, path = "../proc_self"}
 serde_pipe = { version = "0.1" } #, path = "../serde_pipe"}

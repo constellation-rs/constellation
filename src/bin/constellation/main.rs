@@ -291,7 +291,7 @@ fn parse_request<R: Read>(
 			.expect("Failed to memfd_create"),
 		)
 	};
-	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len() as i64).unwrap();
+	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
 	arg.write_all(&spawn_arg).unwrap();
 	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);

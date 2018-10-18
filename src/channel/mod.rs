@@ -3,7 +3,7 @@ mod inner_states;
 
 use constellation_internal::Rand;
 use either::Either;
-use futures;
+// use futures;
 use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use palaver::spawn;
@@ -198,15 +198,15 @@ impl Reactor {
 										for sender in channel.senders.values() {
 											sender.unpark(); // TODO: don't do unless actual progress
 										}
-										for sender_future in channel.senders_futures.drain(..) {
-											sender_future.wake();
-										}
+										// for sender_future in channel.senders_futures.drain(..) {
+										// 	sender_future.wake();
+										// }
 										for receiver in channel.receivers.values() {
 											receiver.unpark(); // TODO: don't do unless actual progress
 										}
-										for receiver_future in channel.receivers_futures.drain(..) {
-											receiver_future.wake();
-										}
+									// for receiver_future in channel.receivers_futures.drain(..) {
+									// 	receiver_future.wake();
+									// }
 									} else if channel.inner.closable() {
 										channel.inner.close(notifier);
 									}
@@ -259,15 +259,15 @@ impl Reactor {
 									for sender in channel.senders.values() {
 										sender.unpark(); // TODO: don't do unless actual progress
 									}
-									for sender_future in channel.senders_futures.drain(..) {
-										sender_future.wake();
-									}
+									// for sender_future in channel.senders_futures.drain(..) {
+									// 	sender_future.wake();
+									// }
 									for receiver in channel.receivers.values() {
 										receiver.unpark(); // TODO: don't do unless actual progress
 									}
-									for receiver_future in channel.receivers_futures.drain(..) {
-										receiver_future.wake();
-									}
+									// for receiver_future in channel.receivers_futures.drain(..) {
+									// 	receiver_future.wake();
+									// }
 									channel.senders_count == 0
 										&& channel.receivers_count == 0
 										&& inner.closed()
@@ -394,9 +394,9 @@ pub struct Channel {
 	senders_count: usize,
 	receivers_count: usize,
 	senders: HashMap<thread::ThreadId, thread::Thread>, // TODO: linked list
-	senders_futures: Vec<futures::task::Waker>,
+	// senders_futures: Vec<futures::task::Waker>,
 	receivers: HashMap<thread::ThreadId, thread::Thread>,
-	receivers_futures: Vec<futures::task::Waker>,
+	// receivers_futures: Vec<futures::task::Waker>,
 }
 impl Channel {
 	fn new(inner: Inner) -> Self {
@@ -405,9 +405,9 @@ impl Channel {
 			senders_count: 0,
 			receivers_count: 0,
 			senders: HashMap::new(),
-			senders_futures: Vec::new(),
+			// senders_futures: Vec::new(),
 			receivers: HashMap::new(),
-			receivers_futures: Vec::new(),
+			// receivers_futures: Vec::new(),
 		}
 	}
 }
@@ -594,64 +594,64 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		}
 	}
 }
-impl<T: serde::ser::Serialize> Sender<Option<T>> {
-	pub fn futures_poll_ready(
-		&self, cx: &futures::task::LocalWaker, context: &Reactor,
-	) -> futures::task::Poll<Result<(), !>>
-	where
-		T: 'static,
-	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders_futures
-			.push(cx.clone().into());
-		if let Some(_send) = self.async_send(context) {
-			// TODO: remove from senders_futures
-			futures::task::Poll::Ready(Ok(()))
-		} else {
-			futures::task::Poll::Pending
-		}
-	}
+// impl<T: serde::ser::Serialize> Sender<Option<T>> {
+// 	pub fn futures_poll_ready(
+// 		&self, cx: &futures::task::LocalWaker, context: &Reactor,
+// 	) -> futures::task::Poll<Result<(), !>>
+// 	where
+// 		T: 'static,
+// 	{
+// 		self.channel
+// 			.as_ref()
+// 			.unwrap()
+// 			.write()
+// 			.unwrap()
+// 			.as_mut()
+// 			.unwrap()
+// 			.senders_futures
+// 			.push(cx.clone().into());
+// 		if let Some(_send) = self.async_send(context) {
+// 			// TODO: remove from senders_futures
+// 			futures::task::Poll::Ready(Ok(()))
+// 		} else {
+// 			futures::task::Poll::Pending
+// 		}
+// 	}
 
-	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), !>
-	where
-		T: 'static,
-	{
-		self.async_send(context).expect(
-			"called futures::Sink::start_send without the go-ahead from futures::Sink::poll_ready",
-		)(Some(item));
-		Ok(())
-	}
+// 	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), !>
+// 	where
+// 		T: 'static,
+// 	{
+// 		self.async_send(context).expect(
+// 			"called futures::Sink::start_send without the go-ahead from futures::Sink::poll_ready",
+// 		)(Some(item));
+// 		Ok(())
+// 	}
 
-	pub fn futures_poll_close(
-		&self, cx: &futures::task::LocalWaker, context: &Reactor,
-	) -> futures::task::Poll<Result<(), !>>
-	where
-		T: 'static,
-	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders_futures
-			.push(cx.clone().into());
-		if let Some(send) = self.async_send(context) {
-			// TODO: remove from senders_futures
-			send(None);
-			futures::task::Poll::Ready(Ok(()))
-		} else {
-			futures::task::Poll::Pending
-		}
-	}
-}
+// 	pub fn futures_poll_close(
+// 		&self, cx: &futures::task::LocalWaker, context: &Reactor,
+// 	) -> futures::task::Poll<Result<(), !>>
+// 	where
+// 		T: 'static,
+// 	{
+// 		self.channel
+// 			.as_ref()
+// 			.unwrap()
+// 			.write()
+// 			.unwrap()
+// 			.as_mut()
+// 			.unwrap()
+// 			.senders_futures
+// 			.push(cx.clone().into());
+// 		if let Some(send) = self.async_send(context) {
+// 			// TODO: remove from senders_futures
+// 			send(None);
+// 			futures::task::Poll::Ready(Ok(()))
+// 		} else {
+// 			futures::task::Poll::Pending
+// 		}
+// 	}
+// }
 impl<T: serde::ser::Serialize> Drop for Sender<T> {
 	fn drop(&mut self) {
 		panic!("call .drop(context) rather than dropping a Sender<T>");
@@ -862,34 +862,34 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 		}
 	}
 }
-impl<T: serde::de::DeserializeOwned> Receiver<Option<T>> {
-	pub fn futures_poll_next(
-		&self, cx: &futures::task::LocalWaker, context: &Reactor,
-	) -> futures::task::Poll<Option<Result<T, ChannelError>>>
-	where
-		T: 'static,
-	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.receivers_futures
-			.push(cx.clone().into());
-		if let Some(recv) = self.async_recv(context) {
-			// TODO: remove from receivers_futures
-			futures::task::Poll::Ready(match recv() {
-				Ok(Some(t)) => Some(Ok(t)),
-				Ok(None) => None,
-				Err(err) => Some(Err(err)),
-			})
-		} else {
-			futures::task::Poll::Pending
-		}
-	}
-}
+// impl<T: serde::de::DeserializeOwned> Receiver<Option<T>> {
+// 	pub fn futures_poll_next(
+// 		&self, cx: &futures::task::LocalWaker, context: &Reactor,
+// 	) -> futures::task::Poll<Option<Result<T, ChannelError>>>
+// 	where
+// 		T: 'static,
+// 	{
+// 		self.channel
+// 			.as_ref()
+// 			.unwrap()
+// 			.write()
+// 			.unwrap()
+// 			.as_mut()
+// 			.unwrap()
+// 			.receivers_futures
+// 			.push(cx.clone().into());
+// 		if let Some(recv) = self.async_recv(context) {
+// 			// TODO: remove from receivers_futures
+// 			futures::task::Poll::Ready(match recv() {
+// 				Ok(Some(t)) => Some(Ok(t)),
+// 				Ok(None) => None,
+// 				Err(err) => Some(Err(err)),
+// 			})
+// 		} else {
+// 			futures::task::Poll::Pending
+// 		}
+// 	}
+// }
 impl<T: serde::de::DeserializeOwned> Drop for Receiver<T> {
 	fn drop(&mut self) {
 		panic!("call .drop(context) rather than dropping a Receiver<T>");
