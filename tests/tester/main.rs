@@ -325,6 +325,9 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
+		// if src != Path::new("tests/i.rs") {
+		// 	continue;
+		// }
 		println!("{}", src.display());
 		let file: Result<OutputTest, _> = serde_json::from_str(
 			&io::BufReader::new(fs::File::open(src).unwrap())

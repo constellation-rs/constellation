@@ -19,46 +19,46 @@ env:
 
 matrix:
   include:
-    - os: linux
-      dist: precise
-      env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="precise" # ;-Cpanic=abort;-Clinker=gold
-    - os: linux
-      dist: precise
-      env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="precise" # ;-Cpanic=abort;-Clinker=gold
-    - os: linux
-      dist: trusty
-      sudo: false
-      env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
-    - os: linux
-      dist: trusty
-      sudo: false
-      env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
-    - os: linux
-      dist: trusty
-      sudo: required # https://docs.travis-ci.com/user/reference/overview/
-      env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
-    - os: linux
-      dist: trusty
-      sudo: required # https://docs.travis-ci.com/user/reference/overview/
-      env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
-    - os: osx
-      osx_image: xcode6.4 # https://docs.travis-ci.com/user/reference/osx/
-      env: BUILD="x86_64-unknown-linux-musl" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # https://github.com/rust-lang/rust/pull/49219 ;-Cpanic=abort
-    - os: osx
-      osx_image: xcode6.4 # https://docs.travis-ci.com/user/reference/osx/
-      env: BUILD="i686-unknown-linux-musl" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # https://github.com/rust-lang/rust/pull/49219 ;-Cpanic=abort
-    - os: osx
-      osx_image: xcode8.3
-      env: BUILD="x86_64-unknown-linux-musl" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort
+    # - os: linux
+    #   dist: precise
+    #   env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="precise" # ;-Cpanic=abort;-Clinker=gold
+    # - os: linux
+    #   dist: precise
+    #   env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="precise" # ;-Cpanic=abort;-Clinker=gold
+    # - os: linux
+    #   dist: trusty
+    #   sudo: false
+    #   env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
+    # - os: linux
+    #   dist: trusty
+    #   sudo: false
+    #   env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
+    # - os: linux
+    #   dist: trusty
+    #   sudo: required # https://docs.travis-ci.com/user/reference/overview/
+    #   env: BUILD="" RUN="x86_64-unknown-linux-gnu x86_64-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
+    # - os: linux
+    #   dist: trusty
+    #   sudo: required # https://docs.travis-ci.com/user/reference/overview/
+    #   env: BUILD="" RUN="i686-unknown-linux-gnu i686-unknown-linux-musl" RUSTFLAGS_VARIATIONS=";" DIST="trusty" # ;-Cpanic=abort;-Clinker=gold
+    # - os: osx
+    #   osx_image: xcode6.4 # https://docs.travis-ci.com/user/reference/osx/
+    #   env: BUILD="x86_64-unknown-linux-musl" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # https://github.com/rust-lang/rust/pull/49219 ;-Cpanic=abort
+    # - os: osx
+    #   osx_image: xcode6.4 # https://docs.travis-ci.com/user/reference/osx/
+    #   env: BUILD="i686-unknown-linux-musl" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # https://github.com/rust-lang/rust/pull/49219 ;-Cpanic=abort
     - os: osx
       osx_image: xcode8.3
-      env: BUILD="i686-unknown-linux-musl" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort
+      env: BUILD="" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort x86_64-unknown-linux-musl
+    - os: osx
+      osx_image: xcode8.3
+      env: BUILD="" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort i686-unknown-linux-musl
     - os: osx
       osx_image: xcode9.4
-      env: BUILD="x86_64-unknown-linux-musl" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort
+      env: BUILD="" RUN="x86_64-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort x86_64-unknown-linux-musl
     - os: osx
       osx_image: xcode9.4
-      env: BUILD="i686-unknown-linux-musl" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort
+      env: BUILD="" RUN="i686-apple-darwin" RUSTFLAGS_VARIATIONS=";" # ;-Cpanic=abort i686-unknown-linux-musl
 
 before_script: |
   ( set -o errexit;set -o pipefail; set -o xtrace;set -o nounset;
