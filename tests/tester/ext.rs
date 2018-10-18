@@ -193,8 +193,9 @@ pub mod serde_multiset {
 pub mod binary_string {
 	use serde::{Deserialize, Deserializer, Serializer};
 	use std::{
-		char, fmt::{self, Write}
+		char, convert::TryInto, fmt::{self, Write}
 	};
+
 	#[derive(PartialEq, Eq, Hash, Serialize, Debug)]
 	struct BinaryString(#[serde(with = "self")] Vec<u8>);
 	pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
@@ -209,11 +210,7 @@ pub mod binary_string {
 	{
 		let s = <String>::deserialize(deserializer)?;
 		Ok(s.chars()
-			.map(|x: char| {
-				let x = x as u32;
-				assert!(x < 256);
-				x as u8
-			})
+			.map(|x: char| (x as u32).try_into().unwrap())
 			.collect())
 	}
 	struct Abc<'a>(&'a [u8]);

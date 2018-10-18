@@ -17,8 +17,8 @@ jobs:
               source $HOME/.cargo/env
               cargo build --verbose --target "$TARGET" --all-targets --all-features
               RUSTFLAGS="-C target-cpu=native" cargo build --verbose --target "$TARGET" --all-targets --all-features --release
-              RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features
-              RUSTFLAGS="-C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- --release
+              RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features -- 10
+              RUSTFLAGS="-C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- 10 --all-features --release
               RUSTFLAGS="-C target-cpu=native" RUST_BACKTRACE=full cargo bench --target "$TARGET" --all-features
               [ ! -d examples ] || for example in examples/*; do example=${example##*/}; (
                 RUST_BACKTRACE=full cargo run --target "$TARGET" --example ${example%.*} --all-features

@@ -3,7 +3,7 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
-#![feature(allocator_api)]
+#![feature(allocator_api, try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,

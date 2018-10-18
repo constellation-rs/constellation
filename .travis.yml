@@ -89,10 +89,10 @@ script: |
       ); done
       for TARGET in $RUN; do (
         [ \( "$TRAVIS_OS_NAME" = "osx" -o \( "$TRAVIS_OS_NAME" = "linux" -a "${DIST-}" = "precise" \) \) -a \( "$TARGET" = "x86_64-unknown-linux-musl" -o "$TARGET" = "i686-unknown-linux-musl" \) ] && RUSTFLAGS="$RUSTFLAGS -C linker=rust-lld -Z linker-flavor=ld.lld"
-        RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features
-        RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- --release
+        RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features -- 10 --all-features
+        RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- 10 --all-features --release
         # RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo bench --target "$TARGET" --all-features
-        [ ! -d examples ] || for example in examples/*; do example=${example##*/}; (
+        [ ! -d examples ] || for example in examples/*.rs; do example=${example##*/}; (
           RUST_BACKTRACE=full cargo run --target "$TARGET" --example ${example%.*} --all-features
           RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo run --target "$TARGET" --example ${example%.*} --all-features --release
         ); done
