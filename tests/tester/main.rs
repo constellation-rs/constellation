@@ -322,7 +322,7 @@ fn main() {
 	}
 
 	let mut fabric_stdout = fabric.stdout.take().unwrap();
-	let fabric_capture = thread::spawn(move || loop {
+	let _ = thread::spawn(move || loop {
 		use std::io::Read;
 		let mut stdout = vec![0; 1024];
 		let n = fabric_stdout.read(&mut stdout).unwrap();
@@ -333,7 +333,7 @@ fn main() {
 		println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
 	});
 	let mut fabric_stderr = fabric.stderr.take().unwrap();
-	let fabric_capture = thread::spawn(move || loop {
+	let _ = thread::spawn(move || loop {
 		use std::io::Read;
 		let mut stderr = vec![0; 1024];
 		let n = fabric_stderr.read(&mut stderr).unwrap();
