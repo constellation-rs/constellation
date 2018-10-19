@@ -37,7 +37,7 @@ mod ext;
 
 use constellation_internal::ExitStatus;
 use std::{
-	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, os, path::{Path, PathBuf}, process, str, thread, time
+	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, net, os, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
 };
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -280,15 +280,19 @@ fn main() {
 		&products[Path::new(BRIDGE)],
 	);
 
-	if std::net::TcpStream::connect(FABRIC_ADDR).is_ok() {
+	if net::TcpStream::connect(FABRIC_ADDR).is_ok() {
 		panic!("Service already running on FABRIC_ADDR {}", FABRIC_ADDR);
 	}
-	if std::net::TcpStream::connect(BRIDGE_ADDR).is_ok() {
+	if net::TcpStream::connect(BRIDGE_ADDR).is_ok() {
 		panic!("Service already running on BRIDGE_ADDR {}", BRIDGE_ADDR);
 	}
 	let mut fabric = process::Command::new(fabric)
 		.args(&[
 			"master",
+			&net::SocketAddr::from_str(FABRIC_ADDR)
+				.unwrap()
+				.ip()
+				.to_string(),
 			FABRIC_ADDR,
 			"4GiB",
 			"4",
@@ -296,12 +300,12 @@ fn main() {
 			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::null())
-		.stderr(process::Stdio::null())
+		.stdout(process::Stdio::piped())
+		.stderr(process::Stdio::piped())
 		.spawn()
 		.unwrap();
 	let start_ = time::Instant::now();
-	while std::net::TcpStream::connect(FABRIC_ADDR).is_err() {
+	while net::TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(2, 0) {
 			panic!("Fabric not up within 2s");
@@ -309,13 +313,36 @@ fn main() {
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 	let start_ = time::Instant::now();
-	while std::net::TcpStream::connect(BRIDGE_ADDR).is_err() {
+	while net::TcpStream::connect(BRIDGE_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(10, 0) {
 			panic!("Bridge not up within 10s");
 		}
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
+
+	let mut fabric_stdout = fabric.stdout.take().unwrap();
+	let fabric_capture = thread::spawn(move || loop {
+		use std::io::Read;
+		let mut stdout = vec![0; 1024];
+		let n = fabric_stdout.read(&mut stdout).unwrap();
+		if n == 0 {
+			break;
+		}
+		stdout.truncate(n);
+		println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
+	});
+	let mut fabric_stderr = fabric.stderr.take().unwrap();
+	let fabric_capture = thread::spawn(move || loop {
+		use std::io::Read;
+		let mut stderr = vec![0; 1024];
+		let n = fabric_stderr.read(&mut stderr).unwrap();
+		if n == 0 {
+			break;
+		}
+		stderr.truncate(n);
+		println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
+	});
 
 	let mut products = products
 		.iter()

@@ -279,6 +279,10 @@ fn recce(
 fn main() {
 	env::set_var("RUST_BACKTRACE", "full");
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		std::process::abort();
+	}));
 	let listener = constellation::bridge_init();
 	let (sender, receiver) = mpsc::sync_channel::<_>(0);
 	let _ = spawn(String::from("a"), move || {

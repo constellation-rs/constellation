@@ -60,6 +60,9 @@ hex = "0.3"
 escargot = "0.3"
 serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
 
+# [profile.test]
+# panic = "abort"
+
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
 

@@ -87,7 +87,9 @@ extern crate serde_json;
 
 mod master;
 
-use constellation_internal::{map_bincode_err, parse_binary_size, BufferedStream, Resources};
+use constellation_internal::{
+	map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
+};
 use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
@@ -118,7 +120,7 @@ Run a constellation node, optionally as master, and optionally start a bridge ru
 ";
 const USAGE: &str = r"
 USAGE:
-    constellation master (<addr> <mem> <cpu> [<bridge> <addr>]...)...
+    constellation master <addr> (<addr> <mem> <cpu> [<bridge> <addr>]...)...
     constellation <addr>
 
 OPTIONS:
@@ -155,7 +157,7 @@ or, for a Rust crate:
 
 #[derive(Debug)]
 enum Arg {
-	Master(Vec<Node>),
+	Master(net::IpAddr, Vec<Node>),
 	Worker(net::SocketAddr),
 }
 #[derive(Debug)]
@@ -177,6 +179,10 @@ impl Arg {
 		let _ = args.next().unwrap();
 		match args.next().as_ref().map(|x| &**x) {
 			Some("master") => {
+				let bind = args.next().and_then(|x| x.parse().ok()).unwrap_or_else(|| {
+					println!("Invalid bind address\n{}", USAGE);
+					process::exit(1)
+				});
 				let mut nodes = Vec::new();
 				loop {
 					match (
@@ -215,7 +221,7 @@ impl Arg {
 						}
 					}
 				}
-				Arg::Master(nodes)
+				Arg::Master(bind, nodes)
 			}
 			None | Some("-h") | Some("--help") => {
 				println!("{}{}{}", DESCRIPTION, USAGE, HELP);
@@ -298,16 +304,31 @@ fn parse_request<R: Read>(
 	Ok((resources, ports, binary, args, vars, arg))
 }
 
+// fn trace(event: FabricOutputEvent) {
+// 	let stdout = io::stdout();
+// 	serde_json::to_writer(&mut *stdout, &event).unwrap();
+// 	stdout.write_all(b"\n").unwrap()
+// }
+
 fn main() {
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!(
+			"thread '{}' {}",
+			std::thread::current().name().unwrap(),
+			info
+		);
+		std::process::abort();
+	}));
 	let arg = Arg::from_argv();
 	let (listen, listener) = match arg {
-		Arg::Master(mut nodes) => {
-			let fabric = net::TcpListener::bind("127.0.0.1:0").unwrap();
-			let scheduler_addr = nodes[0].addr;
-			nodes[0].addr = fabric.local_addr().unwrap();
+		Arg::Master(listen, mut nodes) => {
+			let fabric = net::TcpListener::bind(net::SocketAddr::new(listen, 0)).unwrap();
+			let master_addr = nodes[0].addr;
+			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
 			let _ = spawn(String::from("master"), move || {
 				master::run(
-					scheduler_addr,
+					net::SocketAddr::new(listen, master_addr.port()),
+					Pid::new(master_addr.ip(), master_addr.port()),
 					nodes
 						.into_iter()
 						.map(
@@ -332,7 +353,7 @@ fn main() {
 						.collect::<HashMap<_, _>>(),
 				); // TODO: error on clash
 			});
-			(scheduler_addr.ip(), fabric)
+			(listen, fabric)
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
 	};
