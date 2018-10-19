@@ -40,7 +40,7 @@ use constellation_internal::{
 use palaver::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal, spawn};
 use proc_self::FdIter;
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
+	collections::HashMap, convert::TryInto, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
 		self, unix::{
 			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 		}
@@ -427,34 +427,34 @@ fn main() {
 						nix::sys::socket::Shutdown::Write,
 					)
 					.unwrap();
-					thread::sleep(time::Duration::new(1, 0));
-					let unsent = {
-						use nix::libc;
-						let mut unsent: libc::c_int = 0;
-						#[cfg(any(target_os = "android", target_os = "linux"))]
-						let err = unsafe { libc::ioctl(stream.as_raw_fd(), libc::TIOCOUTQ, &mut unsent) };
-						#[cfg(any(target_os = "macos", target_os = "ios"))]
-						let err = unsafe {
-							libc::getsockopt(
-								stream.as_raw_fd(),
-								libc::SOL_SOCKET,
-								libc::SO_NWRITE,
-								&mut unsent as *mut libc::c_int as *mut libc::c_void,
-								&mut (libc::socklen_t::try_from(::std::mem::size_of_val(&unsent))
-									.unwrap()),
-							)
-						};
-						#[cfg(not(any(
-							target_os = "android",
-							target_os = "linux",
-							target_os = "macos",
-							target_os = "ios"
-						)))]
-						compile_error!("x");
-						assert!(err == 0 && unsent >= 0, "{} {}", err, unsent);
-						usize::try_from(unsent).unwrap()
-					};
-					assert_eq!(unsent, 0);
+					// thread::sleep(time::Duration::new(1, 0));
+					// let unsent = {
+					// 	use nix::libc;
+					// 	let mut unsent: libc::c_int = 0;
+					// 	#[cfg(any(target_os = "android", target_os = "linux"))]
+					// 	let err = unsafe { libc::ioctl(stream.as_raw_fd(), libc::TIOCOUTQ, &mut unsent) };
+					// 	#[cfg(any(target_os = "macos", target_os = "ios"))]
+					// 	let err = unsafe {
+					// 		libc::getsockopt(
+					// 			stream.as_raw_fd(),
+					// 			libc::SOL_SOCKET,
+					// 			libc::SO_NWRITE,
+					// 			&mut unsent as *mut libc::c_int as *mut libc::c_void,
+					// 			&mut (libc::socklen_t::try_from(::std::mem::size_of_val(&unsent))
+					// 				.unwrap()),
+					// 		)
+					// 	};
+					// 	#[cfg(not(any(
+					// 		target_os = "android",
+					// 		target_os = "linux",
+					// 		target_os = "macos",
+					// 		target_os = "ios"
+					// 	)))]
+					// 	compile_error!("x");
+					// 	assert!(err == 0 && unsent >= 0, "{} {}", err, unsent);
+					// 	usize::try_from(unsent).unwrap()
+					// };
+					// assert_eq!(unsent, 0);
 				}
 			});
 		}
