@@ -99,7 +99,7 @@ script: |
       ); done
     ); done; IFS=$OLD_IFS
     for TARGET in $BUILD $RUN; do
-      # cargo +$DOCS_RS_VERSION doc --no-deps --target "$TARGET" --all-features --release &>/dev/null
+      : # cargo +$DOCS_RS_VERSION doc --no-deps --target "$TARGET" --all-features --release &>/dev/null
     done
   )
 
