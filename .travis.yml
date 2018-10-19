@@ -69,28 +69,28 @@ before_script: |
       sudo -E apt-get -yq --no-install-suggests --no-install-recommends $(travis_apt_get_options) install libstdc++6-4.7-dev
     fi
     for TARGET in $BUILD $RUN; do [ "$TARGET" = $(rustup target list | grep default | grep -o -e '^[^ ]\+') ] || travis_retry rustup target add "$TARGET"; done
-    travis_retry rustup toolchain add $FMT_VERSION
-    travis_retry rustup toolchain add $CLIPPY_VERSION
-    travis_retry rustup component add rustfmt-preview --toolchain $FMT_VERSION
-    travis_retry rustup component add clippy-preview --toolchain $CLIPPY_VERSION
-    travis_retry rustup toolchain add $DOCS_RS_VERSION
+    # travis_retry rustup toolchain add $FMT_VERSION
+    # travis_retry rustup toolchain add $CLIPPY_VERSION
+    # travis_retry rustup component add rustfmt-preview --toolchain $FMT_VERSION
+    # travis_retry rustup component add clippy-preview --toolchain $CLIPPY_VERSION
+    # travis_retry rustup toolchain add $DOCS_RS_VERSION
     for TARGET in $BUILD $RUN; do [ "$TARGET" = $(rustup target list | grep default | grep -o -e '^[^ ]\+') ] || travis_retry rustup target add --toolchain $DOCS_RS_VERSION "$TARGET"; done
   )
 script: |
   ( set -o errexit;set -o pipefail; set -o xtrace;set -o nounset;
-    cargo +$FMT_VERSION fmt -- --check
-    RUSTFLAGS="-C target-cpu=native" cargo +$CLIPPY_VERSION clippy --all-targets --all-features -- -D warnings
+    # cargo +$FMT_VERSION fmt -- --check
+    # RUSTFLAGS="-C target-cpu=native" cargo +$CLIPPY_VERSION clippy --all-targets --all-features -- -D warnings
     OLD_IFS=$IFS IFS=";"; for RUSTFLAGS in $RUSTFLAGS_VARIATIONS; do ( IFS=$OLD_IFS
       export RUSTFLAGS
       for TARGET in $BUILD $RUN; do (
         [ \( "$TRAVIS_OS_NAME" = "osx" -o \( "$TRAVIS_OS_NAME" = "linux" -a "${DIST-}" = "precise" \) \) -a \( "$TARGET" = "x86_64-unknown-linux-musl" -o "$TARGET" = "i686-unknown-linux-musl" \) ] && RUSTFLAGS="$RUSTFLAGS -C linker=rust-lld -Z linker-flavor=ld.lld"
         cargo build --verbose --target "$TARGET" -p constellation-rs --test tester $(for test in tests/*.rs; do test=${test##*/}; ( echo -n " --test ${test%.*}"; ); done) --examples --all-features # --tests builds doctests, this hack doesn't
-        RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" cargo build --verbose --target "$TARGET" -p constellation-rs --test tester $(for test in tests/*.rs; do test=${test##*/}; ( echo -n " --test ${test%.*}"; ); done) --examples --all-features --release
+        # RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" cargo build --verbose --target "$TARGET" -p constellation-rs --test tester $(for test in tests/*.rs; do test=${test##*/}; ( echo -n " --test ${test%.*}"; ); done) --examples --all-features --release
       ); done
       for TARGET in $RUN; do (
         [ \( "$TRAVIS_OS_NAME" = "osx" -o \( "$TRAVIS_OS_NAME" = "linux" -a "${DIST-}" = "precise" \) \) -a \( "$TARGET" = "x86_64-unknown-linux-musl" -o "$TARGET" = "i686-unknown-linux-musl" \) ] && RUSTFLAGS="$RUSTFLAGS -C linker=rust-lld -Z linker-flavor=ld.lld"
         RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features -- 10 --all-features
-        RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- 10 --all-features --release
+        # RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- 10 --all-features --release
         # RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo bench --target "$TARGET" --all-features
         [ ! -d examples ] || for example in examples/*.rs; do example=${example##*/}; (
           RUST_BACKTRACE=full cargo run --target "$TARGET" --example ${example%.*} --all-features

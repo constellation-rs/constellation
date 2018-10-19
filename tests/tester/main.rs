@@ -300,8 +300,8 @@ fn main() {
 			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::piped())
-		.stderr(process::Stdio::piped())
+		.stdout(process::Stdio::null())
+		.stderr(process::Stdio::null())
 		.spawn()
 		.unwrap();
 	let start_ = time::Instant::now();
@@ -321,28 +321,28 @@ fn main() {
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 
-	let mut fabric_stdout = fabric.stdout.take().unwrap();
-	let _ = thread::spawn(move || loop {
-		use std::io::Read;
-		let mut stdout = vec![0; 1024];
-		let n = fabric_stdout.read(&mut stdout).unwrap();
-		if n == 0 {
-			break;
-		}
-		stdout.truncate(n);
-		println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
-	});
-	let mut fabric_stderr = fabric.stderr.take().unwrap();
-	let _ = thread::spawn(move || loop {
-		use std::io::Read;
-		let mut stderr = vec![0; 1024];
-		let n = fabric_stderr.read(&mut stderr).unwrap();
-		if n == 0 {
-			break;
-		}
-		stderr.truncate(n);
-		println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
-	});
+	// let mut fabric_stdout = fabric.stdout.take().unwrap();
+	// let _ = thread::spawn(move || loop {
+	// 	use std::io::Read;
+	// 	let mut stdout = vec![0; 1024];
+	// 	let n = fabric_stdout.read(&mut stdout).unwrap();
+	// 	if n == 0 {
+	// 		break;
+	// 	}
+	// 	stdout.truncate(n);
+	// 	println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
+	// });
+	// let mut fabric_stderr = fabric.stderr.take().unwrap();
+	// let _ = thread::spawn(move || loop {
+	// 	use std::io::Read;
+	// 	let mut stderr = vec![0; 1024];
+	// 	let n = fabric_stderr.read(&mut stderr).unwrap();
+	// 	if n == 0 {
+	// 		break;
+	// 	}
+	// 	stderr.truncate(n);
+	// 	println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
+	// });
 
 	let mut products = products
 		.iter()
@@ -408,6 +408,13 @@ fn main() {
 	}
 
 	fabric.kill().unwrap();
+	println!(
+		"{:?}",
+		process::Command::new("killall")
+			.args(&["bridge"])
+			.output()
+			.unwrap()
+	);
 
 	println!(
 		"{}/{} succeeded in {:?}",
