@@ -74,7 +74,7 @@ before_script: |
     # travis_retry rustup component add rustfmt-preview --toolchain $FMT_VERSION
     # travis_retry rustup component add clippy-preview --toolchain $CLIPPY_VERSION
     # travis_retry rustup toolchain add $DOCS_RS_VERSION
-    for TARGET in $BUILD $RUN; do [ "$TARGET" = $(rustup target list | grep default | grep -o -e '^[^ ]\+') ] || travis_retry rustup target add --toolchain $DOCS_RS_VERSION "$TARGET"; done
+    # for TARGET in $BUILD $RUN; do [ "$TARGET" = $(rustup target list | grep default | grep -o -e '^[^ ]\+') ] || travis_retry rustup target add --toolchain $DOCS_RS_VERSION "$TARGET"; done
   )
 script: |
   ( set -o errexit;set -o pipefail; set -o xtrace;set -o nounset;
@@ -99,7 +99,7 @@ script: |
       ); done
     ); done; IFS=$OLD_IFS
     for TARGET in $BUILD $RUN; do
-      cargo +$DOCS_RS_VERSION doc --no-deps --target "$TARGET" --all-features --release &>/dev/null
+      # cargo +$DOCS_RS_VERSION doc --no-deps --target "$TARGET" --all-features --release &>/dev/null
     done
   )
 
