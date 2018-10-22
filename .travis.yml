@@ -89,7 +89,7 @@ script: |
       ); done
       for TARGET in $RUN; do (
         [ \( "$TRAVIS_OS_NAME" = "osx" -o \( "$TRAVIS_OS_NAME" = "linux" -a "${DIST-}" = "precise" \) \) -a \( "$TARGET" = "x86_64-unknown-linux-musl" -o "$TARGET" = "i686-unknown-linux-musl" \) ] && RUSTFLAGS="$RUSTFLAGS -C linker=rust-lld -Z linker-flavor=ld.lld"
-        RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features -- 20 --all-features
+        RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features -- 200 --all-features
         RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo test --test tester --target "$TARGET" --all-features --release -- 20 --all-features --release
         # RUSTFLAGS="$RUSTFLAGS -C target-cpu=native" RUST_BACKTRACE=full cargo bench --target "$TARGET" --all-features
         [ ! -d examples ] || for example in examples/*.rs; do example=${example##*/}; (
