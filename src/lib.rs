@@ -721,16 +721,23 @@ pub fn bridge_init() -> net::TcpListener {
 	if is_valgrind() {
 		unistd::close(valgrind_start_fd() - 1 - 12).unwrap();
 	}
+	// #[cfg(any(target_os = "android", target_os = "linux"))]
+	// {
+	// 	let err = unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
+	// 	assert_eq!(err, 0);
+	// }
+	// nix::libc::kill(0, nix::libc::SIGKILL);
+	// nix::libc::_Exit(127);
 	// init();
-	eprintln!("a");
+	// eprintln!("a");
 	socket::listen(BOUND_FD, 100).unwrap();
-	eprintln!("b");
+	// eprintln!("b");
 	let listener = unsafe { net::TcpListener::from_raw_fd(BOUND_FD) };
 	{
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
 		drop(arg);
-		eprintln!("c");
+		// eprintln!("c");
 		let port = {
 			let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
 			let local_addr = listener.local_addr().unwrap();
@@ -742,7 +749,7 @@ pub fn bridge_init() -> net::TcpListener {
 		let scheduler = net::TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
-		eprintln!("d");
+		// eprintln!("d");
 		if scheduler != SCHEDULER_FD {
 			move_fd(scheduler, SCHEDULER_FD, fcntl::OFlag::empty(), true).unwrap();
 		}

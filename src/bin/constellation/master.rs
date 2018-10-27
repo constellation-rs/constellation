@@ -154,8 +154,8 @@ pub fn run(
 							ports,
 						)))
 						.unwrap();
-					let pid: Option<Pid> = receiver.recv().unwrap();
-					println!("bridge at {:?}", pid.unwrap());
+					let _pid: Option<Pid> = receiver.recv().unwrap();
+					// println!("bridge at {:?}", pid.unwrap());
 				});
 			}
 			(sender_a, node, addr.ip(), VecDeque::new())
@@ -200,7 +200,7 @@ pub fn run(
 	for msg in receiver.iter() {
 		match msg {
 			Either::Left((process, args, vars, binary, arg, sender, force, ports)) => {
-				println!("spawn {:?}", process);
+				// println!("spawn {:?}", process);
 				let node = if force.is_none() {
 					nodes.iter().position(|node| node.1.fits(&process))
 				} else {
@@ -233,7 +233,7 @@ pub fn run(
 				}
 			}
 			Either::Right((node_, Either::Left(init))) => {
-				println!("init {}:{}", node_, init);
+				// println!("init {}:{}", node_, init);
 				let node = &mut nodes[node_];
 				let (sender, process) = node.3.pop_front().unwrap();
 				let x = processes.insert((node_, init), process);
@@ -243,7 +243,7 @@ pub fn run(
 			}
 			Either::Right((node, Either::Right(done))) => {
 				let process = processes.remove(&(node, done)).unwrap();
-				println!("done {}:{}", node, done);
+				// println!("done {}:{}", node, done);
 				let node = &mut nodes[node];
 				node.1.free(&process);
 			}

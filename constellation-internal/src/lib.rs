@@ -281,9 +281,11 @@ pub const RESOURCES_DEFAULT: Resources = Resources {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(/*tag = "event", */rename_all = "lowercase")]
 pub enum FabricOutputEvent {
-	Spawn(Pid, Pid),
-	Output(Pid, Fd, Vec<u8>),
-	Exit(Pid, ExitStatus),
+	Init(u16, u64),
+	Exit(u16, u64),
+	// Spawn(Pid, Pid),
+	// Output(Pid, Fd, Vec<u8>),
+	// Exit(Pid, ExitStatus),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

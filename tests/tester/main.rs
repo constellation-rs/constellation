@@ -3,7 +3,7 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
-#![feature(allocator_api, try_from)]
+#![feature(allocator_api, try_from, nll)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -26,7 +26,7 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate constellation_internal;
-// extern crate either;
+extern crate crossbeam;
 extern crate escargot;
 extern crate itertools;
 extern crate multiset;
@@ -35,9 +35,9 @@ extern crate serde_json;
 
 mod ext;
 
-use constellation_internal::ExitStatus;
+use constellation_internal::{ExitStatus, FabricOutputEvent};
 use std::{
-	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, net, os, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
+	collections::{HashMap, HashSet}, env, fs, hash, io::{self, BufRead}, iter, net, os, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
 };
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -300,8 +300,8 @@ fn main() {
 			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::null())
-		.stderr(process::Stdio::null())
+		.stdout(process::Stdio::piped())
+		.stderr(process::Stdio::piped())
 		.spawn()
 		.unwrap();
 	let start_ = time::Instant::now();
@@ -312,6 +312,27 @@ fn main() {
 		}
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
+	let mut fabric_stdout = serde_json::StreamDeserializer::new(serde_json::de::IoRead::new(
+		fabric.stdout.take().unwrap(),
+	));
+	let mut fabric_stderr = fabric.stderr.take().unwrap();
+	let fabric_stderr = thread::spawn(move || {
+		let mut none = true;
+		loop {
+			use std::io::Read;
+			let mut stderr = vec![0; 1024];
+			// println!("awaiting stderr");
+			let n = fabric_stderr.read(&mut stderr).unwrap();
+			// println!("got stderr {}", n);
+			if n == 0 {
+				break;
+			}
+			none = false;
+			stderr.truncate(n);
+			println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
+		}
+		none
+	});
 	let start_ = time::Instant::now();
 	while net::TcpStream::connect(BRIDGE_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
@@ -320,29 +341,7 @@ fn main() {
 		}
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
-
-	// let mut fabric_stdout = fabric.stdout.take().unwrap();
-	// let _ = thread::spawn(move || loop {
-	// 	use std::io::Read;
-	// 	let mut stdout = vec![0; 1024];
-	// 	let n = fabric_stdout.read(&mut stdout).unwrap();
-	// 	if n == 0 {
-	// 		break;
-	// 	}
-	// 	stdout.truncate(n);
-	// 	println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
-	// });
-	// let mut fabric_stderr = fabric.stderr.take().unwrap();
-	// let _ = thread::spawn(move || loop {
-	// 	use std::io::Read;
-	// 	let mut stderr = vec![0; 1024];
-	// 	let n = fabric_stderr.read(&mut stderr).unwrap();
-	// 	if n == 0 {
-	// 		break;
-	// 	}
-	// 	stderr.truncate(n);
-	// 	println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
-	// });
+	let _bridge_pid: FabricOutputEvent = fabric_stdout.next().unwrap().unwrap();
 
 	let mut products = products
 		.iter()
@@ -364,8 +363,37 @@ fn main() {
 				.flat_map(|x| ext::string::Chars::new(x).skip(3))
 				.collect::<String>(),
 		);
-		let mut x = |command: &mut process::Command| {
-			let result = command.output().unwrap();
+		let mut x = |command: &mut process::Command, deployed: bool| {
+			let result = crossbeam::thread::scope(|scope| {
+				if deployed {
+					fn count_processes(output_test: &OutputTest) -> usize {
+						1 + output_test
+							.children
+							.iter()
+							.map(count_processes)
+							.sum::<usize>()
+					}
+					let processes = count_processes(file.as_ref().unwrap());
+					let fabric_stdout = &mut fabric_stdout;
+					let _ = scope.spawn(move || {
+						let mut pids = HashSet::new();
+						for _ in 0..processes * 2 {
+							match fabric_stdout.next().unwrap().unwrap() {
+								FabricOutputEvent::Init(a, b) => {
+									let x = pids.insert((a, b));
+									assert!(x);
+								}
+								FabricOutputEvent::Exit(a, b) => {
+									let x = pids.remove(&(a, b));
+									assert!(x);
+								}
+							}
+						}
+						assert!(pids.is_empty(), "{:?}", pids);
+					});
+				}
+				command.output().unwrap()
+			});
 			let output = parse_output(&result);
 			if output.is_err()
 				|| file.is_err()
@@ -393,21 +421,28 @@ fn main() {
 		println!("  native");
 		for i in 0..iterations {
 			println!("    {}", i);
-			x(process::Command::new(bin)
-				.env_remove("CONSTELLATION_VERSION")
-				.env("CONSTELLATION_FORMAT", "json"));
+			x(
+				process::Command::new(bin)
+					.env_remove("CONSTELLATION_VERSION")
+					.env("CONSTELLATION_FORMAT", "json"),
+				false,
+			);
 		}
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
-			x(process::Command::new(deploy)
-				.env_remove("CONSTELLATION_VERSION")
-				.env_remove("CONSTELLATION_FORMAT")
-				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
+			x(
+				process::Command::new(deploy)
+					.env_remove("CONSTELLATION_VERSION")
+					.env_remove("CONSTELLATION_FORMAT")
+					.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]),
+				true,
+			);
 		}
 	}
 
 	fabric.kill().unwrap();
+	// TODO: don't rely on killall
 	println!(
 		"{:?}",
 		process::Command::new("killall")
@@ -415,6 +450,10 @@ fn main() {
 			.output()
 			.unwrap()
 	);
+	let x = fabric_stdout.next();
+	assert!(x.is_none());
+	let x = fabric_stderr.join().unwrap();
+	assert!(x);
 
 	println!(
 		"{}/{} succeeded in {:?}",

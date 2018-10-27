@@ -68,7 +68,8 @@
 	clippy::similar_names,
 	clippy::type_complexity,
 	clippy::non_ascii_literal,
-	clippy::shadow_unrelated
+	clippy::shadow_unrelated,
+	clippy::needless_pass_by_value
 )]
 
 extern crate bincode;
@@ -88,7 +89,7 @@ extern crate serde_json;
 mod master;
 
 use constellation_internal::{
-	map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
+	map_bincode_err, parse_binary_size, BufferedStream, FabricOutputEvent, Pid, PidInternal, Resources
 };
 use either::Either;
 #[cfg(unix)]
@@ -304,11 +305,11 @@ fn parse_request<R: Read>(
 	Ok((resources, ports, binary, args, vars, arg))
 }
 
-// fn trace(event: FabricOutputEvent) {
-// 	let stdout = io::stdout();
-// 	serde_json::to_writer(&mut *stdout, &event).unwrap();
-// 	stdout.write_all(b"\n").unwrap()
-// }
+fn trace(event: FabricOutputEvent) {
+	let mut stdout = io::stdout();
+	serde_json::to_writer(&mut stdout, &event).unwrap();
+	stdout.write_all(b"\n").unwrap()
+}
 
 fn main() {
 	std::panic::set_hook(Box::new(|info| {
@@ -357,10 +358,10 @@ fn main() {
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
 	};
-	let mut count = 0;
+	// let mut count = 0;
 	for stream in listener.incoming() {
 		let stream = stream.unwrap();
-		println!("accepted");
+		// println!("accepted");
 		let mut pending_inner = HashMap::new();
 		{
 			let mut pending = &sync::RwLock::new(&mut pending_inner);
@@ -371,13 +372,21 @@ fn main() {
 					let receiver = receiver;
 					for (pid, done) in receiver.iter() {
 						match done {
-							Either::Left(init) => {
-								count += 1;
-								println!("FABRIC: init({}) {}:{}", count, pid, init);
+							Either::Left(process_id) => {
+								// count += 1;
+								// println!("FABRIC: init({}) {}:{}", count, pid, process_id);
+								trace(FabricOutputEvent::Init(
+									process_id,
+									nix::libc::pid_t::from(pid).try_into().unwrap(),
+								));
 							}
-							Either::Right(exit) => {
-								count -= 1;
-								println!("FABRIC: exit({}) {}:{}", count, pid, exit);
+							Either::Right(process_id) => {
+								// count -= 1;
+								// println!("FABRIC: exit({}) {}:{}", count, pid, process_id);
+								trace(FabricOutputEvent::Exit(
+									process_id,
+									nix::libc::pid_t::from(pid).try_into().unwrap(),
+								));
 							}
 						}
 						if bincode::serialize_into(&mut stream_write, &done)
