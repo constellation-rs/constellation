@@ -717,22 +717,30 @@ extern "C" fn at_exit() {
 
 #[doc(hidden)]
 pub fn bridge_init() -> net::TcpListener {
-	const BOUND_FD: Fd = 5; // from fabric
+	const KILLER_FD: Fd = 5;
+	const BOUND_FD_START: Fd = 6; // from fabric
 	if is_valgrind() {
 		unistd::close(valgrind_start_fd() - 1 - 12).unwrap();
 	}
-	// #[cfg(any(target_os = "android", target_os = "linux"))]
-	// {
-	// 	let err = unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
-	// 	assert_eq!(err, 0);
-	// }
-	// nix::libc::kill(0, nix::libc::SIGKILL);
-	// nix::libc::_Exit(127);
+	#[cfg(any(target_os = "android", target_os = "linux"))]
+	{
+		let err = unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
+		assert_eq!(err, 0);
+	}
+	#[cfg(not(any(target_os = "android", target_os = "linux")))]
+	{
+		let _ = thread::spawn(|| {
+			let mut arg = unsafe { fs::File::from_raw_fd(KILLER_FD) };
+			let _ = arg.read(&mut [0]).unwrap();
+			let _ = unsafe { nix::libc::kill(0, nix::libc::SIGKILL) };
+			unreachable!();
+		});
+	}
 	// init();
 	// eprintln!("a");
-	socket::listen(BOUND_FD, 100).unwrap();
+	socket::listen(BOUND_FD_START, 100).unwrap();
 	// eprintln!("b");
-	let listener = unsafe { net::TcpListener::from_raw_fd(BOUND_FD) };
+	let listener = unsafe { net::TcpListener::from_raw_fd(BOUND_FD_START) };
 	{
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();

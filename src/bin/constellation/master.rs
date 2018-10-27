@@ -166,7 +166,7 @@ pub fn run(
 	let _ = spawn(String::from(""), move || {
 		for stream in listener.incoming() {
 			// println!("accepted");
-			let mut stream = stream.unwrap();
+			let stream = stream.unwrap();
 			let sender = sender.clone();
 			let _ = spawn(String::from(""), move || {
 				let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);

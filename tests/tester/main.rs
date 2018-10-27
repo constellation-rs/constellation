@@ -442,14 +442,6 @@ fn main() {
 	}
 
 	fabric.kill().unwrap();
-	// TODO: don't rely on killall
-	println!(
-		"{:?}",
-		process::Command::new("killall")
-			.args(&["bridge"])
-			.output()
-			.unwrap()
-	);
 	let x = fabric_stdout.next();
 	assert!(x.is_none());
 	let x = fabric_stderr.join().unwrap();
