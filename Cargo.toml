@@ -60,6 +60,10 @@ hex = "0.3"
 escargot = "0.3"
 serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
 
+[replace]
+"palaver:0.1.0" = { path = "../palaver" }
+"tcp_typed:0.1.1" = { path = "../tcp_typed" }
+
 # [profile.test]
 # panic = "abort"
 

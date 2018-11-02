@@ -399,6 +399,10 @@ fn main() {
 				.port();
 				let child = match unistd::fork().expect("Fork failed") {
 					unistd::ForkResult::Child => {
+						// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+						// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+						// Ideally including malloc.
+
 						// println!("{:?}", args[0]);
 						#[cfg(any(target_os = "android", target_os = "linux"))]
 						{

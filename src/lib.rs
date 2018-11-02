@@ -729,7 +729,7 @@ pub fn bridge_init() -> net::TcpListener {
 	}
 	#[cfg(not(any(target_os = "android", target_os = "linux")))]
 	{
-		let _ = thread::spawn(|| {
+		let _ = thread_spawn(String::from("killer"), || {
 			let mut arg = unsafe { fs::File::from_raw_fd(KILLER_FD) };
 			let _ = arg.read(&mut [0]).unwrap();
 			let _ = unsafe { nix::libc::kill(0, nix::libc::SIGKILL) };
@@ -780,6 +780,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	let (bridge_process_listener, bridge_process_id) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
+	assert_eq!(palaver::count(), 1);
 	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
 		#[cfg(any(target_os = "android", target_os = "linux"))]
 		{
@@ -929,7 +930,7 @@ fn native_process_listener() -> (Fd, u16) {
 fn monitor_process(
 	bridge: Pid, deployed: bool,
 ) -> (channel::SocketForwardee, Fd, Fd, Option<Fd>, Fd) {
-	const FORWARD_STDERR: bool = true;
+	const FORWARD_STDERR: bool = false;
 
 	let (socket_forwarder, socket_forwardee) = channel::socket_forwarder();
 
@@ -948,6 +949,7 @@ fn monitor_process(
 
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
+	assert_eq!(palaver::count(), 1);
 	if let unistd::ForkResult::Parent { child } = unistd::fork().unwrap() {
 		unistd::close(reader).unwrap();
 		unistd::close(monitor_writer).unwrap();

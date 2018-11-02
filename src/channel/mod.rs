@@ -139,14 +139,45 @@ impl Reactor {
 				let inner = &inner.as_ref().unwrap().inner;
 				inner.valid() && !inner.closed()
 			}) {
-				// if let &Some(ref sockets) = &done {
-				// 	trace!(
-				// 		"sockets: {:?}",
-				// 		&**sockets
-				// 	); // called after rust runtime exited, not sure what trace does
-				// }
+				let mut sender = None;
+				let mut catcher = None;
+				if let &Some(ref sockets) = &done {
+					struct Ptr<T: ?Sized>(T);
+					unsafe impl<T: ?Sized> ::std::marker::Send for Ptr<T> {}
+					unsafe impl<T: ?Sized> Sync for Ptr<T> {}
+					let (sender_, receiver) = std::sync::mpsc::sync_channel(0);
+					sender = Some(sender_);
+					let sockets = Ptr(&**sockets as *const _);
+					catcher = Some(thread::spawn(move || {
+						if receiver
+							.recv_timeout(::std::time::Duration::new(10, 0))
+							.is_err()
+						{
+							use constellation_internal::PidInternal;
+							use std::io::Write;
+							std::io::stderr()
+								.lock()
+								.write_all(
+									format!(
+										"\n{}: {}: {}: sockets: {:?}\n",
+										::pid(),
+										::nix::unistd::getpid(),
+										::pid().addr(),
+										unsafe { &*sockets.0 }
+									)
+									.as_bytes(),
+								)
+								.unwrap(); // called after rust runtime exited, not sure what trace does
+						}
+					}));
+				}
 				#[allow(clippy::cyclomatic_complexity)]
 				notifier.wait(|_events, data| {
+					if let Some(sender) = sender.take() {
+						sender.send(()).unwrap();
+						drop(sender);
+						catcher.take().unwrap().join().unwrap();
+					}
 					if data == Key(ptr::null()) {
 						for (remote, connection) in
 							listener.poll(&notifier.context(Key(ptr::null())), &mut accept_hook)
