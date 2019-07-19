@@ -1,9 +1,21 @@
 [package]
-name = "template"
+name = "template-rust"
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
+categories = []
+keywords = []
+description = """
+A template Rust library crate.
+"""
+repository = "https://github.com/alecmocatta/template-rust"
+homepage = "https://github.com/alecmocatta/template-rust"
+documentation = "https://docs.rs/template-rust/0.1.0"
+readme = "README.md"
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[badges]
+azure-devops = { project = "alecmocatta/template-rust", pipeline = "tests" }
+maintenance = { status = "passively-maintained" }
 
 [dependencies]
