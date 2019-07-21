@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/template-rust.svg?maxAge=86400)](https://crates.io/crates/template-rust)
 [![MIT / Apache 2.0 licensed](https://img.shields.io/crates/l/template-rust.svg?maxAge=2592000)](#License)
-[![Build Status](https://dev.azure.com/alecmocatta/template-rust/_apis/build/status/tests?branchName=master)](https://dev.azure.com/alecmocatta/template-rust/_build/latest?definitionId=1&branchName=master)
+[![Build Status](https://dev.azure.com/alecmocatta/template-rust/_apis/build/status/tests?branchName=master)](https://dev.azure.com/alecmocatta/template-rust/_build/latest?branchName=master)
 
 [Docs](https://docs.rs/template-rust/0.1.0)
 
