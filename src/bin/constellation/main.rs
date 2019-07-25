@@ -95,9 +95,6 @@ type Fd = std::os::unix::io::RawFd;
 #[cfg(windows)]
 type Fd = std::os::windows::io::RawHandle;
 
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
-
 const DESCRIPTION: &str = r"
 constellation
 Run a constellation node, optionally as master, and optionally start a bridge running

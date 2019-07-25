@@ -39,9 +39,6 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
-
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
 	output: HashMap<

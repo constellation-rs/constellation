@@ -10,13 +10,7 @@
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.4")]
-#![feature(
-	read_initializer,
-	core_intrinsics,
-	arbitrary_self_types,
-	unboxed_closures,
-	never_type
-)]
+#![feature(read_initializer, core_intrinsics, never_type)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -96,9 +90,6 @@ lazy_static! {
 	static ref RESOURCES: sync::RwLock<Option<Resources>> = sync::RwLock::new(None);
 	static ref HANDLE: sync::RwLock<Option<channel::Handle>> = sync::RwLock::new(None);
 }
-
-// #[global_allocator]
-// static GLOBAL_ALLOCATOR: alloc::System = alloc::System;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

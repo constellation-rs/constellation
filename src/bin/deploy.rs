@@ -15,7 +15,6 @@
 //!
 //! Note: --format can also be given as an env var, such as `CONSTELLATION_FORMAT=json`
 
-#![feature(nll, allocator_api)]
 #![warn(
 	missing_copy_implementations,
 	missing_debug_implementations,
@@ -38,9 +37,6 @@ use std::{
 use constellation_internal::{
 	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, Resources, StyleSupport
 };
-
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
 
 const USAGE: &str = "
 deploy
