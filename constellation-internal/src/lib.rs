@@ -1,4 +1,3 @@
-#![feature(try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -20,25 +19,13 @@
 	clippy::if_not_else
 )]
 
-#[macro_use]
-extern crate serde_derive;
-extern crate aes_frast;
-extern crate ansi_term;
-extern crate bincode;
-extern crate cargo_metadata as cargo_metadata_;
-#[cfg(unix)]
-extern crate nix;
-extern crate rand;
-extern crate serde_json;
-#[cfg(windows)]
-extern crate winapi;
-
 mod ext;
 mod format;
 
 #[cfg(unix)]
 use nix::sys::signal;
 use std::{convert::TryInto, env, ffi::OsString, fmt, io, net, ops};
+use serde::{Serialize,Deserialize};
 
 #[cfg(target_family = "unix")]
 type Fd = std::os::unix::io::RawFd;
@@ -64,7 +51,7 @@ impl Pid {
 		match ip {
 			net::IpAddr::V4(ip) => {
 				let ip = ip.octets();
-				Pid([
+				Self([
 					ip[0],
 					ip[1],
 					ip[2],
@@ -185,54 +172,52 @@ impl Envs {
 	}
 
 	pub fn from(env: &[(OsString, OsString)]) -> Self {
-		let deploy = env.iter().find(|x| &x.0 == "CONSTELLATION").map(|x| {
-			x.1.clone()
+		let deploy = env.iter().find_map(|x| if x.0 == "CONSTELLATION" {
+			Some(x.1.clone()
 				.into_string()
 				.ok()
 				.and_then(|x| match &*x.to_ascii_lowercase() {
 					"fabric" => Some(Deploy::Fabric),
 					_ => None,
-				})
-		}); // TODO: use serde?
+				}))
+			} else { None }
+		); // TODO: use serde?
 		let version = env
 			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_VERSION")
-			.map(|x| {
-				x.1.clone().into_string().ok().and_then(|x| match &*x {
+			.find_map(|x| if x.0 == "CONSTELLATION_VERSION" {
+				Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
 					"0" => Some(false),
 					"1" => Some(true),
 					_ => None,
-				})
-			});
-		let recce = env.iter().find(|x| &x.0 == "CONSTELLATION_RECCE").map(|x| {
-			x.1.clone().into_string().ok().and_then(|x| match &*x {
+				}))
+			} else { None });
+		let recce = env.iter().find_map(|x| if x.0 == "CONSTELLATION_RECCE" {
+			Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
 				"0" => Some(false),
 				"1" => Some(true),
 				_ => None,
-			})
-		});
+			}))
+		} else { None });
 		let format = env
 			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_FORMAT")
-			.map(|x| {
-				x.1.clone()
+			.find_map(|x| if x.0 == "CONSTELLATION_FORMAT" {
+				Some(x.1.clone()
 					.into_string()
 					.ok()
 					.and_then(|x| match &*x.to_ascii_lowercase() {
 						"human" => Some(Format::Human),
 						"json" => Some(Format::Json),
 						_ => None,
-					})
-			}); // TODO: use serde?
+					}))
+			} else { None }); // TODO: use serde?
 		let resources = env
 			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_RESOURCES")
-			.map(|x| {
-				x.1.clone()
+			.find_map(|x| if x.0 == "CONSTELLATION_RESOURCES" {
+				Some(x.1.clone()
 					.into_string()
 					.ok()
-					.and_then(|x| serde_json::from_str(&x).ok())
-			});
+					.and_then(|x| serde_json::from_str(&x).ok()))
+			} else { None});
 		Self {
 			deploy,
 			version,
@@ -551,8 +536,9 @@ pub fn map_bincode_err(err: bincode::Error) -> io::Error {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub mod cargo_metadata {
-	use cargo_metadata_::Target;
+	use cargo_metadata::Target;
 	use std::path::PathBuf;
+	use serde::Deserialize;
 
 	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs
 	#[derive(Deserialize, Debug)]

@@ -28,25 +28,15 @@
 	clippy::pedantic
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 
-extern crate bincode;
-extern crate crossbeam;
-// extern crate serde;
-extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-extern crate atty;
-extern crate constellation_internal;
-extern crate docopt;
-extern crate either;
-extern crate palaver;
+use either::Either;
+use palaver::file::copy_sendfile;
+use std::{
+	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
+};
+use serde::Deserialize;
 
 use constellation_internal::{
 	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, Resources, StyleSupport
-};
-use either::Either;
-use palaver::copy_sendfile;
-use std::{
-	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
 };
 
 #[global_allocator]

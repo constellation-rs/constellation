@@ -70,10 +70,7 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-#[macro_use]
-extern crate serde_closure;
+use serde_closure::FnOnce;
 use constellation::*;
 
 fn main() {

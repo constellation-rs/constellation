@@ -28,17 +28,11 @@
 //! where `10.0.0.1` is the address of the master. See [here](https://github.com/alecmocatta/constellation)
 //! for instructions on setting up the cluster.
 
-#[macro_use]
-extern crate serde_closure;
-extern crate constellation;
-extern crate hex;
-extern crate rand;
-extern crate sha1;
-
-use constellation::*;
 use rand::{distributions::Alphanumeric, Rng};
 use sha1::Sha1;
 use std::{env, iter, time};
+
+use constellation::*;
 
 fn main() {
 	init(Resources::default());
@@ -57,7 +51,7 @@ fn main() {
 			Resources::default(),
 			// Make this closure serializable by wrapping with serde_closure's
 			// FnOnce!() macro, which requires explicitly listing captured variables.
-			FnOnce!([i] move |parent| {
+			serde_closure::FnOnce!([i] move |parent| {
 				println!("process {}: commencing hashing", i);
 
 				let mut rng = rand::thread_rng();

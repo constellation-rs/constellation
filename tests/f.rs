@@ -19,8 +19,6 @@
 //=   }
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
 use constellation::*;
 use std::{process, thread, time};
 

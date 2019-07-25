@@ -13,8 +13,6 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
 use constellation::*;
 
 fn main() {

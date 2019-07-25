@@ -3,7 +3,6 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
-#![feature(allocator_api, try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -22,23 +21,14 @@
 	clippy::derive_hash_xor_eq
 )]
 
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate constellation_internal;
-// extern crate either;
-extern crate escargot;
-extern crate itertools;
-extern crate multiset;
-extern crate regex;
-extern crate serde_json;
-
 mod ext;
 
-use constellation_internal::ExitStatus;
 use std::{
 	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, os, path::{Path, PathBuf}, process, str, thread, time
 };
+use serde::{Serialize,Deserialize};
+
+use constellation_internal::ExitStatus;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
 const FABRIC: &str = "src/bin/constellation/main.rs";
@@ -296,10 +286,46 @@ fn main() {
 			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::null())
-		.stderr(process::Stdio::null())
+		.stdout(process::Stdio::piped())
+		.stderr(process::Stdio::piped())
 		.spawn()
 		.unwrap();
+	let mut fabric_stdout = fabric.stdout.take().unwrap();
+	let fabric_stdout = thread::spawn(move || {
+		let mut none = true;
+		loop {
+			use std::io::Read;
+			let mut stdout = vec![0; 1024];
+			// println!("awaiting stdout");
+			let n = fabric_stdout.read(&mut stdout).unwrap();
+			// println!("got stdout {}", n);
+			if n == 0 {
+				break;
+			}
+			none = false;
+			stdout.truncate(n);
+			println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
+		}
+		none
+	});
+	let mut fabric_stderr = fabric.stderr.take().unwrap();
+	let fabric_stderr = thread::spawn(move || {
+		let mut none = true;
+		loop {
+			use std::io::Read;
+			let mut stderr = vec![0; 1024];
+			// println!("awaiting stderr");
+			let n = fabric_stderr.read(&mut stderr).unwrap();
+			// println!("got stderr {}", n);
+			if n == 0 {
+				break;
+			}
+			none = false;
+			stderr.truncate(n);
+			println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
+		}
+		none
+	});
 	let start_ = time::Instant::now();
 	while std::net::TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
@@ -329,7 +355,7 @@ fn main() {
 		let file: Result<OutputTest, _> = serde_json::from_str(
 			&io::BufReader::new(fs::File::open(src).unwrap())
 				.lines()
-				.map(|x| x.unwrap())
+				.map(Result::unwrap)
 				.take_while(|x| x.get(0..3) == Some("//="))
 				.flat_map(|x| ext::string::Chars::new(x).skip(3))
 				.collect::<String>(),
@@ -378,6 +404,10 @@ fn main() {
 	}
 
 	fabric.kill().unwrap();
+	let stderr_empty = fabric_stderr.join().unwrap();
+	assert!(stderr_empty);
+	let stdout_empty = fabric_stdout.join().unwrap();
+	assert!(stdout_empty);
 
 	println!(
 		"{}/{} succeeded in {:?}",

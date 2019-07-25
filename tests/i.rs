@@ -114,13 +114,9 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-#[macro_use]
-extern crate serde_closure;
-extern crate serde;
-use constellation::*;
+use serde_closure::FnOnce;
 use std::{env, thread, time};
+use constellation::*;
 
 fn sub2<
 	T: std::fmt::Display + for<'de> serde::de::Deserialize<'de> + serde::ser::Serialize + 'static,

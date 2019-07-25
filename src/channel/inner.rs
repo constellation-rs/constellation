@@ -26,7 +26,7 @@ impl Inner {
 			Inner::ConnectingLocalClosed(connecting_local_closed) => {
 				connecting_local_closed.poll(notifier).into()
 			}
-			Inner::Connected(connecting) => connecting.poll(notifier).into(),
+			Inner::Connected(connected) => connected.poll(notifier).into(),
 			Inner::RemoteClosed(remote_closed) => remote_closed.poll(notifier).into(),
 			Inner::LocalClosed(local_closed) => local_closed.poll(notifier).into(),
 			Inner::Closing(closing) => closing.poll(notifier).into(),

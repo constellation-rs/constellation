@@ -27,9 +27,6 @@
 	clippy::pedantic
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 
-extern crate constellation_internal;
-extern crate serde_json;
-
 use std::{env, iter, net, process};
 
 fn main() {

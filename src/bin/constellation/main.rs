@@ -51,7 +51,6 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
-#![feature(allocator_api, try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -71,28 +70,13 @@
 	clippy::shadow_unrelated
 )]
 
-extern crate bincode;
-extern crate crossbeam;
-extern crate either;
-#[cfg(unix)]
-extern crate nix;
-// extern crate serde;
-#[cfg(windows)]
-extern crate winapi;
-#[macro_use]
-extern crate serde_derive;
-extern crate constellation_internal;
-extern crate palaver;
-extern crate serde_json;
-
 mod master;
 
-use constellation_internal::{map_bincode_err, parse_binary_size, BufferedStream, Resources};
 use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	copy, dup_to, fexecve, is_valgrind, memfd_create, move_fds, seal, socket, spawn, valgrind_start_fd, SockFlag
+	file::copy, file::copy_fd, file::fexecve, valgrind, file::memfd_create, file::move_fds, file::seal_fd, socket::socket, socket::SockFlag
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync::{self, mpsc}
@@ -103,6 +87,8 @@ use std::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}
 };
+
+use constellation_internal::{map_bincode_err, parse_binary_size, BufferedStream, Resources};
 
 #[cfg(unix)]
 type Fd = std::os::unix::io::RawFd;
@@ -280,7 +266,7 @@ fn parse_request<R: Read>(
 	copy(stream, &mut binary, len)?;
 	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);
-	seal(binary.as_raw_fd());
+	seal_fd(binary.as_raw_fd());
 	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let mut arg = unsafe {
 		fs::File::from_raw_fd(
@@ -305,7 +291,7 @@ fn main() {
 			let fabric = net::TcpListener::bind("127.0.0.1:0").unwrap();
 			let scheduler_addr = nodes[0].addr;
 			nodes[0].addr = fabric.local_addr().unwrap();
-			let _ = spawn(String::from("master"), move || {
+			let _ = std::thread::Builder::new().name(String::from("master")).spawn(move || {
 				master::run(
 					scheduler_addr,
 					nodes
@@ -331,7 +317,7 @@ fn main() {
 						)
 						.collect::<HashMap<_, _>>(),
 				); // TODO: error on clash
-			});
+			}).unwrap();
 			(scheduler_addr.ip(), fabric)
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
@@ -342,7 +328,7 @@ fn main() {
 		println!("accepted");
 		let mut pending_inner = HashMap::new();
 		{
-			let mut pending = &sync::RwLock::new(&mut pending_inner);
+			let pending = &sync::RwLock::new(&mut pending_inner);
 			let (sender, receiver) = mpsc::sync_channel::<(unistd::Pid, Either<u16, u16>)>(0);
 			let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
 			crossbeam::scope(|scope| {
@@ -417,7 +403,7 @@ fn main() {
 								(arg, ARG_FD),
 								(process_listener, LISTENER_FD),
 								(binary, binary_desired_fd),
-							]);
+							], Some(fcntl::FdFlag::empty()), true);
 							for (i, port) in ports.into_iter().enumerate() {
 								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
 								let fd = socket::socket(
@@ -428,7 +414,7 @@ fn main() {
 								)
 								.unwrap();
 								if fd != socket {
-									dup_to(fd, socket, fcntl::OFlag::empty()).unwrap();
+									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true).unwrap();
 									unistd::close(fd).unwrap();
 								}
 								socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
@@ -473,13 +459,14 @@ fn main() {
 								)
 								.expect("Failed to fexecve");
 							} else {
-								if is_valgrind() {
-									let binary_desired_fd_ = valgrind_start_fd() - 1;
+								if valgrind::is() {
+									let binary_desired_fd_ = valgrind::start_fd() - 1;
 									assert!(binary_desired_fd_ > binary_desired_fd);
-									dup_to(
+									copy_fd(
 										binary_desired_fd,
 										binary_desired_fd_,
-										fcntl::OFlag::empty(),
+										Some(fcntl::FdFlag::empty()),
+										true
 									)
 									.unwrap();
 									unistd::close(binary_desired_fd).unwrap();

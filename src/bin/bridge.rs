@@ -6,7 +6,6 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 */
 
-#![feature(nll, try_from)]
 #![warn(
 	missing_copy_implementations,
 	missing_debug_implementations,
@@ -24,17 +23,6 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 	clippy::shadow_unrelated
 )]
 
-extern crate bincode;
-extern crate constellation;
-extern crate constellation_internal;
-extern crate crossbeam;
-extern crate nix;
-extern crate palaver;
-extern crate proc_self;
-#[macro_use]
-extern crate log;
-
-use proc_self::FdIter;
 use std::{
 	collections::HashMap, convert::TryInto, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
 		self, unix::{
@@ -42,11 +30,12 @@ use std::{
 		}
 	}, sync::{self, mpsc}, thread, time
 };
+use log::trace;
+use palaver::{file::copy, file::copy_sendfile, file::fexecve, file::memfd_create, file::move_fds, file::seal_fd, file::FdIter};
 
 use constellation_internal::{
 	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
-use palaver::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal, spawn};
 
 #[cfg(target_family = "unix")]
 type Fd = os::unix::io::RawFd;
@@ -106,7 +95,7 @@ fn parse_request<R: Read>(
 	copy(stream, &mut binary, len)?;
 	let x = nix::unistd::lseek(binary.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);
-	seal(binary.as_raw_fd());
+	seal_fd(binary.as_raw_fd());
 
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	Ok((process, args, vars, binary, arg))
@@ -119,7 +108,7 @@ fn monitor_process(
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	let _ = spawn(String::from("monitor_process"), move || {
+	let _ = std::thread::Builder::new().name(String::from("monitor_process")).spawn(move || {
 		for event in receiver_.iter() {
 			let event = match event {
 				InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
@@ -139,7 +128,7 @@ fn monitor_process(
 		let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
 		assert_ne!(x, 0);
 		trace!("BRIDGE: KILL ({})", x);
-	});
+	}).unwrap();
 	loop {
 		// let event: Result<ProcessOutputEvent,_> = bincode::deserialize_from(&mut receiver).map_err(map_bincode_err);
 		let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
@@ -158,9 +147,9 @@ fn monitor_process(
 					.send(OutputEventInt::Spawn(pid, new_pid, sender1))
 					.unwrap();
 				let sender_ = sender_.clone();
-				let _ = spawn(String::from("d"), move || {
+				let _ = std::thread::Builder::new().name(String::from("d")).spawn( move || {
 					monitor_process(new_pid, sender_, receiver1);
-				});
+				}).unwrap();
 			}
 			ProcessOutputEvent::Output(fd, output) => {
 				sender_
@@ -189,7 +178,7 @@ fn recce(
 		CString::new("CONSTELLATION_RECCE").unwrap(),
 		CString::new("1").unwrap(),
 	)))
-	.chain(vars.into_iter().map(|(x, y)| {
+	.chain(vars.iter().map(|(x, y)| {
 		(
 			CString::new(OsStringExt::into_vec(x.clone())).unwrap(),
 			CString::new(OsStringExt::into_vec(y.clone())).unwrap(),
@@ -206,7 +195,7 @@ fn recce(
 	.collect::<Vec<_>>();
 
 	let args = args
-		.into_iter()
+		.iter()
 		.map(|x| CString::new(OsStringExt::into_vec(x.clone())).unwrap())
 		.collect::<Vec<_>>();
 
@@ -232,7 +221,7 @@ fn recce(
 		{
 			nix::unistd::close(fd).unwrap();
 		}
-		move_fds(&mut [(writer, 3), (binary.as_raw_fd(), 4)]);
+		move_fds(&mut [(writer, 3), (binary.as_raw_fd(), 4)], Some(nix::fcntl::FdFlag::empty()), true);
 		let err = nix::fcntl::open(
 			"/dev/null",
 			nix::fcntl::OFlag::O_RDWR,
@@ -258,10 +247,10 @@ fn recce(
 		unreachable!();
 	};
 	nix::unistd::close(writer).unwrap();
-	let _ = spawn(String::from(""), move || {
+	let _ = std::thread::Builder::new().name(String::from("")).spawn( move || {
 		thread::sleep(time::Duration::new(1, 0));
 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-	});
+	}).unwrap();
 	match nix::sys::wait::waitpid(child, None).unwrap() {
 		nix::sys::wait::WaitStatus::Exited(pid, code) if code == 0 => assert_eq!(pid, child),
 		nix::sys::wait::WaitStatus::Signaled(pid, signal, _)
@@ -282,12 +271,12 @@ fn main() {
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let listener = constellation::bridge_init();
 	let (sender, receiver) = mpsc::sync_channel::<_>(0);
-	let _ = spawn(String::from("a"), move || {
+	let _ = std::thread::Builder::new().name(String::from("a")).spawn( move || {
 		for stream in listener.incoming() {
 			trace!("BRIDGE: accepted");
 			let stream = stream.unwrap();
 			let sender = sender.clone();
-			let _ = spawn(String::from("b"), move || {
+			let _ = std::thread::Builder::new().name(String::from("b")).spawn( move || {
 				let stream = stream;
 				#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 				nix::sys::socket::setsockopt(
@@ -341,7 +330,7 @@ fn main() {
 						trace!("BRIDGE: SPAWN ({})", x);
 						let (sender, receiver) = mpsc::sync_channel::<_>(0);
 						let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
-						let _ = spawn(String::from("c"), move || {
+						let _ = std::thread::Builder::new().name(String::from("c")).spawn( move || {
 							monitor_process(pid, sender, receiver1);
 						});
 						let hashmap = &sync::Mutex::new(HashMap::new());
@@ -425,9 +414,9 @@ fn main() {
 					)
 					.unwrap();
 				}
-			});
+			}).unwrap();
 		}
-	});
+	}).unwrap();
 
 	for (process, args, vars, binary, arg, sender) in receiver {
 		let scheduler = unsafe { fs::File::from_raw_fd(SCHEDULER_FD) };

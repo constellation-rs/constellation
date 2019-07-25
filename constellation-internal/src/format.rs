@@ -219,14 +219,14 @@ impl Style {
 		match self.0 {
 			StyleSupport::None => *self,
 			StyleSupport::FourBit => unimplemented!(),
-			StyleSupport::EightBit => Style(
+			StyleSupport::EightBit => Self(
 				self.0,
 				self.1.fg(ansi_term::Colour::Fixed(
 					16 + 36 * (r / 43) + 6 * (g / 43) + (b / 43),
 				)),
 			),
 			StyleSupport::TwentyFourBit => {
-				Style(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b)))
+				Self(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b)))
 			}
 		}
 	}
@@ -234,7 +234,7 @@ impl Style {
 	pub fn bold(&self) -> Self {
 		match self.0 {
 			StyleSupport::None => *self,
-			_ => Style(self.0, self.1.bold()),
+			_ => Self(self.0, self.1.bold()),
 		}
 	}
 

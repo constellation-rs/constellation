@@ -1,11 +1,13 @@
 use bincode;
-use constellation_internal::{map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
 use crossbeam;
 use either::Either;
-use palaver::{copy, spawn};
+use palaver::file::copy;
 use std::{
 	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net, path, sync::mpsc
 };
+use serde::Serialize;
+
+use constellation_internal::{map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
 
 #[derive(Debug)]
 pub struct Node {
@@ -96,7 +98,7 @@ pub fn run(
 			let stream = net::TcpStream::connect(&addr).unwrap();
 			let local_addr = stream.local_addr().unwrap().ip();
 			let sender1 = sender.clone();
-			let _ = spawn(String::from(""), move || {
+			let _ = std::thread::Builder::new().spawn(move || {
 				let (receiver, sender) = (receiver_a, sender1);
 				let (mut stream_read, mut stream_write) =
 					(BufferedStream::new(&stream), BufferedStream::new(&stream));
@@ -125,14 +127,14 @@ pub fn run(
 						}
 					});
 				});
-			});
+			}).unwrap();
 			for (bridge, ports) in bridges {
 				for &port in &ports {
 					let check_port = check_addresses.insert(port);
 					assert!(check_port);
 				}
 				let sender = sender.clone();
-				let _ = spawn(String::from(""), move || {
+				let _ = std::thread::Builder::new().spawn(move || {
 					let mut path = env::current_exe().unwrap();
 					let _ = path.pop();
 					path.push(&bridge);
@@ -156,19 +158,19 @@ pub fn run(
 						.unwrap();
 					let pid: Option<Pid> = receiver.recv().unwrap();
 					println!("bridge at {:?}", pid.unwrap());
-				});
+				}).unwrap();
 			}
 			(sender_a, node, addr.ip(), local_addr, VecDeque::new())
 		})
 		.collect::<Vec<_>>();
 
 	let listener = net::TcpListener::bind(addr).unwrap();
-	let _ = spawn(String::from(""), move || {
+	let _ = std::thread::Builder::new().spawn(move || {
 		for stream in listener.incoming() {
 			// println!("accepted");
-			let mut stream = stream.unwrap();
+			let stream = stream.unwrap();
 			let sender = sender.clone();
-			let _ = spawn(String::from(""), move || {
+			let _ = std::thread::Builder::new().spawn(move || {
 				let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
 				while let Ok((process, args, vars, binary, arg)) = parse_request(&mut stream_read) {
 					// println!("parsed");
@@ -191,9 +193,9 @@ pub fn run(
 						break;
 					}
 				}
-			});
+			}).unwrap();
 		}
-	});
+	}).unwrap();
 
 	let mut processes: HashMap<(usize, u16), Resources> = HashMap::new();
 
