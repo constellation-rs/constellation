@@ -24,8 +24,8 @@ mod format;
 
 #[cfg(unix)]
 use nix::sys::signal;
+use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, env, ffi::OsString, fmt, io, net, ops};
-use serde::{Serialize,Deserialize};
 
 #[cfg(target_family = "unix")]
 type Fd = std::os::unix::io::RawFd;
@@ -172,52 +172,67 @@ impl Envs {
 	}
 
 	pub fn from(env: &[(OsString, OsString)]) -> Self {
-		let deploy = env.iter().find_map(|x| if x.0 == "CONSTELLATION" {
-			Some(x.1.clone()
-				.into_string()
-				.ok()
-				.and_then(|x| match &*x.to_ascii_lowercase() {
-					"fabric" => Some(Deploy::Fabric),
-					_ => None,
-				}))
-			} else { None }
-		); // TODO: use serde?
-		let version = env
-			.iter()
-			.find_map(|x| if x.0 == "CONSTELLATION_VERSION" {
+		let deploy =
+			env.iter().find_map(|x| {
+				if x.0 == "CONSTELLATION" {
+					Some(x.1.clone().into_string().ok().and_then(
+						|x| match &*x.to_ascii_lowercase() {
+							"fabric" => Some(Deploy::Fabric),
+							_ => None,
+						},
+					))
+				} else {
+					None
+				}
+			}); // TODO: use serde?
+		let version = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_VERSION" {
 				Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
 					"0" => Some(false),
 					"1" => Some(true),
 					_ => None,
 				}))
-			} else { None });
-		let recce = env.iter().find_map(|x| if x.0 == "CONSTELLATION_RECCE" {
-			Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
-				"0" => Some(false),
-				"1" => Some(true),
-				_ => None,
-			}))
-		} else { None });
-		let format = env
-			.iter()
-			.find_map(|x| if x.0 == "CONSTELLATION_FORMAT" {
-				Some(x.1.clone()
-					.into_string()
-					.ok()
-					.and_then(|x| match &*x.to_ascii_lowercase() {
-						"human" => Some(Format::Human),
-						"json" => Some(Format::Json),
-						_ => None,
-					}))
-			} else { None }); // TODO: use serde?
-		let resources = env
-			.iter()
-			.find_map(|x| if x.0 == "CONSTELLATION_RESOURCES" {
-				Some(x.1.clone()
-					.into_string()
-					.ok()
-					.and_then(|x| serde_json::from_str(&x).ok()))
-			} else { None});
+			} else {
+				None
+			}
+		});
+		let recce = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_RECCE" {
+				Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
+					"0" => Some(false),
+					"1" => Some(true),
+					_ => None,
+				}))
+			} else {
+				None
+			}
+		});
+		let format =
+			env.iter().find_map(|x| {
+				if x.0 == "CONSTELLATION_FORMAT" {
+					Some(x.1.clone().into_string().ok().and_then(
+						|x| match &*x.to_ascii_lowercase() {
+							"human" => Some(Format::Human),
+							"json" => Some(Format::Json),
+							_ => None,
+						},
+					))
+				} else {
+					None
+				}
+			}); // TODO: use serde?
+		let resources = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_RESOURCES" {
+				Some(
+					x.1.clone()
+						.into_string()
+						.ok()
+						.and_then(|x| serde_json::from_str(&x).ok()),
+				)
+			} else {
+				None
+			}
+		});
 		Self {
 			deploy,
 			version,
@@ -389,11 +404,7 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGALRM => Signal::SIGALRM,
 			signal::Signal::SIGTERM => Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			signal::Signal::SIGSTKFLT => Signal::SIGSTKFLT,
@@ -410,24 +421,12 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGPROF => Signal::SIGPROF,
 			signal::Signal::SIGWINCH => Signal::SIGWINCH,
 			signal::Signal::SIGIO => Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			signal::Signal::SIGPWR => Signal::SIGPWR,
 			signal::Signal::SIGSYS => Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGEMT => Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGINFO => Signal::SIGINFO,
 		}
 	}
@@ -451,11 +450,7 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGALRM => signal::Signal::SIGALRM,
 			Signal::SIGTERM => signal::Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			Signal::SIGSTKFLT => signal::Signal::SIGSTKFLT,
@@ -472,24 +467,12 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGPROF => signal::Signal::SIGPROF,
 			Signal::SIGWINCH => signal::Signal::SIGWINCH,
 			Signal::SIGIO => signal::Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			Signal::SIGPWR => signal::Signal::SIGPWR,
 			Signal::SIGSYS => signal::Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGEMT => signal::Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGINFO => signal::Signal::SIGINFO,
 			_ => unimplemented!(),
 		}
@@ -537,8 +520,8 @@ pub fn map_bincode_err(err: bincode::Error) -> io::Error {
 
 pub mod cargo_metadata {
 	use cargo_metadata::Target;
-	use std::path::PathBuf;
 	use serde::Deserialize;
+	use std::path::PathBuf;
 
 	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs
 	#[derive(Deserialize, Debug)]

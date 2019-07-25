@@ -23,10 +23,10 @@
 
 mod ext;
 
+use serde::{Deserialize, Serialize};
 use std::{
 	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, os, path::{Path, PathBuf}, process, str, thread, time
 };
-use serde::{Serialize,Deserialize};
 
 use constellation_internal::ExitStatus;
 
@@ -364,8 +364,7 @@ fn main() {
 			let result = command.output().unwrap();
 			let output = parse_output(&result);
 			if output.is_err()
-				|| file.is_err()
-				|| !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
+				|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
 			{
 				println!("Error in {:?}", src);
 				match file {

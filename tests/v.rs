@@ -36,8 +36,8 @@
 
 #![allow(clippy::unused_unit)] // for FnOnce!
 
-use serde_closure::FnOnce;
 use constellation::*;
+use serde_closure::FnOnce;
 use std::{panic, process, thread};
 
 fn main() {

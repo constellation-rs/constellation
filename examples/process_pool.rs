@@ -32,8 +32,8 @@
 #![feature(unboxed_closures)]
 #![allow(where_clauses_object_safety, clippy::type_complexity)]
 
-use serde_traitobject as st;
 use rand::Rng;
+use serde_traitobject as st;
 use std::{any, collections::VecDeque, env, marker, mem, thread, time};
 
 use constellation::*;
@@ -82,22 +82,22 @@ impl ProcessPool {
 					// Make this closure serializable by wrapping with serde_closure's
 					// FnOnce!() macro, which requires explicitly listing captured variables.
 					serde_closure::FnOnce!([] move |parent| {
-					// println!("process {}: awaiting work", i);
-
-					// Create a `Sender` half of a channel to our parent
-					let receiver = Receiver::<Option<st::Box<dyn st::FnOnce()->st::Box<dyn st::Any>>>>::new(parent);
-
-					// Create a `Sender` half of a channel to our parent
-					let sender = Sender::<st::Box<dyn st::Any>>::new(parent);
-
-					while let Some(work) = receiver.recv().unwrap() {
-						// println!("process {}: got work", i);
-						let ret = work();
-						// println!("process {}: done work", i);
-						sender.send(ret);
 						// println!("process {}: awaiting work", i);
-					}
-				}),
+
+						// Create a `Sender` half of a channel to our parent
+						let receiver = Receiver::<Option<st::Box<dyn st::FnOnce()->st::Box<dyn st::Any>>>>::new(parent);
+
+						// Create a `Sender` half of a channel to our parent
+						let sender = Sender::<st::Box<dyn st::Any>>::new(parent);
+
+						while let Some(work) = receiver.recv().unwrap() {
+							// println!("process {}: got work", i);
+							let ret = work();
+							// println!("process {}: done work", i);
+							sender.send(ret);
+							// println!("process {}: awaiting work", i);
+						}
+					}),
 				)
 				.expect("Unable to allocate process!");
 
@@ -135,7 +135,8 @@ impl ProcessPool {
 			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
 				let work: F = work;
 				st::Box::new(work()) as st::Box<dyn st::Any>
-			})) as st::Box<dyn st::FnOnce() -> st::Box<dyn st::Any>>));
+			}))
+				as st::Box<dyn st::FnOnce() -> st::Box<dyn st::Any>>));
 		process.queue.push_back(Queued::Awaiting);
 		JoinHandle(
 			process_index,

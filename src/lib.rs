@@ -45,26 +45,24 @@
 mod channel;
 
 use either::Either;
+use lazy_static::lazy_static;
+use log::trace;
 use nix::{
 	errno, fcntl, libc, sys::{
 		signal, socket::{self, sockopt}, stat, wait
 	}, unistd
 };
 use palaver::{
-	file::copy_sendfile, file::fexecve, file::memfd_create, socket::socket as palaver_socket, valgrind, socket::SockFlag
+	env, file::{copy_sendfile, fd_path, fexecve, memfd_create, FdIter}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
-use palaver::env; use palaver::file::{fd_path, FdIter};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
 	borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, intrinsics, io::{self, Read, Write}, iter, marker, mem, net, ops, os::{
 		self, unix::{
 			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 		}
-	}, path, process, str, sync::{self, mpsc}, thread
+	}, path, pin::Pin, process, str, sync::{self, mpsc}, thread
 };
-use log::trace;
-use lazy_static::lazy_static;
-use serde::{Deserialize,Serialize,de::DeserializeOwned};
-use std::pin::Pin;
 
 use constellation_internal::{
 	map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
@@ -465,7 +463,7 @@ pub fn resources() -> Resources {
 
 fn spawn_native(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid,()> {
+) -> Result<Pid, ()> {
 	trace!("spawn_native");
 	let argv: Vec<CString> = env::args_os()
 		.expect("Couldn't get argv")
@@ -558,10 +556,17 @@ fn spawn_native(
 			}
 
 			if process_listener != LISTENER_FD {
-				palaver::file::move_fd(process_listener, LISTENER_FD, Some(fcntl::FdFlag::empty()), true).unwrap();
+				palaver::file::move_fd(
+					process_listener,
+					LISTENER_FD,
+					Some(fcntl::FdFlag::empty()),
+					true,
+				)
+				.unwrap();
 			}
 			if arg.as_raw_fd() != ARG_FD {
-				palaver::file::move_fd(arg.as_raw_fd(), ARG_FD, Some(fcntl::FdFlag::empty()), true).unwrap();
+				palaver::file::move_fd(arg.as_raw_fd(), ARG_FD, Some(fcntl::FdFlag::empty()), true)
+					.unwrap();
 			}
 
 			if !valgrind::is() {
@@ -575,7 +580,8 @@ fn spawn_native(
 				.unwrap();
 				let binary_desired_fd_ = valgrind_start_fd.unwrap() - 1;
 				assert!(binary_desired_fd_ > fd);
-				palaver::file::move_fd(fd, binary_desired_fd_, Some(fcntl::FdFlag::empty()), true).unwrap();
+				palaver::file::move_fd(fd, binary_desired_fd_, Some(fcntl::FdFlag::empty()), true)
+					.unwrap();
 				fexecve(binary_desired_fd_, &argv, &envp)
 					.expect("Failed to execve /proc/self/fd/n");
 			}
@@ -597,7 +603,7 @@ fn spawn_native(
 
 fn spawn_deployed(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid,()> {
+) -> Result<Pid, ()> {
 	trace!("spawn_deployed");
 	let stream = unsafe { net::TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
@@ -664,13 +670,13 @@ fn spawn_deployed(
 /// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
 pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
-) -> Result<Pid,()> {
+) -> Result<Pid, ()> {
 	let _scheduler = SCHEDULER.lock().unwrap();
 	let deployed = DEPLOYED.read().unwrap().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	});
 	let arg: Vec<u8> = bincode::serialize(&start).unwrap();
-	
+
 	let start: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))> = serde_closure::FnOnce!([arg]move|parent|{
 		let arg: Vec<u8> = arg;
 		let closure: T = bincode::deserialize(&arg).unwrap();
@@ -709,7 +715,8 @@ pub fn bridge_init() -> net::TcpListener {
 			.unwrap()
 			.into_raw_fd();
 		if scheduler != SCHEDULER_FD {
-			palaver::file::move_fd(scheduler, SCHEDULER_FD, Some(fcntl::FdFlag::empty()), true).unwrap();
+			palaver::file::move_fd(scheduler, SCHEDULER_FD, Some(fcntl::FdFlag::empty()), true)
+				.unwrap();
 		}
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD);
@@ -757,18 +764,21 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		let err = unsafe { libc::atexit(at_exit) };
 		assert_eq!(err, 0);
 
-		let x = std::thread::Builder::new().name(String::from("bridge-waitpid")).spawn(|| {
-			loop {
-				match wait::waitpid(None, None) {
-					Ok(wait::WaitStatus::Exited(_pid, code)) if code == 0 => (), //assert_eq!(pid, child),
-					// wait::WaitStatus::Signaled(pid, signal, _) if signal == signal::Signal::SIGKILL => assert_eq!(pid, child),
-					Err(nix::Error::Sys(errno::Errno::ECHILD)) => break,
-					wait_status => {
-						panic!("bad exit: {:?}", wait_status); /*loop {thread::sleep_ms(1000)}*/
+		let x = std::thread::Builder::new()
+			.name(String::from("bridge-waitpid"))
+			.spawn(|| {
+				loop {
+					match wait::waitpid(None, None) {
+						Ok(wait::WaitStatus::Exited(_pid, code)) if code == 0 => (), //assert_eq!(pid, child),
+						// wait::WaitStatus::Signaled(pid, signal, _) if signal == signal::Signal::SIGKILL => assert_eq!(pid, child),
+						Err(nix::Error::Sys(errno::Errno::ECHILD)) => break,
+						wait_status => {
+							panic!("bad exit: {:?}", wait_status); /*loop {thread::sleep_ms(1000)}*/
+						}
 					}
 				}
-			}
-		}).unwrap();
+			})
+			.unwrap();
 		let mut exit_code = ExitStatus::Success;
 		let mut formatter = if let Format::Human = format {
 			Either::Left(Formatter::new(
@@ -925,7 +935,8 @@ fn monitor_process(
 		let _stdin_thread =
 			forward_input_fd(libc::STDIN_FILENO, stdin_writer, bridge_inbound_receiver);
 		let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
-		palaver::file::move_fd(fd, libc::STDIN_FILENO, Some(fcntl::FdFlag::empty()), false).unwrap();
+		palaver::file::move_fd(fd, libc::STDIN_FILENO, Some(fcntl::FdFlag::empty()), false)
+			.unwrap();
 		palaver::file::copy_fd(
 			libc::STDIN_FILENO,
 			libc::STDOUT_FILENO,
@@ -977,57 +988,66 @@ fn monitor_process(
 		let receiver = Receiver::<ProcessInputEvent>::new(bridge);
 
 		let bridge_sender2 = bridge_outbound_sender.clone();
-		let x3 = std::thread::Builder::new().name(String::from("monitor-monitorfd-to-channel")).spawn(move || {
-			let file = unsafe { fs::File::from_raw_fd(monitor_reader) };
-			loop {
-				let event: Result<ProcessOutputEvent, _> =
-					bincode::deserialize_from(&mut &file).map_err(map_bincode_err);
-				if event.is_err() {
-					break;
-				}
-				let event = event.unwrap();
-				bridge_sender2.send(event).unwrap();
-			}
-			let _ = file.into_raw_fd();
-		}).unwrap();
-
-		let x = std::thread::Builder::new().name(String::from("monitor-channel-to-bridge")).spawn(move || {
-			loop {
-				let event = bridge_outbound_receiver.recv().unwrap();
-				sender.send(event.clone());
-				if let ProcessOutputEvent::Exit(_) = event {
-					// trace!("xxx exit");
-					break;
-				}
-			}
-		}).unwrap();
-		let _x2 = std::thread::Builder::new().name(String::from("monitor-bridge-to-channel")).spawn(move || {
-			loop {
-				let event: Result<ProcessInputEvent, _> = receiver.recv();
-				if event.is_err() {
-					break;
-				}
-				let event = event.unwrap();
-				match event {
-					ProcessInputEvent::Input(fd, input) => {
-						// trace!("xxx INPUT {:?} {}", input, input.len());
-						if fd == libc::STDIN_FILENO {
-							bridge_inbound_sender
-								.send(ProcessInputEvent::Input(fd, input))
-								.unwrap();
-						} else {
-							unimplemented!()
-						}
+		let x3 = std::thread::Builder::new()
+			.name(String::from("monitor-monitorfd-to-channel"))
+			.spawn(move || {
+				let file = unsafe { fs::File::from_raw_fd(monitor_reader) };
+				loop {
+					let event: Result<ProcessOutputEvent, _> =
+						bincode::deserialize_from(&mut &file).map_err(map_bincode_err);
+					if event.is_err() {
+						break;
 					}
-					ProcessInputEvent::Kill => {
-						signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(|e| {
-							assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
-						});
+					let event = event.unwrap();
+					bridge_sender2.send(event).unwrap();
+				}
+				let _ = file.into_raw_fd();
+			})
+			.unwrap();
+
+		let x = std::thread::Builder::new()
+			.name(String::from("monitor-channel-to-bridge"))
+			.spawn(move || {
+				loop {
+					let event = bridge_outbound_receiver.recv().unwrap();
+					sender.send(event.clone());
+					if let ProcessOutputEvent::Exit(_) = event {
+						// trace!("xxx exit");
 						break;
 					}
 				}
-			}
-		}).unwrap();
+			})
+			.unwrap();
+		let _x2 = std::thread::Builder::new()
+			.name(String::from("monitor-bridge-to-channel"))
+			.spawn(move || {
+				loop {
+					let event: Result<ProcessInputEvent, _> = receiver.recv();
+					if event.is_err() {
+						break;
+					}
+					let event = event.unwrap();
+					match event {
+						ProcessInputEvent::Input(fd, input) => {
+							// trace!("xxx INPUT {:?} {}", input, input.len());
+							if fd == libc::STDIN_FILENO {
+								bridge_inbound_sender
+									.send(ProcessInputEvent::Input(fd, input))
+									.unwrap();
+							} else {
+								unimplemented!()
+							}
+						}
+						ProcessInputEvent::Kill => {
+							signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(|e| {
+								assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
+							});
+							break;
+						}
+					}
+				}
+			})
+			.unwrap();
 		unistd::close(writer).unwrap();
 
 		trace!(
@@ -1042,7 +1062,8 @@ fn monitor_process(
 				Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => continue,
 				exit => break exit,
 			}
-		}.unwrap();
+		}
+		.unwrap();
 		// 		Ok(exit) => break exit,
 		// if let Err(nix::Error::Sys(nix::errno::Errno::EINTR)) = exit {
 		// 	loop {
@@ -1256,7 +1277,13 @@ pub fn init(resources: Resources) {
 	let (socket_forwardee, monitor_writer, stdout_writer, stderr_writer, stdin_reader) =
 		monitor_process(bridge, deployed);
 	assert_ne!(monitor_writer, MONITOR_FD);
-	palaver::file::move_fd(monitor_writer, MONITOR_FD, Some(fcntl::FdFlag::empty()), false).unwrap();
+	palaver::file::move_fd(
+		monitor_writer,
+		MONITOR_FD,
+		Some(fcntl::FdFlag::empty()),
+		false,
+	)
+	.unwrap();
 	palaver::file::move_fd(
 		stdout_writer,
 		libc::STDOUT_FILENO,
@@ -1286,7 +1313,8 @@ pub fn init(resources: Resources) {
 			.unwrap()
 			.into_raw_fd();
 		assert_ne!(scheduler, SCHEDULER_FD);
-		palaver::file::move_fd(scheduler, SCHEDULER_FD, Some(fcntl::FdFlag::empty()), false).unwrap();
+		palaver::file::move_fd(scheduler, SCHEDULER_FD, Some(fcntl::FdFlag::empty()), false)
+			.unwrap();
 	}
 
 	let reactor = channel::Reactor::with_forwardee(socket_forwardee, pid().addr());
@@ -1342,50 +1370,56 @@ pub fn init(resources: Resources) {
 fn forward_fd(
 	fd: Fd, reader: Fd, bridge_sender: mpsc::SyncSender<ProcessOutputEvent>,
 ) -> thread::JoinHandle<()> {
-	std::thread::Builder::new().name(String::from("monitor-forward_fd")).spawn(move || {
-		let reader = unsafe { fs::File::from_raw_fd(reader) };
-		let _ = fcntl::fcntl(reader.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
-		loop {
-			let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
-			let n = (&reader).read(&mut buf).unwrap();
-			if n > 0 {
-				bridge_sender
-					.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
-					.unwrap();
-			} else {
-				drop(reader);
-				bridge_sender
-					.send(ProcessOutputEvent::Output(fd, Vec::new()))
-					.unwrap();
-				break;
+	std::thread::Builder::new()
+		.name(String::from("monitor-forward_fd"))
+		.spawn(move || {
+			let reader = unsafe { fs::File::from_raw_fd(reader) };
+			let _ = fcntl::fcntl(reader.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
+			loop {
+				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
+				let n = (&reader).read(&mut buf).unwrap();
+				if n > 0 {
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
+						.unwrap();
+				} else {
+					drop(reader);
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, Vec::new()))
+						.unwrap();
+					break;
+				}
 			}
-		}
-	}).unwrap()
+		})
+		.unwrap()
 }
 
 fn forward_input_fd(
 	fd: Fd, writer: Fd, receiver: mpsc::Receiver<ProcessInputEvent>,
 ) -> thread::JoinHandle<()> {
-	std::thread::Builder::new().name(String::from("monitor-forward_input_fd")).spawn(move || {
-		let writer = unsafe { fs::File::from_raw_fd(writer) };
-		let _ = fcntl::fcntl(writer.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
-		for input in receiver {
-			match input {
-				ProcessInputEvent::Input(fd_, ref input) if fd_ == fd => {
-					if !input.is_empty() {
-						if (&writer).write_all(input).is_err() {
+	std::thread::Builder::new()
+		.name(String::from("monitor-forward_input_fd"))
+		.spawn(move || {
+			let writer = unsafe { fs::File::from_raw_fd(writer) };
+			let _ = fcntl::fcntl(writer.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
+			for input in receiver {
+				match input {
+					ProcessInputEvent::Input(fd_, ref input) if fd_ == fd => {
+						if !input.is_empty() {
+							if (&writer).write_all(input).is_err() {
+								drop(writer);
+								break;
+							}
+						} else {
 							drop(writer);
 							break;
 						}
-					} else {
-						drop(writer);
-						break;
 					}
+					_ => unreachable!(),
 				}
-				_ => unreachable!(),
 			}
-		}
-	}).unwrap()
+		})
+		.unwrap()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

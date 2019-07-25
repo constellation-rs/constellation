@@ -177,8 +177,8 @@
 //= }
 
 use constellation::*;
-use serde_closure::FnOnce;
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
@@ -208,7 +208,7 @@ fn main() {
 			Sender::<Option<String>>::new(pid),
 			Receiver::<Option<String>>::new(pid),
 		);
-		let x = futures::future::join(
+		futures::future::join(
 			futures::stream::iter(
 				vec![
 					String::from("abc"),
@@ -225,8 +225,7 @@ fn main() {
 				futures::future::ready(acc + &x.unwrap())
 			}),
 		)
-		.map(|(_, res)| res);
-		x
+		.map(|(_, res)| res)
 	})));
 	println!("{:?}", x);
 }

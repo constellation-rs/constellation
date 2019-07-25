@@ -154,8 +154,8 @@
 //=   "exit": "Success"
 //= }
 
-use serde_closure::FnOnce;
 use constellation::*;
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {

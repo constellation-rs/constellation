@@ -3,6 +3,7 @@ mod inner_states;
 
 use either::Either;
 // use futures;
+use log::trace;
 use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use rand;
@@ -12,7 +13,6 @@ use std::{
 	borrow::Borrow, cell, collections::{hash_map, HashMap}, error, fmt, marker, mem, net, os, ptr, sync::{self, Arc}, thread
 };
 use tcp_typed::{Connection, Listener};
-use log::trace;
 
 use constellation_internal::Rand;
 
@@ -119,66 +119,115 @@ impl Reactor {
 				.add_trigger()
 		};
 		let mut triggeree = Some(triggeree);
-		let tcp_thread = std::thread::Builder::new().name(String::from("tcp-thread")).spawn(move || {
-			let context = context();
-			let context = context.borrow();
-			let mut listener = context.listener.try_write().unwrap();
-			let (notifier, listener, sockets, local) = (
-				&context.notifier,
-				listener.as_mut().unwrap(),
-				&context.sockets,
-				&context.local,
-			);
-			let mut done: Option<
-				sync::RwLockWriteGuard<
-					HashMap<net::SocketAddr, Arc<sync::RwLock<Option<Channel>>>>,
-				>,
-			> = None;
-			while done.is_none() || done.as_ref().unwrap().iter().any(|(_, ref inner)| {
-				// TODO: maintain count
-				let inner = inner.read().unwrap();
-				let inner = &inner.as_ref().unwrap().inner;
-				inner.valid() && !inner.closed()
-			}) {
-				// if let &Some(ref sockets) = &done {
-				// 	trace!(
-				// 		"sockets: {:?}",
-				// 		&**sockets
-				// 	); // called after rust runtime exited, not sure what trace does
-				// }
-				#[allow(clippy::cognitive_complexity)]
-				notifier.wait(|_events, data| {
-					if data == Key(ptr::null()) {
-						for (remote, connection) in
-							listener.poll(&notifier.context(Key(ptr::null())), &mut accept_hook)
-						{
-							let is_done = done.is_some();
-							let mut sockets_ = if done.is_none() {
-								Some(sockets.write().unwrap())
-							} else {
-								None
-							};
-							let sockets = done
-								.as_mut()
-								.map_or_else(|| &mut **sockets_.as_mut().unwrap(), |x| &mut **x);
-							match sockets.entry(remote) {
-								hash_map::Entry::Occupied(channel_) => {
-									let channel_ = &**channel_.get(); // &**sockets.get(&remote).unwrap();
-										   // if let &Inner::Connected(ref e) =
-										   // 	&channel_.read().unwrap().as_ref().unwrap().inner
-										   // {
-										   // 	trace!("{:?} {:?} {:?}", e, local, remote);
-										   // 	continue;
-										   // }
-									let notifier_key: *const sync::RwLock<Option<Channel>> = channel_;
-									let notifier =
-										&notifier.context(Key(notifier_key as *const ()));
-									let connectee: Connection = connection(notifier).into();
-									let mut channel = channel_.write().unwrap();
-									let channel = channel.as_mut().unwrap();
-									if channel.inner.add_incoming(notifier).is_some() {
-										channel.inner.add_incoming(notifier).unwrap()(connectee);
-									} else if channel.inner.closed() {
+		let tcp_thread = std::thread::Builder::new()
+			.name(String::from("tcp-thread"))
+			.spawn(move || {
+				let context = context();
+				let context = context.borrow();
+				let mut listener = context.listener.try_write().unwrap();
+				let (notifier, listener, sockets, local) = (
+					&context.notifier,
+					listener.as_mut().unwrap(),
+					&context.sockets,
+					&context.local,
+				);
+				let mut done: Option<
+					sync::RwLockWriteGuard<
+						HashMap<net::SocketAddr, Arc<sync::RwLock<Option<Channel>>>>,
+					>,
+				> = None;
+				while done.is_none()
+					|| done.as_ref().unwrap().iter().any(|(_, ref inner)| {
+						// TODO: maintain count
+						let inner = inner.read().unwrap();
+						let inner = &inner.as_ref().unwrap().inner;
+						inner.valid() && !inner.closed()
+					}) {
+					// if let &Some(ref sockets) = &done {
+					// 	trace!(
+					// 		"sockets: {:?}",
+					// 		&**sockets
+					// 	); // called after rust runtime exited, not sure what trace does
+					// }
+					#[allow(clippy::cognitive_complexity)]
+					notifier.wait(|_events, data| {
+						if data == Key(ptr::null()) {
+							for (remote, connection) in
+								listener.poll(&notifier.context(Key(ptr::null())), &mut accept_hook)
+							{
+								let is_done = done.is_some();
+								let mut sockets_ = if done.is_none() {
+									Some(sockets.write().unwrap())
+								} else {
+									None
+								};
+								let sockets = done.as_mut().map_or_else(
+									|| &mut **sockets_.as_mut().unwrap(),
+									|x| &mut **x,
+								);
+								match sockets.entry(remote) {
+									hash_map::Entry::Occupied(channel_) => {
+										let channel_ = &**channel_.get(); // &**sockets.get(&remote).unwrap();
+								  // if let &Inner::Connected(ref e) =
+								  // 	&channel_.read().unwrap().as_ref().unwrap().inner
+								  // {
+								  // 	trace!("{:?} {:?} {:?}", e, local, remote);
+								  // 	continue;
+								  // }
+										let notifier_key: *const sync::RwLock<Option<Channel>> =
+											channel_;
+										let notifier =
+											&notifier.context(Key(notifier_key as *const ()));
+										let connectee: Connection = connection(notifier).into();
+										let mut channel = channel_.write().unwrap();
+										let channel = channel.as_mut().unwrap();
+										if channel.inner.add_incoming(notifier).is_some() {
+											channel.inner.add_incoming(notifier).unwrap()(
+												connectee,
+											);
+										} else if channel.inner.closed() {
+											let mut inner = Inner::connect(
+												*local,
+												remote,
+												Some(connectee),
+												notifier,
+											);
+											if is_done && inner.closable() {
+												inner.close(notifier);
+											}
+											if !inner.closed() {
+												channel.inner = inner;
+											}
+										} else {
+											panic!("{:?} {:?} {:?}", channel, local, remote);
+										}
+										channel.inner.poll(notifier);
+										if !is_done {
+											for sender in channel.senders.values() {
+												sender.unpark(); // TODO: don't do unless actual progress
+											}
+											for sender_future in channel.senders_futures.drain(..) {
+												sender_future.wake();
+											}
+											for receiver in channel.receivers.values() {
+												receiver.unpark(); // TODO: don't do unless actual progress
+											}
+											for receiver_future in
+												channel.receivers_futures.drain(..)
+											{
+												receiver_future.wake();
+											}
+										} else if channel.inner.closable() {
+											channel.inner.close(notifier);
+										}
+									}
+									hash_map::Entry::Vacant(vacant) => {
+										let channel = Arc::new(sync::RwLock::new(None));
+										let notifier_key: *const sync::RwLock<Option<Channel>> =
+											&*channel;
+										let notifier =
+											&notifier.context(Key(notifier_key as *const ()));
+										let connectee: Connection = connection(notifier).into();
 										let mut inner = Inner::connect(
 											*local,
 											remote,
@@ -189,13 +238,40 @@ impl Reactor {
 											inner.close(notifier);
 										}
 										if !inner.closed() {
-											channel.inner = inner;
+											*channel.try_write().unwrap() =
+												Some(Channel::new(inner));
+											let _ = vacant.insert(channel);
 										}
-									} else {
-										panic!("{:?} {:?} {:?}", channel, local, remote);
 									}
-									channel.inner.poll(notifier);
-									if !is_done {
+								}
+							}
+						} else if data != Key(1 as *const ()) {
+							if done.is_none() {
+								let mut sockets = sockets.write().unwrap();
+								let notifier_key: *const sync::RwLock<Option<Channel>> =
+									data.0 as *const _;
+								let notifier = &notifier.context(Key(notifier_key as *const ()));
+								// assert!(sockets.values().any(|channel|{
+								// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+								// 	notifier_key2 == notifier_key
+								// }));
+								// let mut channel = unsafe{&*notifier_key}.write().unwrap();
+								let channel_arc = sockets.values().find(|&channel| {
+									let notifier_key2: *const sync::RwLock<Option<Channel>> =
+										&**channel;
+									notifier_key2 == notifier_key
+								});
+								if let Some(channel_arc) = channel_arc {
+									let mut channel = channel_arc.write().unwrap();
+									assert_eq!(
+										sync::Arc::strong_count(&channel_arc),
+										1 + channel.as_ref().unwrap().senders_count
+											+ channel.as_ref().unwrap().receivers_count
+									);
+									let finished = {
+										let channel: &mut Channel = channel.as_mut().unwrap();
+										let inner: &mut Inner = &mut channel.inner;
+										inner.poll(notifier);
 										for sender in channel.senders.values() {
 											sender.unpark(); // TODO: don't do unless actual progress
 										}
@@ -205,172 +281,112 @@ impl Reactor {
 										for receiver in channel.receivers.values() {
 											receiver.unpark(); // TODO: don't do unless actual progress
 										}
-									for receiver_future in channel.receivers_futures.drain(..) {
-										receiver_future.wake();
-									}
-									} else if channel.inner.closable() {
-										channel.inner.close(notifier);
+										for receiver_future in channel.receivers_futures.drain(..) {
+											receiver_future.wake();
+										}
+										channel.senders_count == 0
+											&& channel.receivers_count == 0 && inner.closed()
+									};
+									if finished {
+										let x = channel.take().unwrap();
+										assert!(
+											x.senders_count == 0
+												&& x.receivers_count == 0 && x.inner.closed()
+										);
+										let key = *sockets
+											.iter()
+											.find(|&(_key, channel)| {
+												let notifier_key2: *const sync::RwLock<
+													Option<Channel>,
+												> = &**channel;
+												notifier_key2 == notifier_key
+											})
+											.unwrap()
+											.0;
+										drop(channel);
+										let mut x =
+											Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
+										assert!(x.get_mut().unwrap().is_none());
 									}
 								}
-								hash_map::Entry::Vacant(vacant) => {
-									let channel = Arc::new(sync::RwLock::new(None));
-									let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel;
-									let notifier =
-										&notifier.context(Key(notifier_key as *const ()));
-									let connectee: Connection = connection(notifier).into();
-									let mut inner =
-										Inner::connect(*local, remote, Some(connectee), notifier);
-									if is_done && inner.closable() {
-										inner.close(notifier);
-									}
-									if !inner.closed() {
-										*channel.try_write().unwrap() = Some(Channel::new(inner));
-										let _ = vacant.insert(channel);
-									}
-								}
-							}
-						}
-					} else if data != Key(1 as *const ()) {
-						if done.is_none() {
-							let mut sockets = sockets.write().unwrap();
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = data.0 as *const _;
-							let notifier = &notifier.context(Key(notifier_key as *const ()));
-							// assert!(sockets.values().any(|channel|{
-							// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-							// 	notifier_key2 == notifier_key
-							// }));
-							// let mut channel = unsafe{&*notifier_key}.write().unwrap();
-							let channel_arc = sockets.values().find(|&channel| {
-								let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-								notifier_key2 == notifier_key
-							});
-							if let Some(channel_arc) = channel_arc {
-								let mut channel = channel_arc.write().unwrap();
-								assert_eq!(
-									sync::Arc::strong_count(&channel_arc),
-									1 + channel.as_ref().unwrap().senders_count
-										+ channel.as_ref().unwrap().receivers_count
-								);
-								let finished = {
-									let channel: &mut Channel = channel.as_mut().unwrap();
-									let inner: &mut Inner = &mut channel.inner;
-									inner.poll(notifier);
-									for sender in channel.senders.values() {
-										sender.unpark(); // TODO: don't do unless actual progress
-									}
-									for sender_future in channel.senders_futures.drain(..) {
-										sender_future.wake();
-									}
-									for receiver in channel.receivers.values() {
-										receiver.unpark(); // TODO: don't do unless actual progress
-									}
-									for receiver_future in channel.receivers_futures.drain(..) {
-										receiver_future.wake();
-									}
-									channel.senders_count == 0
-										&& channel.receivers_count == 0
-										&& inner.closed()
-								};
-								if finished {
-									let x = channel.take().unwrap();
-									assert!(
-										x.senders_count == 0
-											&& x.receivers_count == 0 && x.inner.closed()
+							} else {
+								let sockets = &mut **done.as_mut().unwrap();
+								let notifier_key: *const sync::RwLock<Option<Channel>> =
+									data.0 as *const _;
+								let notifier = &notifier.context(Key(notifier_key as *const ()));
+								// assert!(sockets.values().any(|channel|{
+								// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+								// 	notifier_key2 == notifier_key
+								// }));
+								// let mut channel = unsafe{&*notifier_key}.write().unwrap();
+								let channel_arc = sockets.values().find(|&channel| {
+									let notifier_key2: *const sync::RwLock<Option<Channel>> =
+										&**channel;
+									notifier_key2 == notifier_key
+								});
+								if let Some(channel_arc) = channel_arc {
+									let mut channel = channel_arc.write().unwrap();
+									assert_eq!(
+										sync::Arc::strong_count(&channel_arc),
+										1 + channel.as_ref().unwrap().senders_count
+											+ channel.as_ref().unwrap().receivers_count
 									);
-									let key = *sockets
-										.iter()
-										.find(|&(_key, channel)| {
-											let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-											notifier_key2 == notifier_key
-										})
-										.unwrap()
-										.0;
-									drop(channel);
-									let mut x =
-										Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
-									assert!(x.get_mut().unwrap().is_none());
+									let finished = {
+										let channel: &mut Channel = channel.as_mut().unwrap();
+										let inner: &mut Inner = &mut channel.inner;
+										inner.poll(notifier);
+										if inner.closable() {
+											inner.close(notifier);
+										}
+										channel.senders_count == 0
+											&& channel.receivers_count == 0 && inner.closed()
+									};
+									if finished {
+										let x = channel.take().unwrap();
+										assert!(
+											x.senders_count == 0
+												&& x.receivers_count == 0 && x.inner.closed()
+										);
+										let key = *sockets
+											.iter()
+											.find(|&(_key, channel)| {
+												let notifier_key2: *const sync::RwLock<
+													Option<Channel>,
+												> = &**channel;
+												notifier_key2 == notifier_key
+											})
+											.unwrap()
+											.0;
+										drop(channel);
+										let mut x =
+											Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
+										assert!(x.get_mut().unwrap().is_none());
+									}
 								}
 							}
 						} else {
+							assert!(done.is_none());
+							// trace!("\\close"); // called after rust runtime exited, not sure what trace does
+							// triggeree.triggered();
+							drop(triggeree.take().unwrap());
+							done = Some(sockets.write().unwrap());
 							let sockets = &mut **done.as_mut().unwrap();
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = data.0 as *const _;
-							let notifier = &notifier.context(Key(notifier_key as *const ()));
-							// assert!(sockets.values().any(|channel|{
-							// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-							// 	notifier_key2 == notifier_key
-							// }));
-							// let mut channel = unsafe{&*notifier_key}.write().unwrap();
-							let channel_arc = sockets.values().find(|&channel| {
-								let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-								notifier_key2 == notifier_key
-							});
-							if let Some(channel_arc) = channel_arc {
-								let mut channel = channel_arc.write().unwrap();
-								assert_eq!(
-									sync::Arc::strong_count(&channel_arc),
-									1 + channel.as_ref().unwrap().senders_count
-										+ channel.as_ref().unwrap().receivers_count
-								);
-								let finished = {
-									let channel: &mut Channel = channel.as_mut().unwrap();
-									let inner: &mut Inner = &mut channel.inner;
-									inner.poll(notifier);
-									if inner.closable() {
-										inner.close(notifier);
-									}
-									channel.senders_count == 0
-										&& channel.receivers_count == 0
-										&& inner.closed()
-								};
-								if finished {
-									let x = channel.take().unwrap();
-									assert!(
-										x.senders_count == 0
-											&& x.receivers_count == 0 && x.inner.closed()
-									);
-									let key = *sockets
-										.iter()
-										.find(|&(_key, channel)| {
-											let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-											notifier_key2 == notifier_key
-										})
-										.unwrap()
-										.0;
-									drop(channel);
-									let mut x =
-										Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
-									assert!(x.get_mut().unwrap().is_none());
+							for inner in sockets.values_mut() {
+								let notifier_key: *const sync::RwLock<Option<Channel>> = &**inner;
+								let notifier = &notifier.context(Key(notifier_key as *const ()));
+								let mut channel = inner.write().unwrap();
+								let channel: &mut Channel = channel.as_mut().unwrap();
+								let inner: &mut Inner = &mut channel.inner;
+								if inner.closable() {
+									inner.close(notifier);
 								}
 							}
 						}
-					} else {
-						assert!(done.is_none());
-						// trace!("\\close"); // called after rust runtime exited, not sure what trace does
-						// triggeree.triggered();
-						drop(triggeree.take().unwrap());
-						done = Some(sockets.write().unwrap());
-						let sockets = &mut **done.as_mut().unwrap();
-						for inner in sockets.values_mut() {
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = &**inner;
-							let notifier = &notifier.context(Key(notifier_key as *const ()));
-							let mut channel = inner.write().unwrap();
-							let channel: &mut Channel = channel.as_mut().unwrap();
-							let inner: &mut Inner = &mut channel.inner;
-							if inner.closable() {
-								inner.close(notifier);
-							}
-						}
-					}
-				});
-			}
-			// trace!("/close"); // called after rust runtime exited, not sure what trace does
-		}).unwrap();
+					});
+				}
+				// trace!("/close"); // called after rust runtime exited, not sure what trace does
+			})
+			.unwrap();
 		Handle {
 			triggerer: Some(triggerer),
 			tcp_thread: Some(tcp_thread),

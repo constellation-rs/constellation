@@ -76,7 +76,7 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	file::copy, file::copy_fd, file::fexecve, valgrind, file::memfd_create, file::move_fds, file::seal_fd, socket::socket, socket::SockFlag
+	file::{copy, copy_fd, fexecve, memfd_create, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync::{self, mpsc}
@@ -255,13 +255,11 @@ fn parse_request<R: Read>(
 			.expect("Failed to memfd_create"),
 		)
 	};
-	assert!(
-		fcntl::FdFlag::from_bits(
-			fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
-		)
-		.unwrap()
-		.contains(fcntl::FdFlag::FD_CLOEXEC)
-	);
+	assert!(fcntl::FdFlag::from_bits(
+		fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
+	)
+	.unwrap()
+	.contains(fcntl::FdFlag::FD_CLOEXEC));
 	unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
 	copy(stream, &mut binary, len)?;
 	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
@@ -291,33 +289,36 @@ fn main() {
 			let fabric = net::TcpListener::bind("127.0.0.1:0").unwrap();
 			let scheduler_addr = nodes[0].addr;
 			nodes[0].addr = fabric.local_addr().unwrap();
-			let _ = std::thread::Builder::new().name(String::from("master")).spawn(move || {
-				master::run(
-					scheduler_addr,
-					nodes
-						.into_iter()
-						.map(
-							|Node {
-							     addr,
-							     mem,
-							     cpu,
-							     run,
-							 }| {
-								(
-									addr,
+			let _ = std::thread::Builder::new()
+				.name(String::from("master"))
+				.spawn(move || {
+					master::run(
+						scheduler_addr,
+						nodes
+							.into_iter()
+							.map(
+								|Node {
+								     addr,
+								     mem,
+								     cpu,
+								     run,
+								 }| {
 									(
-										mem,
-										cpu,
-										run.into_iter()
-											.map(|Run { binary, addr }| (binary, vec![addr]))
-											.collect(),
-									),
-								)
-							},
-						)
-						.collect::<HashMap<_, _>>(),
-				); // TODO: error on clash
-			}).unwrap();
+										addr,
+										(
+											mem,
+											cpu,
+											run.into_iter()
+												.map(|Run { binary, addr }| (binary, vec![addr]))
+												.collect(),
+										),
+									)
+								},
+							)
+							.collect::<HashMap<_, _>>(),
+					); // TODO: error on clash
+				})
+				.unwrap();
 			(scheduler_addr.ip(), fabric)
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
@@ -399,11 +400,15 @@ fn main() {
 							let mut binary_desired_fd =
 								BOUND_FD_START + Fd::try_from(ports.len()).unwrap();
 							let arg = arg.into_raw_fd();
-							move_fds(&mut [
-								(arg, ARG_FD),
-								(process_listener, LISTENER_FD),
-								(binary, binary_desired_fd),
-							], Some(fcntl::FdFlag::empty()), true);
+							move_fds(
+								&mut [
+									(arg, ARG_FD),
+									(process_listener, LISTENER_FD),
+									(binary, binary_desired_fd),
+								],
+								Some(fcntl::FdFlag::empty()),
+								true,
+							);
 							for (i, port) in ports.into_iter().enumerate() {
 								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
 								let fd = socket::socket(
@@ -414,7 +419,8 @@ fn main() {
 								)
 								.unwrap();
 								if fd != socket {
-									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true).unwrap();
+									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
+										.unwrap();
 									unistd::close(fd).unwrap();
 								}
 								socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
@@ -466,7 +472,7 @@ fn main() {
 										binary_desired_fd,
 										binary_desired_fd_,
 										Some(fcntl::FdFlag::empty()),
-										true
+										true,
 									)
 									.unwrap();
 									unistd::close(binary_desired_fd).unwrap();

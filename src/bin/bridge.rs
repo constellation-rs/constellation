@@ -23,6 +23,8 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 	clippy::shadow_unrelated
 )]
 
+use log::trace;
+use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd, FdIter};
 use std::{
 	collections::HashMap, convert::TryInto, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
 		self, unix::{
@@ -30,8 +32,6 @@ use std::{
 		}
 	}, sync::{self, mpsc}, thread, time
 };
-use log::trace;
-use palaver::{file::copy, file::copy_sendfile, file::fexecve, file::memfd_create, file::move_fds, file::seal_fd, file::FdIter};
 
 use constellation_internal::{
 	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
@@ -84,13 +84,11 @@ fn parse_request<R: Read>(
 			.expect("Failed to memfd_create"),
 		)
 	};
-	assert!(
-		nix::fcntl::FdFlag::from_bits(
-			nix::fcntl::fcntl(binary.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
-		)
-		.unwrap()
-		.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
-	);
+	assert!(nix::fcntl::FdFlag::from_bits(
+		nix::fcntl::fcntl(binary.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
+	)
+	.unwrap()
+	.contains(nix::fcntl::FdFlag::FD_CLOEXEC));
 	nix::unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
 	copy(stream, &mut binary, len)?;
 	let x = nix::unistd::lseek(binary.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
@@ -108,27 +106,30 @@ fn monitor_process(
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	let _ = std::thread::Builder::new().name(String::from("monitor_process")).spawn(move || {
-		for event in receiver_.iter() {
-			let event = match event {
-				InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-				InputEventInt::Kill => ProcessInputEvent::Kill,
-			};
-			sender.send(event);
-			//  {
-			// 	Ok(()) => (),
-			// 	Err(constellation::ChannelError::Exited) => break, // TODO,
-			// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
-			// }
-			// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
-			// 	break; // TODO: remove
-			// }
-		}
-		for _event in receiver_ {}
-		let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
-		assert_ne!(x, 0);
-		trace!("BRIDGE: KILL ({})", x);
-	}).unwrap();
+	let _ = std::thread::Builder::new()
+		.name(String::from("monitor_process"))
+		.spawn(move || {
+			for event in receiver_.iter() {
+				let event = match event {
+					InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
+					InputEventInt::Kill => ProcessInputEvent::Kill,
+				};
+				sender.send(event);
+				//  {
+				// 	Ok(()) => (),
+				// 	Err(constellation::ChannelError::Exited) => break, // TODO,
+				// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
+				// }
+				// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
+				// 	break; // TODO: remove
+				// }
+			}
+			for _event in receiver_ {}
+			let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
+			assert_ne!(x, 0);
+			trace!("BRIDGE: KILL ({})", x);
+		})
+		.unwrap();
 	loop {
 		// let event: Result<ProcessOutputEvent,_> = bincode::deserialize_from(&mut receiver).map_err(map_bincode_err);
 		let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
@@ -147,9 +148,12 @@ fn monitor_process(
 					.send(OutputEventInt::Spawn(pid, new_pid, sender1))
 					.unwrap();
 				let sender_ = sender_.clone();
-				let _ = std::thread::Builder::new().name(String::from("d")).spawn( move || {
-					monitor_process(new_pid, sender_, receiver1);
-				}).unwrap();
+				let _ = std::thread::Builder::new()
+					.name(String::from("d"))
+					.spawn(move || {
+						monitor_process(new_pid, sender_, receiver1);
+					})
+					.unwrap();
 			}
 			ProcessOutputEvent::Output(fd, output) => {
 				sender_
@@ -221,7 +225,11 @@ fn recce(
 		{
 			nix::unistd::close(fd).unwrap();
 		}
-		move_fds(&mut [(writer, 3), (binary.as_raw_fd(), 4)], Some(nix::fcntl::FdFlag::empty()), true);
+		move_fds(
+			&mut [(writer, 3), (binary.as_raw_fd(), 4)],
+			Some(nix::fcntl::FdFlag::empty()),
+			true,
+		);
 		let err = nix::fcntl::open(
 			"/dev/null",
 			nix::fcntl::OFlag::O_RDWR,
@@ -247,10 +255,13 @@ fn recce(
 		unreachable!();
 	};
 	nix::unistd::close(writer).unwrap();
-	let _ = std::thread::Builder::new().name(String::from("")).spawn( move || {
-		thread::sleep(time::Duration::new(1, 0));
-		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-	}).unwrap();
+	let _ = std::thread::Builder::new()
+		.name(String::from(""))
+		.spawn(move || {
+			thread::sleep(time::Duration::new(1, 0));
+			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+		})
+		.unwrap();
 	match nix::sys::wait::waitpid(child, None).unwrap() {
 		nix::sys::wait::WaitStatus::Exited(pid, code) if code == 0 => assert_eq!(pid, child),
 		nix::sys::wait::WaitStatus::Signaled(pid, signal, _)
@@ -271,152 +282,165 @@ fn main() {
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let listener = constellation::bridge_init();
 	let (sender, receiver) = mpsc::sync_channel::<_>(0);
-	let _ = std::thread::Builder::new().name(String::from("a")).spawn( move || {
-		for stream in listener.incoming() {
-			trace!("BRIDGE: accepted");
-			let stream = stream.unwrap();
-			let sender = sender.clone();
-			let _ = std::thread::Builder::new().name(String::from("b")).spawn( move || {
-				let stream = stream;
-				#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-				nix::sys::socket::setsockopt(
-					stream.as_raw_fd(),
-					nix::sys::socket::sockopt::Linger,
-					&nix::libc::linger {
-						l_onoff: 1,
-						l_linger: 10,
-					},
-				)
-				.unwrap();
-				#[cfg(any(target_os = "macos", target_os = "ios"))]
-				{
-					const SO_LINGER_SEC: nix::libc::c_int = 0x1080;
-					let err = unsafe {
-						nix::libc::setsockopt(
+	let _ = std::thread::Builder::new()
+		.name(String::from("a"))
+		.spawn(move || {
+			for stream in listener.incoming() {
+				trace!("BRIDGE: accepted");
+				let stream = stream.unwrap();
+				let sender = sender.clone();
+				let _ = std::thread::Builder::new()
+					.name(String::from("b"))
+					.spawn(move || {
+						let stream = stream;
+						#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+						nix::sys::socket::setsockopt(
 							stream.as_raw_fd(),
-							nix::libc::SOL_SOCKET,
-							SO_LINGER_SEC,
+							nix::sys::socket::sockopt::Linger,
 							&nix::libc::linger {
 								l_onoff: 1,
 								l_linger: 10,
-							} as *const nix::libc::linger as *const nix::libc::c_void,
-							::std::mem::size_of::<nix::libc::linger>()
-								.try_into()
-								.unwrap(),
+							},
 						)
-					};
-					assert_eq!(err, 0);
-				}
-				let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
-				if let Ok((process, args, vars, binary, mut arg)) = parse_request(&mut stream_read)
-				{
-					assert_eq!(arg.len(), 0);
-					bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
-					let (sender_, receiver) = mpsc::sync_channel::<_>(0);
-					sender
-						.send((
-							process.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
-							args,
-							vars,
-							binary,
-							arg,
-							sender_,
-						))
 						.unwrap();
-					let pid: Option<Pid> = receiver.recv().unwrap();
-					bincode::serialize_into(&mut stream_write, &pid).unwrap(); // TODO: catch this failing
-					if let Some(pid) = pid {
-						let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
-						trace!("BRIDGE: SPAWN ({})", x);
-						let (sender, receiver) = mpsc::sync_channel::<_>(0);
-						let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
-						let _ = std::thread::Builder::new().name(String::from("c")).spawn( move || {
-							monitor_process(pid, sender, receiver1);
-						});
-						let hashmap = &sync::Mutex::new(HashMap::new());
-						let _ = hashmap.lock().unwrap().insert(pid, sender1);
-						crossbeam::scope(|scope| {
-							let _ = scope.spawn(move || {
-								loop {
-									let event: Result<
-										DeployInputEvent,
-										_,
-									> = bincode::deserialize_from(&mut stream_read)
-										.map_err(map_bincode_err);
-									if event.is_err() {
-										break;
-									}
-									match event.unwrap() {
-										DeployInputEvent::Input(pid, fd, input) => {
-											hashmap
-												.lock()
-												.unwrap()
-												.get(&pid)
-												.unwrap()
-												.send(InputEventInt::Input(fd, input))
-												.unwrap();
+						#[cfg(any(target_os = "macos", target_os = "ios"))]
+						{
+							const SO_LINGER_SEC: nix::libc::c_int = 0x1080;
+							let err = unsafe {
+								nix::libc::setsockopt(
+									stream.as_raw_fd(),
+									nix::libc::SOL_SOCKET,
+									SO_LINGER_SEC,
+									&nix::libc::linger {
+										l_onoff: 1,
+										l_linger: 10,
+									} as *const nix::libc::linger as *const nix::libc::c_void,
+									::std::mem::size_of::<nix::libc::linger>()
+										.try_into()
+										.unwrap(),
+								)
+							};
+							assert_eq!(err, 0);
+						}
+						let (mut stream_read, mut stream_write) =
+							(BufferedStream::new(&stream), &stream);
+						if let Ok((process, args, vars, binary, mut arg)) =
+							parse_request(&mut stream_read)
+						{
+							assert_eq!(arg.len(), 0);
+							bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
+							let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+							sender
+								.send((
+									process
+										.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
+									args,
+									vars,
+									binary,
+									arg,
+									sender_,
+								))
+								.unwrap();
+							let pid: Option<Pid> = receiver.recv().unwrap();
+							bincode::serialize_into(&mut stream_write, &pid).unwrap(); // TODO: catch this failing
+							if let Some(pid) = pid {
+								let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+								trace!("BRIDGE: SPAWN ({})", x);
+								let (sender, receiver) = mpsc::sync_channel::<_>(0);
+								let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
+								let _ = std::thread::Builder::new().name(String::from("c")).spawn(
+									move || {
+										monitor_process(pid, sender, receiver1);
+									},
+								);
+								let hashmap = &sync::Mutex::new(HashMap::new());
+								let _ = hashmap.lock().unwrap().insert(pid, sender1);
+								crossbeam::scope(|scope| {
+									let _ = scope.spawn(move || {
+										loop {
+											let event: Result<DeployInputEvent, _> =
+												bincode::deserialize_from(&mut stream_read)
+													.map_err(map_bincode_err);
+											if event.is_err() {
+												break;
+											}
+											match event.unwrap() {
+												DeployInputEvent::Input(pid, fd, input) => {
+													hashmap
+														.lock()
+														.unwrap()
+														.get(&pid)
+														.unwrap()
+														.send(InputEventInt::Input(fd, input))
+														.unwrap();
+												}
+												DeployInputEvent::Kill(Some(pid)) => {
+													hashmap
+														.lock()
+														.unwrap()
+														.get(&pid)
+														.unwrap()
+														.send(InputEventInt::Kill)
+														.unwrap();
+												}
+												DeployInputEvent::Kill(None) => {
+													break;
+												}
+											}
 										}
-										DeployInputEvent::Kill(Some(pid)) => {
-											hashmap
-												.lock()
-												.unwrap()
-												.get(&pid)
-												.unwrap()
-												.send(InputEventInt::Kill)
-												.unwrap();
+										let x = hashmap.lock().unwrap();
+										for (_, process) in x.iter() {
+											process.send(InputEventInt::Kill).unwrap();
 										}
-										DeployInputEvent::Kill(None) => {
+									});
+									for event in receiver.iter() {
+										let event = match event {
+											OutputEventInt::Spawn(pid, new_pid, sender) => {
+												let x =
+													hashmap.lock().unwrap().insert(new_pid, sender);
+												assert!(x.is_none());
+												DeployOutputEvent::Spawn(pid, new_pid)
+											}
+											OutputEventInt::Output(pid, fd, output) => {
+												DeployOutputEvent::Output(pid, fd, output)
+											}
+											OutputEventInt::Exit(pid, exit_code) => {
+												let _ =
+													hashmap.lock().unwrap().remove(&pid).unwrap();
+												DeployOutputEvent::Exit(pid, exit_code)
+											}
+										};
+										if bincode::serialize_into(&mut stream_write, &event)
+											.is_err()
+										{
 											break;
 										}
 									}
-								}
-								let x = hashmap.lock().unwrap();
-								for (_, process) in x.iter() {
-									process.send(InputEventInt::Kill).unwrap();
-								}
-							});
-							for event in receiver.iter() {
-								let event = match event {
-									OutputEventInt::Spawn(pid, new_pid, sender) => {
-										let x = hashmap.lock().unwrap().insert(new_pid, sender);
-										assert!(x.is_none());
-										DeployOutputEvent::Spawn(pid, new_pid)
+									trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
+									let mut x = hashmap.lock().unwrap();
+									for (_, process) in x.drain() {
+										process.send(InputEventInt::Kill).unwrap();
 									}
-									OutputEventInt::Output(pid, fd, output) => {
-										DeployOutputEvent::Output(pid, fd, output)
-									}
-									OutputEventInt::Exit(pid, exit_code) => {
-										let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
-										DeployOutputEvent::Exit(pid, exit_code)
-									}
-								};
-								if bincode::serialize_into(&mut stream_write, &event).is_err() {
-									break;
-								}
+									for _event in receiver {}
+								});
+								assert_eq!(
+									hashmap.lock().unwrap().len(),
+									0,
+									"{:?}",
+									*hashmap.lock().unwrap()
+								);
 							}
-							trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
-							let mut x = hashmap.lock().unwrap();
-							for (_, process) in x.drain() {
-								process.send(InputEventInt::Kill).unwrap();
-							}
-							for _event in receiver {}
-						});
-						assert_eq!(
-							hashmap.lock().unwrap().len(),
-							0,
-							"{:?}",
-							*hashmap.lock().unwrap()
-						);
-					}
-					nix::sys::socket::shutdown(
-						stream.as_raw_fd(),
-						nix::sys::socket::Shutdown::Write,
-					)
+							nix::sys::socket::shutdown(
+								stream.as_raw_fd(),
+								nix::sys::socket::Shutdown::Write,
+							)
+							.unwrap();
+						}
+					})
 					.unwrap();
-				}
-			}).unwrap();
-		}
-	}).unwrap();
+			}
+		})
+		.unwrap();
 
 	for (process, args, vars, binary, arg, sender) in receiver {
 		let scheduler = unsafe { fs::File::from_raw_fd(SCHEDULER_FD) };

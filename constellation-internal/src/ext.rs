@@ -189,12 +189,21 @@ pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
 #[test]
 fn parse_binary_size_test() {
 	assert_eq!(parse_binary_size(""), Err(()));
-	assert_eq!(parse_binary_size("1.500000001GiB"), Ok(1024_u64.pow(3)*3/2+1));
-	assert_eq!(parse_binary_size("1.9999999999GiB"), Ok(2*1024_u64.pow(3)-1));
-	assert_eq!(parse_binary_size("1.999999999GiB"), Ok(2*1024_u64.pow(3)-2));
+	assert_eq!(
+		parse_binary_size("1.500000001GiB"),
+		Ok(1024_u64.pow(3) * 3 / 2 + 1)
+	);
+	assert_eq!(
+		parse_binary_size("1.9999999999GiB"),
+		Ok(2 * 1024_u64.pow(3) - 1)
+	);
+	assert_eq!(
+		parse_binary_size("1.999999999GiB"),
+		Ok(2 * 1024_u64.pow(3) - 2)
+	);
 	assert_eq!(parse_binary_size("1.000000000GiB"), Ok(1024_u64.pow(3)));
 	assert_eq!(parse_binary_size("1.0000000001GiB"), Ok(1024_u64.pow(3)));
-	assert_eq!(parse_binary_size("1.000000001GiB"), Ok(1024_u64.pow(3)+1));
+	assert_eq!(parse_binary_size("1.000000001GiB"), Ok(1024_u64.pow(3) + 1));
 	for i in 0..100000 {
 		assert_eq!(parse_binary_size(&i.to_string()), Ok(i));
 	}

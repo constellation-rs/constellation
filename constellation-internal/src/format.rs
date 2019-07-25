@@ -225,9 +225,7 @@ impl Style {
 					16 + 36 * (r / 43) + 6 * (g / 43) + (b / 43),
 				)),
 			),
-			StyleSupport::TwentyFourBit => {
-				Self(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b)))
-			}
+			StyleSupport::TwentyFourBit => Self(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b))),
 		}
 	}
 
