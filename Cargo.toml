@@ -11,7 +11,7 @@ The `constellation` framework to aide writing and debugging of distributed progr
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
 documentation = "https://docs.rs/constellation"
-readme = "../README.md"
+readme = "README.md"
 edition = "2018"
 autotests = true
 
@@ -23,6 +23,10 @@ members = [
 
 [lib]
 name = "constellation"
+
+[badges]
+azure-devops = { project = "alecmocatta/constellation", pipeline = "tests" }
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 bincode = "1.0"

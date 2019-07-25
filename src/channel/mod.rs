@@ -697,12 +697,14 @@ impl<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T> Selectable for Se
 	}
 
 	fn available<'b>(&'b mut self, context: &'b Reactor) -> Option<Box<dyn FnOnce() + 'b>> {
-		self.0.async_send(context).map(|t| {
-			Box::new(move || {
-				let f = self.1.take().unwrap();
-				t(f())
-			}) as Box<dyn FnOnce() + 'b>
-		})
+		self.0
+			.async_send(context)
+			.map(|t| -> Box<dyn FnOnce() + 'b> {
+				Box::new(move || {
+					let f = self.1.take().unwrap();
+					t(f())
+				})
+			})
 	}
 
 	fn unsubscribe(&self, thread: thread::Thread) {
@@ -942,12 +944,14 @@ impl<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelEr
 	}
 
 	fn available<'b>(&'b mut self, context: &'b Reactor) -> Option<Box<dyn FnOnce() + 'b>> {
-		self.0.async_recv(context).map(|t| {
-			Box::new(move || {
-				let f = self.1.take().unwrap();
-				f(t())
-			}) as Box<dyn FnOnce() + 'b>
-		})
+		self.0
+			.async_recv(context)
+			.map(|t| -> Box<dyn FnOnce() + 'b> {
+				Box::new(move || {
+					let f = self.1.take().unwrap();
+					f(t())
+				})
+			})
 	}
 
 	fn unsubscribe(&self, thread: thread::Thread) {

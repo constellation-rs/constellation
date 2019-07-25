@@ -21,8 +21,8 @@
 	missing_copy_implementations,
 	// missing_debug_implementations,
 	missing_docs,
+	trivial_casts,
 	trivial_numeric_casts,
-	unused_extern_crates,
 	unused_import_braces,
 	unused_qualifications,
 	unused_results,
@@ -805,13 +805,13 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 				processes
 					.iter()
 					.enumerate()
-					.map(|(i, &(_, ref receiver))| {
+					.map(|(i, &(_, ref receiver))| -> Box<dyn Selectable> {
 						Box::new(receiver.selectable_recv(
 							move |t: Result<ProcessOutputEvent, _>| {
 								// trace!("ProcessOutputEvent {}: {:?}", i, t);
 								**event_.borrow_mut() = Some((i, t.unwrap()));
 							},
-						)) as Box<dyn Selectable>
+						))
 					})
 					.collect(),
 			);
