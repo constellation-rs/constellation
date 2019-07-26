@@ -1,3 +1,5 @@
+#![allow(clippy::large_enum_variant)]
+
 use super::*;
 use std::{
 	collections::hash_map::DefaultHasher, hash::{Hash, Hasher}

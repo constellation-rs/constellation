@@ -88,7 +88,9 @@ use std::{
 	}
 };
 
-use constellation_internal::{map_bincode_err, parse_binary_size, BufferedStream, Resources};
+use constellation_internal::{
+	map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
+};
 
 #[cfg(unix)]
 type Fd = std::os::unix::io::RawFd;
@@ -101,7 +103,7 @@ Run a constellation node, optionally as master, and optionally start a bridge ru
 ";
 const USAGE: &str = r"
 USAGE:
-    constellation master (<addr> <mem> <cpu> [<bridge> <addr>]...)...
+    constellation master <addr> (<addr> <mem> <cpu> [<bridge> <addr>]...)...
     constellation <addr>
 
 OPTIONS:
@@ -138,7 +140,7 @@ or, for a Rust crate:
 
 #[derive(Debug)]
 enum Arg {
-	Master(Vec<Node>),
+	Master(net::IpAddr, Vec<Node>),
 	Worker(net::SocketAddr),
 }
 #[derive(Debug)]
@@ -160,6 +162,10 @@ impl Arg {
 		let _ = args.next().unwrap();
 		match args.next().as_ref().map(|x| &**x) {
 			Some("master") => {
+				let bind = args.next().and_then(|x| x.parse().ok()).unwrap_or_else(|| {
+					println!("Invalid bind address\n{}", USAGE);
+					process::exit(1)
+				});
 				let mut nodes = Vec::new();
 				loop {
 					match (
@@ -198,7 +204,7 @@ impl Arg {
 						}
 					}
 				}
-				Arg::Master(nodes)
+				Arg::Master(bind, nodes)
 			}
 			None | Some("-h") | Some("--help") => {
 				println!("{}{}{}", DESCRIPTION, USAGE, HELP);
@@ -282,15 +288,16 @@ fn parse_request<R: Read>(
 fn main() {
 	let arg = Arg::from_argv();
 	let (listen, listener) = match arg {
-		Arg::Master(mut nodes) => {
-			let fabric = net::TcpListener::bind("127.0.0.1:0").unwrap();
-			let scheduler_addr = nodes[0].addr;
-			nodes[0].addr = fabric.local_addr().unwrap();
+		Arg::Master(listen, mut nodes) => {
+			let fabric = net::TcpListener::bind(net::SocketAddr::new(listen, 0)).unwrap();
+			let master_addr = nodes[0].addr;
+			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
 			let _ = std::thread::Builder::new()
 				.name(String::from("master"))
 				.spawn(move || {
 					master::run(
-						scheduler_addr,
+						net::SocketAddr::new(listen, master_addr.port()),
+						Pid::new(master_addr.ip(), master_addr.port()),
 						nodes
 							.into_iter()
 							.map(
@@ -316,7 +323,7 @@ fn main() {
 					); // TODO: error on clash
 				})
 				.unwrap();
-			(scheduler_addr.ip(), fabric)
+			(listen, fabric)
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
 	};

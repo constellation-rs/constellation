@@ -33,7 +33,8 @@ impl Node {
 
 #[derive(Serialize)]
 struct SchedulerArg {
-	scheduler: net::SocketAddr,
+	ip: net::IpAddr,
+	scheduler: Pid,
 }
 
 fn parse_request<R: Read>(
@@ -60,7 +61,7 @@ fn parse_request<R: Read>(
 }
 
 pub fn run(
-	addr: net::SocketAddr,
+	bind_addr: net::SocketAddr, pid: Pid,
 	nodes: HashMap<net::SocketAddr, (u64, f32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
 ) {
 	let (sender, receiver) = mpsc::sync_channel::<
@@ -96,7 +97,6 @@ pub fn run(
 				Vec<net::SocketAddr>,
 			)>(0);
 			let stream = net::TcpStream::connect(&addr).unwrap();
-			let local_addr = stream.local_addr().unwrap().ip();
 			let sender1 = sender.clone();
 			let _ = std::thread::Builder::new()
 				.spawn(move || {
@@ -165,11 +165,11 @@ pub fn run(
 					})
 					.unwrap();
 			}
-			(sender_a, node, addr.ip(), local_addr, VecDeque::new())
+			(sender_a, node, addr.ip(), VecDeque::new())
 		})
 		.collect::<Vec<_>>();
 
-	let listener = net::TcpListener::bind(addr).unwrap();
+	let listener = net::TcpListener::bind(bind_addr).unwrap();
 	let _ = std::thread::Builder::new()
 		.spawn(move || {
 			for stream in listener.incoming() {
@@ -228,7 +228,8 @@ pub fn run(
 					bincode::serialize_into(
 						&mut sched_arg,
 						&SchedulerArg {
-							scheduler: net::SocketAddr::new(node.3, addr.port()),
+							ip: node.2,
+							scheduler: pid,
 						},
 					)
 					.unwrap();
@@ -236,7 +237,7 @@ pub fn run(
 					node.0
 						.send((process, args, vars, binary, sched_arg, ports))
 						.unwrap();
-					node.4.push_back((sender, process));
+					node.3.push_back((sender, process));
 				} else {
 					println!(
 						"Failing a spawn! Cannot allocate process {:#?} to nodes {:#?}",
@@ -248,7 +249,7 @@ pub fn run(
 			Either::Right((node_, Either::Left(init))) => {
 				println!("init {}:{}", node_, init);
 				let node = &mut nodes[node_];
-				let (sender, process) = node.4.pop_front().unwrap();
+				let (sender, process) = node.3.pop_front().unwrap();
 				let x = processes.insert((node_, init), process);
 				assert!(x.is_none());
 				let pid = Pid::new(node.2, init);

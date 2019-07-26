@@ -79,11 +79,13 @@ const MONITOR_FD: Fd = 5;
 
 #[derive(Clone, Deserialize, Debug)]
 struct SchedulerArg {
-	scheduler: net::SocketAddr,
+	ip: net::IpAddr,
+	scheduler: Pid,
 }
 
 lazy_static! {
 	static ref BRIDGE: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
+	static ref PID: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
 	static ref SCHEDULER: sync::Mutex<()> = sync::Mutex::new(());
 	static ref DEPLOYED: sync::RwLock<Option<bool>> = sync::RwLock::new(None);
 	static ref REACTOR: sync::RwLock<Option<channel::Reactor>> = sync::RwLock::new(None);
@@ -435,12 +437,9 @@ pub fn run<'a>(mut select: Vec<Box<dyn Selectable + 'a>>) {
 /// Get the [Pid] of the current process
 #[inline(always)]
 pub fn pid() -> Pid {
-	// TODO: panic!("You must call init() immediately inside your application's main() function")
-	// TODO: cache
-	let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
-	let local_addr = listener.local_addr().unwrap();
-	let _ = listener.into_raw_fd();
-	Pid::new(local_addr.ip(), local_addr.port())
+	PID.read().unwrap().unwrap_or_else(|| {
+		panic!("You must call init() immediately inside your application's main() function")
+	})
 }
 
 /// Get the memory and CPU requirements configured at initialisation of the current process
@@ -582,7 +581,7 @@ fn spawn_native(
 	};
 	unistd::close(process_listener).unwrap();
 	drop(arg);
-	let new_pid = Pid::new("127.0.0.1".parse().unwrap(), process_id);
+	let new_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), process_id);
 	// BRIDGE.read().unwrap().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
 	{
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
@@ -702,7 +701,15 @@ pub fn bridge_init() -> net::TcpListener {
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
 		drop(arg);
-		let scheduler = net::TcpStream::connect(sched_arg.scheduler)
+		let port = {
+			let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+			let local_addr = listener.local_addr().unwrap();
+			let _ = listener.into_raw_fd();
+			local_addr.port()
+		};
+		let our_pid = Pid::new(sched_arg.ip, port);
+		*PID.write().unwrap() = Some(our_pid);
+		let scheduler = net::TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
 		if scheduler != SCHEDULER_FD {
@@ -728,6 +735,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	let (bridge_process_listener, bridge_process_id) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
+	assert_eq!(palaver::thread::count(), 1);
 	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
 		#[cfg(any(target_os = "android", target_os = "linux"))]
 		{
@@ -743,6 +751,9 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			false,
 		)
 		.unwrap();
+
+		let bridge_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id);
+		*PID.write().unwrap() = Some(bridge_pid);
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD);
 		*REACTOR.try_write().unwrap() = Some(reactor);
@@ -842,7 +853,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		process::exit(exit_code.into());
 	}
 	unistd::close(bridge_process_listener).unwrap();
-	Pid::new("127.0.0.1".parse().unwrap(), bridge_process_id)
+	Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id)
 }
 
 fn native_process_listener() -> (Fd, u16) {
@@ -857,7 +868,7 @@ fn native_process_listener() -> (Fd, u16) {
 	socket::bind(
 		process_listener,
 		&socket::SockAddr::Inet(socket::InetAddr::from_std(&net::SocketAddr::new(
-			"127.0.0.1".parse().unwrap(),
+			net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
 			0,
 		))),
 	)
@@ -899,6 +910,7 @@ fn monitor_process(
 
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
+	assert_eq!(palaver::thread::count(), 1);
 	if let unistd::ForkResult::Parent { child } = unistd::fork().unwrap() {
 		unistd::close(reader).unwrap();
 		unistd::close(monitor_writer).unwrap();
@@ -1191,10 +1203,17 @@ pub fn init(resources: Resources) {
 		drop(file);
 		process::exit(0);
 	}
-	let (subprocess, resources, argument, bridge, scheduler) = {
+	let (subprocess, resources, argument, bridge, scheduler, ip) = {
 		if !deployed {
 			if envs.resources.is_none() {
-				(false, resources, vec![], None, None)
+				(
+					false,
+					resources,
+					vec![],
+					None,
+					None,
+					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+				)
 			} else {
 				let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 				let bridge = bincode::deserialize_from(&mut &arg)
@@ -1208,6 +1227,7 @@ pub fn init(resources: Resources) {
 					prog_arg,
 					Some(bridge),
 					None,
+					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
 				)
 			}
 		} else {
@@ -1226,6 +1246,7 @@ pub fn init(resources: Resources) {
 				prog_arg,
 				Some(bridge),
 				Some(sched_arg.scheduler),
+				sched_arg.ip,
 			)
 		}
 	};
@@ -1249,11 +1270,28 @@ pub fn init(resources: Resources) {
 			)
 			.unwrap();
 		}
-		let our_pid = Pid::new("127.0.0.1".parse().unwrap(), our_process_id);
+		let our_pid = Pid::new(ip, our_process_id);
+		*PID.write().unwrap() = Some(our_pid);
 		assert_eq!(our_pid, pid());
 		native_bridge(format, our_pid)
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
+
+	let port = {
+		let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+		let local_addr = listener.local_addr().unwrap();
+		let _ = listener.into_raw_fd();
+		local_addr.port()
+	};
+	let our_pid = Pid::new(ip, port);
+	*PID.write().unwrap() = Some(our_pid);
+
+	trace!(
+		"PROCESS {}:{}: start setup; pid: {}",
+		unistd::getpid(),
+		pid().addr().port(),
+		pid()
+	);
 
 	*DEPLOYED.write().unwrap() = Some(deployed);
 	*RESOURCES.write().unwrap() = Some(resources);
@@ -1300,7 +1338,7 @@ pub fn init(resources: Resources) {
 	.unwrap();
 
 	if deployed {
-		let scheduler = net::TcpStream::connect(scheduler.unwrap())
+		let scheduler = net::TcpStream::connect(scheduler.unwrap().addr())
 			.unwrap()
 			.into_raw_fd();
 		assert_ne!(scheduler, SCHEDULER_FD);

@@ -1,3 +1,5 @@
+#![allow(clippy::large_enum_variant)]
+
 use super::*;
 use tcp_typed::Notifier;
 
