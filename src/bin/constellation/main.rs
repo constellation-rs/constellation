@@ -79,7 +79,7 @@ use palaver::{
 	file::{copy, copy_fd, fexecve, memfd_create, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync::{self, mpsc}
+	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync::{self, mpsc}, thread
 };
 #[cfg(unix)]
 use std::{
@@ -286,13 +286,17 @@ fn parse_request<R: Read>(
 }
 
 fn main() {
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		std::process::abort();
+	}));
 	let arg = Arg::from_argv();
 	let (listen, listener) = match arg {
 		Arg::Master(listen, mut nodes) => {
 			let fabric = net::TcpListener::bind(net::SocketAddr::new(listen, 0)).unwrap();
 			let master_addr = nodes[0].addr;
 			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
-			let _ = std::thread::Builder::new()
+			let _ = thread::Builder::new()
 				.name(String::from("master"))
 				.spawn(move || {
 					master::run(
@@ -388,8 +392,40 @@ fn main() {
 						panic!()
 					}
 					.port();
+					let vars = iter::once((
+						CString::new("CONSTELLATION").unwrap(),
+						CString::new("fabric").unwrap(),
+					))
+					.chain(iter::once((
+						CString::new("CONSTELLATION_RESOURCES").unwrap(),
+						CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
+					)))
+					.chain(vars.into_iter().map(|(x, y)| {
+						(
+							CString::new(OsStringExt::into_vec(x)).unwrap(),
+							CString::new(OsStringExt::into_vec(y)).unwrap(),
+						)
+					}))
+					.map(|(key, value)| {
+						CString::new(format!(
+							"{}={}",
+							key.to_str().unwrap(),
+							value.to_str().unwrap()
+						))
+						.unwrap()
+					})
+					.collect::<Vec<_>>();
+					let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
+					let args = args
+						.into_iter()
+						.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
+						.collect::<Vec<_>>();
 					let child = match unistd::fork().expect("Fork failed") {
 						unistd::ForkResult::Child => {
+							// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+							// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+							// Ideally including malloc.
+
 							// println!("{:?}", args[0]);
 							#[cfg(any(target_os = "android", target_os = "linux"))]
 							{
@@ -435,39 +471,8 @@ fn main() {
 								)
 								.unwrap();
 							}
-							let vars = iter::once((
-								CString::new("CONSTELLATION").unwrap(),
-								CString::new("fabric").unwrap(),
-							))
-							.chain(iter::once((
-								CString::new("CONSTELLATION_RESOURCES").unwrap(),
-								CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
-							)))
-							.chain(vars.into_iter().map(|(x, y)| {
-								(
-									CString::new(OsStringExt::into_vec(x)).unwrap(),
-									CString::new(OsStringExt::into_vec(y)).unwrap(),
-								)
-							}))
-							.map(|(key, value)| {
-								CString::new(format!(
-									"{}={}",
-									key.to_str().unwrap(),
-									value.to_str().unwrap()
-								))
-								.unwrap()
-							})
-							.collect::<Vec<_>>();
 							if false {
-								unistd::execve(
-									&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-									&args
-										.into_iter()
-										.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
-										.collect::<Vec<_>>(),
-									&vars,
-								)
-								.expect("Failed to fexecve");
+								unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
 							} else {
 								if valgrind::is() {
 									let binary_desired_fd_ = valgrind::start_fd() - 1;
@@ -482,15 +487,8 @@ fn main() {
 									unistd::close(binary_desired_fd).unwrap();
 									binary_desired_fd = binary_desired_fd_;
 								}
-								fexecve(
-									binary_desired_fd,
-									&args
-										.into_iter()
-										.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
-										.collect::<Vec<_>>(),
-									&vars,
-								)
-								.expect("Failed to fexecve");
+								fexecve(binary_desired_fd, &args, &vars)
+									.expect("Failed to fexecve");
 							}
 							unreachable!();
 						}

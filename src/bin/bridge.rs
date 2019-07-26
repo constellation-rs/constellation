@@ -106,7 +106,7 @@ fn monitor_process(
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	let _ = std::thread::Builder::new()
+	let _ = thread::Builder::new()
 		.name(String::from("monitor_process"))
 		.spawn(move || {
 			for event in receiver_.iter() {
@@ -148,7 +148,7 @@ fn monitor_process(
 					.send(OutputEventInt::Spawn(pid, new_pid, sender1))
 					.unwrap();
 				let sender_ = sender_.clone();
-				let _ = std::thread::Builder::new()
+				let _ = thread::Builder::new()
 					.name(String::from("d"))
 					.spawn(move || {
 						monitor_process(new_pid, sender_, receiver1);
@@ -255,7 +255,7 @@ fn recce(
 		unreachable!();
 	};
 	nix::unistd::close(writer).unwrap();
-	let _ = std::thread::Builder::new()
+	let _ = thread::Builder::new()
 		.name(String::from(""))
 		.spawn(move || {
 			thread::sleep(time::Duration::new(1, 0));
@@ -282,14 +282,14 @@ fn main() {
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let listener = constellation::bridge_init();
 	let (sender, receiver) = mpsc::sync_channel::<_>(0);
-	let _ = std::thread::Builder::new()
+	let _ = thread::Builder::new()
 		.name(String::from("a"))
 		.spawn(move || {
 			for stream in listener.incoming() {
 				trace!("BRIDGE: accepted");
 				let stream = stream.unwrap();
 				let sender = sender.clone();
-				let _ = std::thread::Builder::new()
+				let _ = thread::Builder::new()
 					.name(String::from("b"))
 					.spawn(move || {
 						let stream = stream;
@@ -315,9 +315,7 @@ fn main() {
 										l_onoff: 1,
 										l_linger: 10,
 									} as *const nix::libc::linger as *const nix::libc::c_void,
-									::std::mem::size_of::<nix::libc::linger>()
-										.try_into()
-										.unwrap(),
+									std::mem::size_of::<nix::libc::linger>().try_into().unwrap(),
 								)
 							};
 							assert_eq!(err, 0);
@@ -348,7 +346,7 @@ fn main() {
 								trace!("BRIDGE: SPAWN ({})", x);
 								let (sender, receiver) = mpsc::sync_channel::<_>(0);
 								let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
-								let _ = std::thread::Builder::new().name(String::from("c")).spawn(
+								let _ = thread::Builder::new().name(String::from("c")).spawn(
 									move || {
 										monitor_process(pid, sender, receiver1);
 									},

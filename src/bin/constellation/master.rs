@@ -4,7 +4,7 @@ use either::Either;
 use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net, path, sync::mpsc
+	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net, path, sync::mpsc, thread
 };
 
 use constellation_internal::{map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
@@ -98,7 +98,7 @@ pub fn run(
 			)>(0);
 			let stream = net::TcpStream::connect(&addr).unwrap();
 			let sender1 = sender.clone();
-			let _ = std::thread::Builder::new()
+			let _ = thread::Builder::new()
 				.spawn(move || {
 					let (receiver, sender) = (receiver_a, sender1);
 					let (mut stream_read, mut stream_write) =
@@ -137,7 +137,7 @@ pub fn run(
 					assert!(check_port);
 				}
 				let sender = sender.clone();
-				let _ = std::thread::Builder::new()
+				let _ = thread::Builder::new()
 					.spawn(move || {
 						let mut path = env::current_exe().unwrap();
 						let _ = path.pop();
@@ -170,13 +170,13 @@ pub fn run(
 		.collect::<Vec<_>>();
 
 	let listener = net::TcpListener::bind(bind_addr).unwrap();
-	let _ = std::thread::Builder::new()
+	let _ = thread::Builder::new()
 		.spawn(move || {
 			for stream in listener.incoming() {
 				// println!("accepted");
 				let stream = stream.unwrap();
 				let sender = sender.clone();
-				let _ = std::thread::Builder::new()
+				let _ = thread::Builder::new()
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);

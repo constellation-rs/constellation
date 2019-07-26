@@ -691,6 +691,10 @@ extern "C" fn at_exit() {
 #[doc(hidden)]
 pub fn bridge_init() -> net::TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		std::process::abort();
+	}));
 	if valgrind::is() {
 		unistd::close(valgrind::start_fd() - 1 - 12).unwrap();
 	}
@@ -735,7 +739,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	let (bridge_process_listener, bridge_process_id) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1);
+	// assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
 	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
 		#[cfg(any(target_os = "android", target_os = "linux"))]
 		{
@@ -766,7 +770,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		let err = unsafe { libc::atexit(at_exit) };
 		assert_eq!(err, 0);
 
-		let x = std::thread::Builder::new()
+		let x = thread::Builder::new()
 			.name(String::from("bridge-waitpid"))
 			.spawn(|| {
 				loop {
@@ -880,10 +884,7 @@ fn native_process_listener() -> (Fd, u16) {
 		} else {
 			panic!()
 		};
-	assert_eq!(
-		process_id.ip(),
-		"127.0.0.1".parse::<net::Ipv4Addr>().unwrap()
-	);
+	assert_eq!(process_id.ip(), net::IpAddr::V4(net::Ipv4Addr::LOCALHOST));
 
 	(process_listener, process_id.port())
 }
@@ -910,7 +911,7 @@ fn monitor_process(
 
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1);
+	// assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
 	if let unistd::ForkResult::Parent { child } = unistd::fork().unwrap() {
 		unistd::close(reader).unwrap();
 		unistd::close(monitor_writer).unwrap();
@@ -991,7 +992,7 @@ fn monitor_process(
 		let receiver = Receiver::<ProcessInputEvent>::new(bridge);
 
 		let bridge_sender2 = bridge_outbound_sender.clone();
-		let x3 = std::thread::Builder::new()
+		let x3 = thread::Builder::new()
 			.name(String::from("monitor-monitorfd-to-channel"))
 			.spawn(move || {
 				let file = unsafe { fs::File::from_raw_fd(monitor_reader) };
@@ -1008,7 +1009,7 @@ fn monitor_process(
 			})
 			.unwrap();
 
-		let x = std::thread::Builder::new()
+		let x = thread::Builder::new()
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(move || {
 				loop {
@@ -1021,7 +1022,7 @@ fn monitor_process(
 				}
 			})
 			.unwrap();
-		let _x2 = std::thread::Builder::new()
+		let _x2 = thread::Builder::new()
 			.name(String::from("monitor-bridge-to-channel"))
 			.spawn(move || {
 				loop {
@@ -1070,12 +1071,12 @@ fn monitor_process(
 		// 		Ok(exit) => break exit,
 		// if let Err(nix::Error::Sys(nix::errno::Errno::EINTR)) = exit {
 		// 	loop {
-		// 		thread::sleep(::std::time::Duration::new(1,0));
+		// 		thread::sleep(std::time::Duration::new(1,0));
 		// 	}
 		// }
 		// if exit.is_err() {
 		// 	loop {
-		// 		thread::sleep(::std::time::Duration::new(1,0));
+		// 		thread::sleep(std::time::Duration::new(1,0));
 		// 	}
 		// }
 		// let exit = exit.unwrap();
@@ -1174,10 +1175,10 @@ fn monitor_process(
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
 pub fn init(resources: Resources) {
-	// std::panic::set_hook(Box::new(|info| {
-	// 	eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
-	// 	std::process::abort();
-	// }));
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		std::process::abort();
+	}));
 	if valgrind::is() {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
@@ -1272,7 +1273,6 @@ pub fn init(resources: Resources) {
 		}
 		let our_pid = Pid::new(ip, our_process_id);
 		*PID.write().unwrap() = Some(our_pid);
-		assert_eq!(our_pid, pid());
 		native_bridge(format, our_pid)
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
@@ -1399,7 +1399,7 @@ pub fn init(resources: Resources) {
 fn forward_fd(
 	fd: Fd, reader: Fd, bridge_sender: mpsc::SyncSender<ProcessOutputEvent>,
 ) -> thread::JoinHandle<()> {
-	std::thread::Builder::new()
+	thread::Builder::new()
 		.name(String::from("monitor-forward_fd"))
 		.spawn(move || {
 			let reader = unsafe { fs::File::from_raw_fd(reader) };
@@ -1426,7 +1426,7 @@ fn forward_fd(
 fn forward_input_fd(
 	fd: Fd, writer: Fd, receiver: mpsc::Receiver<ProcessInputEvent>,
 ) -> thread::JoinHandle<()> {
-	std::thread::Builder::new()
+	thread::Builder::new()
 		.name(String::from("monitor-forward_input_fd"))
 		.spawn(move || {
 			let writer = unsafe { fs::File::from_raw_fd(writer) };
