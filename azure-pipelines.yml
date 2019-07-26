@@ -19,6 +19,7 @@ jobs:
       rust_target_check: ''
       rust_target_build: ''
       rust_target_run: ''
+      rust_test_flags: '--test tester'
     matrix:
       # windows:
       #   imageName: 'vs2017-win2016'
