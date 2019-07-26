@@ -261,7 +261,7 @@ pub(crate) fn pretty_pid(
 	assert_eq!(&pid.0, &decrypted_data);
 
 	let x = bytes.to_hex().take(7).collect::<String>();
-	let mut rng = rand::XorShiftRng::from_seed([
+	let mut rng = rand::rngs::SmallRng::from_seed([
 		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
 		bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
 	]);

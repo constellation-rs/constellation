@@ -330,7 +330,7 @@ fn main() {
 			let (sender, receiver) = mpsc::sync_channel::<(unistd::Pid, Either<u16, u16>)>(0);
 			let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
 			crossbeam::scope(|scope| {
-				let _ = scope.spawn(move || {
+				let _ = scope.spawn(move |_scope| {
 					let receiver = receiver;
 					for (pid, done) in receiver.iter() {
 						match done {
@@ -494,7 +494,7 @@ fn main() {
 					assert!(x.is_none());
 					sender.send((child, Either::Left(process_id))).unwrap();
 					let sender = sender.clone();
-					let _ = scope.spawn(move || {
+					let _ = scope.spawn(move |_scope| {
 						match wait::waitpid(child, None).unwrap() {
 							wait::WaitStatus::Exited(pid, code) if code == 0 => {
 								assert_eq!(pid, child)
@@ -514,7 +514,8 @@ fn main() {
 					let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
 				}
 				drop(sender); // otherwise the done-forwarding thread never ends
-			});
+			})
+			.unwrap();
 		}
 		assert_eq!(pending_inner.len(), 0);
 	}

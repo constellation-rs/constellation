@@ -109,7 +109,7 @@ fn main() {
 		panic!("Deploy failed due to not being able to allocate process to any of the nodes")
 	}); // TODO get resources from bridge
 	crossbeam::scope(|scope| {
-		let _ = scope.spawn(|| {
+		let _ = scope.spawn(|_scope| {
 			let mut stdin = io::stdin();
 			loop {
 				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
@@ -175,5 +175,6 @@ fn main() {
 			}
 		}
 		process::exit(exit_code.into());
-	});
+	})
+	.unwrap();
 }

@@ -356,7 +356,7 @@ fn main() {
 								let hashmap = &sync::Mutex::new(HashMap::new());
 								let _ = hashmap.lock().unwrap().insert(pid, sender1);
 								crossbeam::scope(|scope| {
-									let _ = scope.spawn(move || {
+									let _ = scope.spawn(move |_scope| {
 										loop {
 											let event: Result<DeployInputEvent, _> =
 												bincode::deserialize_from(&mut stream_read)
@@ -422,7 +422,8 @@ fn main() {
 										process.send(InputEventInt::Kill).unwrap();
 									}
 									for _event in receiver {}
-								});
+								})
+								.unwrap();
 								assert_eq!(
 									hashmap.lock().unwrap().len(),
 									0,

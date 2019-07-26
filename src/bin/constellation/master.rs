@@ -104,7 +104,7 @@ pub fn run(
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
 					crossbeam::scope(|scope| {
-						let _ = scope.spawn(|| {
+						let _ = scope.spawn(|_spawn| {
 							for (process, args, vars, binary, arg, ports) in receiver {
 								let mut stream_write = stream_write.write();
 								bincode::serialize_into(&mut stream_write, &process).unwrap();
@@ -118,7 +118,7 @@ pub fn run(
 								drop(stream_write);
 							}
 						});
-						let _ = scope.spawn(|| {
+						let _ = scope.spawn(|_spawn| {
 							let sender = sender;
 							while let Ok(done) =
 								bincode::deserialize_from::<_, Either<u16, u16>>(&mut stream_read)
@@ -127,7 +127,8 @@ pub fn run(
 								sender.send(Either::Right((i, done))).unwrap();
 							}
 						});
-					});
+					})
+					.unwrap();
 				})
 				.unwrap();
 			for (bridge, ports) in bridges {
