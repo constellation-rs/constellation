@@ -22,9 +22,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -38,9 +36,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -54,9 +50,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -70,9 +64,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -86,9 +78,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -102,9 +92,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -118,9 +106,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -134,9 +120,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -150,9 +134,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -166,14 +148,10 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     }
 //=   ],
-//=   "exit": {
-//=     "Left": 0
-//=   }
+//=   "exit": "Success"
 //= }
 
 use constellation::*;
