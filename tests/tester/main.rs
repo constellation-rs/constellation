@@ -400,10 +400,10 @@ fn main() {
 	}
 
 	fabric.kill().unwrap();
-	let stderr_empty = fabric_stderr.join().unwrap();
-	assert!(stderr_empty);
-	let stdout_empty = fabric_stdout.join().unwrap();
-	assert!(stdout_empty);
+	let _stderr_empty = fabric_stderr.join().unwrap();
+	// assert!(stderr_empty);
+	let _stdout_empty = fabric_stdout.join().unwrap();
+	// assert!(stdout_empty);
 
 	println!(
 		"{}/{} succeeded in {:?}",
