@@ -277,13 +277,11 @@ fn parse_request<R: Read>(
 			.expect("Failed to memfd_create"),
 		)
 	};
-	assert!(
-		fcntl::FdFlag::from_bits(
-			fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
-		)
-		.unwrap()
-		.contains(fcntl::FdFlag::FD_CLOEXEC)
-	);
+	assert!(fcntl::FdFlag::from_bits(
+		fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
+	)
+	.unwrap()
+	.contains(fcntl::FdFlag::FD_CLOEXEC));
 	unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
 	copy(stream, &mut binary, len)?;
 	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();

@@ -396,8 +396,7 @@ fn main() {
 			});
 			let output = parse_output(&result);
 			if output.is_err()
-				|| file.is_err()
-				|| !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
+				|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
 			{
 				println!("Error in {:?}", src);
 				match file {

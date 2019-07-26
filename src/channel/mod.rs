@@ -133,12 +133,13 @@ impl Reactor {
 					HashMap<net::SocketAddr, Arc<sync::RwLock<Option<Channel>>>>,
 				>,
 			> = None;
-			while done.is_none() || done.as_ref().unwrap().iter().any(|(_, ref inner)| {
-				// TODO: maintain count
-				let inner = inner.read().unwrap();
-				let inner = &inner.as_ref().unwrap().inner;
-				inner.valid() && !inner.closed()
-			}) {
+			while done.is_none()
+				|| done.as_ref().unwrap().iter().any(|(_, ref inner)| {
+					// TODO: maintain count
+					let inner = inner.read().unwrap();
+					let inner = &inner.as_ref().unwrap().inner;
+					inner.valid() && !inner.closed()
+				}) {
 				let mut sender = None;
 				let mut catcher = None;
 				if let &Some(ref sockets) = &done {
@@ -194,13 +195,14 @@ impl Reactor {
 							match sockets.entry(remote) {
 								hash_map::Entry::Occupied(channel_) => {
 									let channel_ = &**channel_.get(); // &**sockets.get(&remote).unwrap();
-										   // if let &Inner::Connected(ref e) =
-										   // 	&channel_.read().unwrap().as_ref().unwrap().inner
-										   // {
-										   // 	trace!("{:?} {:?} {:?}", e, local, remote);
-										   // 	continue;
-										   // }
-									let notifier_key: *const sync::RwLock<Option<Channel>> = channel_;
+								  // if let &Inner::Connected(ref e) =
+								  // 	&channel_.read().unwrap().as_ref().unwrap().inner
+								  // {
+								  // 	trace!("{:?} {:?} {:?}", e, local, remote);
+								  // 	continue;
+								  // }
+									let notifier_key: *const sync::RwLock<Option<Channel>> =
+										channel_;
 									let notifier =
 										&notifier.context(Key(notifier_key as *const ()));
 									let connectee: Connection = connection(notifier).into();
@@ -244,7 +246,8 @@ impl Reactor {
 								}
 								hash_map::Entry::Vacant(vacant) => {
 									let channel = Arc::new(sync::RwLock::new(None));
-									let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel;
+									let notifier_key: *const sync::RwLock<Option<Channel>> =
+										&*channel;
 									let notifier =
 										&notifier.context(Key(notifier_key as *const ()));
 									let connectee: Connection = connection(notifier).into();
@@ -263,9 +266,8 @@ impl Reactor {
 					} else if data != Key(1 as *const ()) {
 						if done.is_none() {
 							let mut sockets = sockets.write().unwrap();
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = data.0 as *const _;
+							let notifier_key: *const sync::RwLock<Option<Channel>> =
+								data.0 as *const _;
 							let notifier = &notifier.context(Key(notifier_key as *const ()));
 							// assert!(sockets.values().any(|channel|{
 							// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
@@ -273,7 +275,8 @@ impl Reactor {
 							// }));
 							// let mut channel = unsafe{&*notifier_key}.write().unwrap();
 							let channel_arc = sockets.values().find(|&channel| {
-								let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+								let notifier_key2: *const sync::RwLock<Option<Channel>> =
+									&**channel;
 								notifier_key2 == notifier_key
 							});
 							if let Some(channel_arc) = channel_arc {
@@ -300,8 +303,7 @@ impl Reactor {
 									// 	receiver_future.wake();
 									// }
 									channel.senders_count == 0
-										&& channel.receivers_count == 0
-										&& inner.closed()
+										&& channel.receivers_count == 0 && inner.closed()
 								};
 								if finished {
 									let x = channel.take().unwrap();
@@ -312,7 +314,9 @@ impl Reactor {
 									let key = *sockets
 										.iter()
 										.find(|&(_key, channel)| {
-											let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+											let notifier_key2: *const sync::RwLock<
+												Option<Channel>,
+											> = &**channel;
 											notifier_key2 == notifier_key
 										})
 										.unwrap()
@@ -325,9 +329,8 @@ impl Reactor {
 							}
 						} else {
 							let sockets = &mut **done.as_mut().unwrap();
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = data.0 as *const _;
+							let notifier_key: *const sync::RwLock<Option<Channel>> =
+								data.0 as *const _;
 							let notifier = &notifier.context(Key(notifier_key as *const ()));
 							// assert!(sockets.values().any(|channel|{
 							// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
@@ -335,7 +338,8 @@ impl Reactor {
 							// }));
 							// let mut channel = unsafe{&*notifier_key}.write().unwrap();
 							let channel_arc = sockets.values().find(|&channel| {
-								let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+								let notifier_key2: *const sync::RwLock<Option<Channel>> =
+									&**channel;
 								notifier_key2 == notifier_key
 							});
 							if let Some(channel_arc) = channel_arc {
@@ -353,8 +357,7 @@ impl Reactor {
 										inner.close(notifier);
 									}
 									channel.senders_count == 0
-										&& channel.receivers_count == 0
-										&& inner.closed()
+										&& channel.receivers_count == 0 && inner.closed()
 								};
 								if finished {
 									let x = channel.take().unwrap();
@@ -365,7 +368,9 @@ impl Reactor {
 									let key = *sockets
 										.iter()
 										.find(|&(_key, channel)| {
-											let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+											let notifier_key2: *const sync::RwLock<
+												Option<Channel>,
+											> = &**channel;
 											notifier_key2 == notifier_key
 										})
 										.unwrap()
@@ -385,9 +390,7 @@ impl Reactor {
 						done = Some(sockets.write().unwrap());
 						let sockets = &mut **done.as_mut().unwrap();
 						for inner in sockets.values_mut() {
-							let notifier_key: *const sync::RwLock<
-								Option<Channel>,
-							> = &**inner;
+							let notifier_key: *const sync::RwLock<Option<Channel>> = &**inner;
 							let notifier = &notifier.context(Key(notifier_key as *const ()));
 							let mut channel = inner.write().unwrap();
 							let channel: &mut Channel = channel.as_mut().unwrap();

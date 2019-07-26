@@ -94,13 +94,11 @@ fn parse_request<R: Read>(
 			.expect("Failed to memfd_create"),
 		)
 	};
-	assert!(
-		nix::fcntl::FdFlag::from_bits(
-			nix::fcntl::fcntl(binary.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
-		)
-		.unwrap()
-		.contains(nix::fcntl::FdFlag::FD_CLOEXEC)
-	);
+	assert!(nix::fcntl::FdFlag::from_bits(
+		nix::fcntl::fcntl(binary.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
+	)
+	.unwrap()
+	.contains(nix::fcntl::FdFlag::FD_CLOEXEC));
 	nix::unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
 	copy(stream, &mut binary, len)?;
 	let x = nix::unistd::lseek(binary.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
@@ -352,11 +350,9 @@ fn main() {
 						crossbeam::scope(|scope| {
 							let _ = scope.spawn(move || {
 								loop {
-									let event: Result<
-										DeployInputEvent,
-										_,
-									> = bincode::deserialize_from(&mut stream_read)
-										.map_err(map_bincode_err);
+									let event: Result<DeployInputEvent, _> =
+										bincode::deserialize_from(&mut stream_read)
+											.map_err(map_bincode_err);
 									if event.is_err() {
 										break;
 									}

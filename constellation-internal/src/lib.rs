@@ -414,11 +414,7 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGALRM => Signal::SIGALRM,
 			signal::Signal::SIGTERM => Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			signal::Signal::SIGSTKFLT => Signal::SIGSTKFLT,
@@ -435,24 +431,12 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGPROF => Signal::SIGPROF,
 			signal::Signal::SIGWINCH => Signal::SIGWINCH,
 			signal::Signal::SIGIO => Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			signal::Signal::SIGPWR => Signal::SIGPWR,
 			signal::Signal::SIGSYS => Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGEMT => Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGINFO => Signal::SIGINFO,
 		}
 	}
@@ -476,11 +460,7 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGALRM => signal::Signal::SIGALRM,
 			Signal::SIGTERM => signal::Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			Signal::SIGSTKFLT => signal::Signal::SIGSTKFLT,
@@ -497,24 +477,12 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGPROF => signal::Signal::SIGPROF,
 			Signal::SIGWINCH => signal::Signal::SIGWINCH,
 			Signal::SIGIO => signal::Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			Signal::SIGPWR => signal::Signal::SIGPWR,
 			Signal::SIGSYS => signal::Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGEMT => signal::Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGINFO => signal::Signal::SIGINFO,
 			_ => unimplemented!(),
 		}

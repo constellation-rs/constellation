@@ -81,9 +81,10 @@ fn main() {
 	let args: Args = docopt::Docopt::new(USAGE)
 		.and_then(|d| d.deserialize())
 		.unwrap_or_else(|e| e.exit());
-	let _version = args.flag_version || envs
-		.version
-		.map_or(false, |x| x.expect("CONSTELLATION_VERSION must be 0 or 1"));
+	let _version = args.flag_version
+		|| envs
+			.version
+			.map_or(false, |x| x.expect("CONSTELLATION_VERSION must be 0 or 1"));
 	let format = args
 		.flag_format
 		.or_else(|| {

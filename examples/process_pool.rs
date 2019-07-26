@@ -87,22 +87,22 @@ impl ProcessPool {
 					// Make this closure serializable by wrapping with serde_closure's
 					// FnOnce!() macro, which requires explicitly listing captured variables.
 					FnOnce!([] move |parent| {
-					// println!("process {}: awaiting work", i);
-
-					// Create a `Sender` half of a channel to our parent
-					let receiver = Receiver::<Option<st::Box<st::FnBox()->st::Box<st::Any>>>>::new(parent);
-
-					// Create a `Sender` half of a channel to our parent
-					let sender = Sender::<st::Box<st::Any>>::new(parent);
-
-					while let Some(work) = receiver.recv().unwrap() {
-						// println!("process {}: got work", i);
-						let ret = work();
-						// println!("process {}: done work", i);
-						sender.send(ret);
 						// println!("process {}: awaiting work", i);
-					}
-				}),
+
+						// Create a `Sender` half of a channel to our parent
+						let receiver = Receiver::<Option<st::Box<st::FnBox()->st::Box<st::Any>>>>::new(parent);
+
+						// Create a `Sender` half of a channel to our parent
+						let sender = Sender::<st::Box<st::Any>>::new(parent);
+
+						while let Some(work) = receiver.recv().unwrap() {
+							// println!("process {}: got work", i);
+							let ret = work();
+							// println!("process {}: done work", i);
+							sender.send(ret);
+							// println!("process {}: awaiting work", i);
+						}
+					}),
 				)
 				.expect("Unable to allocate process!");
 

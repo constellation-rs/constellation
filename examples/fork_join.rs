@@ -49,52 +49,53 @@ fn main() {
 		.and_then(|arg| arg.parse::<usize>().ok())
 		.unwrap_or(10);
 
-	let processes = (0..processes).map(|i| {
+	let processes = (0..processes)
+		.map(|i| {
+			// Spawn the following FnOnce closure in a new process
+			let child = spawn(
+				// Use the default resource limits, which are enough for this example
+				Resources::default(),
+				// Make this closure serializable by wrapping with serde_closure's
+				// FnOnce!() macro, which requires explicitly listing captured variables.
+				FnOnce!([i] move |parent| {
+					println!("process {}: commencing hashing", i);
 
-		// Spawn the following FnOnce closure in a new process
-		let child = spawn(
-			// Use the default resource limits, which are enough for this example
-			Resources::default(),
-			// Make this closure serializable by wrapping with serde_closure's
-			// FnOnce!() macro, which requires explicitly listing captured variables.
-			FnOnce!([i] move |parent| {
-				println!("process {}: commencing hashing", i);
+					let mut rng = rand::thread_rng();
 
-				let mut rng = rand::thread_rng();
+					// To record the lowest hash value seen
+					let mut lowest: Option<(String,[u8;20])> = None;
 
-				// To record the lowest hash value seen
-				let mut lowest: Option<(String,[u8;20])> = None;
+					// Loop for ten seconds
+					let start = time::Instant::now();
+					while start.elapsed() < time::Duration::new(10,0) {
+						// Generate a random 7 character string
+						let string: String = iter::repeat(()).map(|()| rng.sample(Alphanumeric)).take(7).collect();
 
-				// Loop for ten seconds
-				let start = time::Instant::now();
-				while start.elapsed() < time::Duration::new(10,0) {
-					// Generate a random 7 character string
-					let string: String = iter::repeat(()).map(|()| rng.sample(Alphanumeric)).take(7).collect();
+						// Hash the string
+						let hash = Sha1::from(&string).digest().bytes();
 
-					// Hash the string
-					let hash = Sha1::from(&string).digest().bytes();
-
-					// Update our record of the lowest hash value seen
-					if lowest.is_none() || lowest.as_ref().unwrap().1 >= hash {
-						lowest = Some((string,hash));
+						// Update our record of the lowest hash value seen
+						if lowest.is_none() || lowest.as_ref().unwrap().1 >= hash {
+							lowest = Some((string,hash));
+						}
 					}
-				}
 
-				let lowest = lowest.unwrap();
-				println!("process {}: lowest hash was {} from string \"{}\"", i, hex::encode(lowest.1), lowest.0);
+					let lowest = lowest.unwrap();
+					println!("process {}: lowest hash was {} from string \"{}\"", i, hex::encode(lowest.1), lowest.0);
 
-				// Create a `Sender` half of a channel to our parent
-				let sender = Sender::<(String,[u8;20])>::new(parent);
+					// Create a `Sender` half of a channel to our parent
+					let sender = Sender::<(String,[u8;20])>::new(parent);
 
-				// Send our record along the channel to our parent
-				sender.send(lowest);
-			}),
-		).expect("Unable to allocate process!");
+					// Send our record along the channel to our parent
+					sender.send(lowest);
+				}),
+			)
+			.expect("Unable to allocate process!");
 
-		// Create a `Receiver` half of a channel to the newly-spawned child
-		Receiver::<(String, [u8; 20])>::new(child)
-
-	}).collect::<Vec<_>>();
+			// Create a `Receiver` half of a channel to the newly-spawned child
+			Receiver::<(String, [u8; 20])>::new(child)
+		})
+		.collect::<Vec<_>>();
 
 	// `processes` is now a Vec of `Receiver`s
 

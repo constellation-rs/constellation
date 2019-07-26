@@ -156,10 +156,11 @@ pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
 		index += 1;
 		let _zeros = input[index..].chars().position(|c| c != '0').unwrap_or(0);
 		let index1 = index;
-		index = index + input[index..]
-			.chars()
-			.position(|c| !c.is_ascii_digit())
-			.unwrap_or(input.len() - index);
+		index = index
+			+ input[index..]
+				.chars()
+				.position(|c| !c.is_ascii_digit())
+				.unwrap_or(input.len() - index);
 		if index != index1 {
 			input[index1..index].parse().unwrap()
 		} else {
