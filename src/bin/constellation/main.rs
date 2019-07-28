@@ -89,7 +89,7 @@ use std::{
 };
 
 use constellation_internal::{
-	map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
+	forbid_alloc, map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
 };
 
 #[cfg(unix)]
@@ -415,82 +415,124 @@ fn main() {
 						.unwrap()
 					})
 					.collect::<Vec<_>>();
-					let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
+					// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
 					let args = args
 						.into_iter()
 						.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
 						.collect::<Vec<_>>();
+
+					let args_p = Vec::with_capacity(args.len() + 1);
+					let vars_p = Vec::with_capacity(vars.len() + 1);
+
 					let child = match unistd::fork().expect("Fork failed") {
 						unistd::ForkResult::Child => {
-							// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-							// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-							// Ideally including malloc.
+							forbid_alloc(|| {
+								// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+								// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+								// Including malloc.
 
-							// println!("{:?}", args[0]);
-							#[cfg(any(target_os = "android", target_os = "linux"))]
-							{
-								use nix::libc;
-								let err =
-									unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-								assert_eq!(err, 0);
-							}
-							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
-								.unwrap();
-							let binary = binary.into_raw_fd();
-							let mut binary_desired_fd =
-								BOUND_FD_START + Fd::try_from(ports.len()).unwrap();
-							let arg = arg.into_raw_fd();
-							move_fds(
-								&mut [
-									(arg, ARG_FD),
-									(process_listener, LISTENER_FD),
-									(binary, binary_desired_fd),
-								],
-								Some(fcntl::FdFlag::empty()),
-								true,
-							);
-							for (i, port) in ports.into_iter().enumerate() {
-								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
-								let fd = socket::socket(
-									socket::AddressFamily::Inet,
-									socket::SockType::Stream,
-									socket::SockFlag::empty(),
-									socket::SockProtocol::Tcp,
-								)
-								.unwrap();
-								if fd != socket {
-									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
-										.unwrap();
-									unistd::close(fd).unwrap();
+								// println!("{:?}", args[0]);
+								#[cfg(any(target_os = "android", target_os = "linux"))]
+								{
+									use nix::libc;
+									let err = unsafe {
+										libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)
+									};
+									assert_eq!(err, 0);
 								}
-								socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
+								unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 									.unwrap();
-								socket::bind(
-									socket,
-									&socket::SockAddr::Inet(socket::InetAddr::from_std(&port)),
-								)
-								.unwrap();
-							}
-							if false {
-								unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
-							} else {
-								if valgrind::is() {
-									let binary_desired_fd_ = valgrind::start_fd() - 1;
-									assert!(binary_desired_fd_ > binary_desired_fd);
-									copy_fd(
-										binary_desired_fd,
-										binary_desired_fd_,
-										Some(fcntl::FdFlag::empty()),
-										true,
+								let binary = binary.into_raw_fd();
+								let mut binary_desired_fd =
+									BOUND_FD_START + Fd::try_from(ports.len()).unwrap();
+								let arg = arg.into_raw_fd();
+								move_fds(
+									&mut [
+										(arg, ARG_FD),
+										(process_listener, LISTENER_FD),
+										(binary, binary_desired_fd),
+									],
+									Some(fcntl::FdFlag::empty()),
+									true,
+								);
+								for (i, port) in ports.iter().enumerate() {
+									let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
+									let fd = socket::socket(
+										socket::AddressFamily::Inet,
+										socket::SockType::Stream,
+										socket::SockFlag::empty(),
+										socket::SockProtocol::Tcp,
 									)
 									.unwrap();
-									unistd::close(binary_desired_fd).unwrap();
-									binary_desired_fd = binary_desired_fd_;
+									if fd != socket {
+										copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
+											.unwrap();
+										unistd::close(fd).unwrap();
+									}
+									socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
+										.unwrap();
+									socket::bind(
+										socket,
+										&socket::SockAddr::Inet(socket::InetAddr::from_std(&port)),
+									)
+									.unwrap();
 								}
-								fexecve(binary_desired_fd, &args, &vars)
-									.expect("Failed to fexecve");
-							}
-							unreachable!();
+								if true {
+									// unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
+									use more_asserts::*;
+									use nix::libc;
+									#[inline]
+									pub fn execve(
+										path: &CString, args: &[CString],
+										mut args_p: Vec<*const libc::c_char>, env: &[CString],
+										mut env_p: Vec<*const libc::c_char>,
+									) -> nix::Result<()> {
+										fn to_exec_array(
+											args: &[CString], args_p: &mut Vec<*const libc::c_char>,
+										) {
+											for arg in args.iter().map(|s| s.as_ptr()) {
+												args_p.push(arg);
+											}
+											args_p.push(std::ptr::null());
+										}
+										assert_eq!(args_p.len(), 0);
+										assert_eq!(env_p.len(), 0);
+										assert_le!(args.len() + 1, args_p.capacity());
+										assert_le!(env.len() + 1, env_p.capacity());
+										to_exec_array(args, &mut args_p);
+										to_exec_array(env, &mut env_p);
+
+										let _ = unsafe {
+											libc::execve(
+												path.as_ptr(),
+												args_p.as_ptr(),
+												env_p.as_ptr(),
+											)
+										};
+
+										Err(nix::Error::Sys(nix::errno::Errno::last()))
+									}
+									execve(&args[0], &args, args_p, &vars, vars_p)
+										.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
+								} else {
+									if valgrind::is() {
+										let binary_desired_fd_ = valgrind::start_fd() - 1;
+										assert!(binary_desired_fd_ > binary_desired_fd);
+										copy_fd(
+											binary_desired_fd,
+											binary_desired_fd_,
+											Some(fcntl::FdFlag::empty()),
+											true,
+										)
+										.unwrap();
+										unistd::close(binary_desired_fd).unwrap();
+										binary_desired_fd = binary_desired_fd_;
+									}
+									fexecve(binary_desired_fd, &args, &vars)
+										.expect("Failed to fexecve");
+								}
+								unreachable!()
+							})
 						}
 						unistd::ForkResult::Parent { child, .. } => child,
 					};

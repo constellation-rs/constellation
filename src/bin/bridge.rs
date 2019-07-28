@@ -24,7 +24,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 )]
 
 use log::trace;
-use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd, FdIter};
+use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd};
 use std::{
 	collections::HashMap, convert::TryInto, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
 		self, unix::{
@@ -34,7 +34,7 @@ use std::{
 };
 
 use constellation_internal::{
-	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 #[cfg(target_family = "unix")]
@@ -203,56 +203,87 @@ fn recce(
 		.map(|x| CString::new(OsStringExt::into_vec(x.clone())).unwrap())
 		.collect::<Vec<_>>();
 
+	let args_p = Vec::with_capacity(args.len() + 1);
+	let vars_p = Vec::with_capacity(vars.len() + 1);
+
 	let child = if let nix::unistd::ForkResult::Parent { child, .. } =
 		nix::unistd::fork().expect("Fork failed")
 	{
 		child
 	} else {
-		// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-		// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-		// Ideally including malloc.
+		forbid_alloc(|| {
+			// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+			// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+			// Including malloc.
 
-		// println!("{:?}", args[0]);
-		#[cfg(any(target_os = "android", target_os = "linux"))]
-		{
-			let err = unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
-			assert_eq!(err, 0);
-		}
-		nix::unistd::close(reader).unwrap();
-		for fd in FdIter::new()
-			.unwrap()
-			.filter(|&fd| fd != binary.as_raw_fd() && fd != writer)
-		{
-			nix::unistd::close(fd).unwrap();
-		}
-		move_fds(
-			&mut [(writer, 3), (binary.as_raw_fd(), 4)],
-			Some(nix::fcntl::FdFlag::empty()),
-			true,
-		);
-		let err = nix::fcntl::open(
-			"/dev/null",
-			nix::fcntl::OFlag::O_RDWR,
-			nix::sys::stat::Mode::empty(),
-		)
-		.unwrap();
-		assert_eq!(err, nix::libc::STDIN_FILENO);
-		let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
-		assert_eq!(err, nix::libc::STDOUT_FILENO);
-		let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
-		assert_eq!(err, nix::libc::STDERR_FILENO);
-		if false {
-			nix::unistd::execve(&args[0], &args, &vars).expect("Failed to fexecve ELF");
-		} else {
-			// if is_valgrind() {
-			// 	let binary_desired_fd_ = valgrind_start_fd()-1; assert!(binary_desired_fd_ > binary_desired_fd);
-			// 	nix::unistd::dup2(binary_desired_fd, binary_desired_fd_).unwrap();
-			// 	nix::unistd::close(binary_desired_fd).unwrap();
-			// 	binary_desired_fd = binary_desired_fd_;
-			// }
-			fexecve(4, &args, &vars).expect("Failed to fexecve ELF");
-		}
-		unreachable!();
+			// println!("{:?}", args[0]);
+			#[cfg(any(target_os = "android", target_os = "linux"))]
+			{
+				let err =
+					unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
+				assert_eq!(err, 0);
+			}
+			nix::unistd::close(reader).unwrap();
+			for fd in (0..1024).filter(|&fd| fd != binary.as_raw_fd() && fd != writer)
+			// FdIter::new().unwrap()
+			{
+				let _ = nix::unistd::close(fd); //.unwrap();
+			}
+			move_fds(
+				&mut [(writer, 3), (binary.as_raw_fd(), 4)],
+				Some(nix::fcntl::FdFlag::empty()),
+				true,
+			);
+			let err = nix::fcntl::open(
+				"/dev/null",
+				nix::fcntl::OFlag::O_RDWR,
+				nix::sys::stat::Mode::empty(),
+			)
+			.unwrap();
+			assert_eq!(err, nix::libc::STDIN_FILENO);
+			let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+			assert_eq!(err, nix::libc::STDOUT_FILENO);
+			let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
+			assert_eq!(err, nix::libc::STDERR_FILENO);
+			if true {
+				// nix::unistd::execve(&args[0], &args, &vars).expect("Failed to fexecve ELF");
+				use more_asserts::*;
+				use nix::libc;
+				#[inline]
+				pub fn execve(
+					path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
+					env: &[CString], mut env_p: Vec<*const libc::c_char>,
+				) -> nix::Result<()> {
+					fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
+						for arg in args.iter().map(|s| s.as_ptr()) {
+							args_p.push(arg);
+						}
+						args_p.push(std::ptr::null());
+					}
+					assert_eq!(args_p.len(), 0);
+					assert_eq!(env_p.len(), 0);
+					assert_le!(args.len() + 1, args_p.capacity());
+					assert_le!(env.len() + 1, env_p.capacity());
+					to_exec_array(args, &mut args_p);
+					to_exec_array(env, &mut env_p);
+
+					let _ = unsafe { libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr()) };
+
+					Err(nix::Error::Sys(nix::errno::Errno::last()))
+				}
+				execve(&args[0], &args, args_p, &vars, vars_p)
+					.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
+			} else {
+				// if is_valgrind() {
+				// 	let binary_desired_fd_ = valgrind_start_fd()-1; assert!(binary_desired_fd_ > binary_desired_fd);
+				// 	nix::unistd::dup2(binary_desired_fd, binary_desired_fd_).unwrap();
+				// 	nix::unistd::close(binary_desired_fd).unwrap();
+				// 	binary_desired_fd = binary_desired_fd_;
+				// }
+				fexecve(4, &args, &vars).expect("Failed to fexecve ELF");
+			}
+			unreachable!()
+		})
 	};
 	nix::unistd::close(writer).unwrap();
 	let _ = thread::Builder::new()

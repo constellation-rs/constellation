@@ -41,13 +41,14 @@ mod channel;
 use either::Either;
 use lazy_static::lazy_static;
 use log::trace;
+use more_asserts::*;
 use nix::{
 	errno, fcntl, libc, sys::{
 		signal, socket::{self, sockopt}, stat, wait
 	}, unistd
 };
 use palaver::{
-	env, file::{copy_sendfile, fd_path, fexecve, memfd_create, FdIter}, socket::{socket as palaver_socket, SockFlag}, valgrind
+	env, file::{copy_sendfile, fd_path, fexecve, memfd_create}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -59,7 +60,7 @@ use std::{
 };
 
 use constellation_internal::{
-	map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 #[cfg(target_family = "unix")]
@@ -510,72 +511,111 @@ fn spawn_native(
 			.unwrap()
 		})
 		.collect::<Vec<_>>();
+	let args_p = Vec::with_capacity(argv.len() + 1);
+	let env_p = Vec::with_capacity(envp.len() + 1);
 
 	let _child_pid = match unistd::fork().expect("Fork failed") {
 		unistd::ForkResult::Child => {
-			// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-			// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-			// Ideally including malloc.
+			forbid_alloc(|| {
+				// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+				// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+				// Including malloc.
 
-			// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
-			unsafe {
-				let _ = signal::sigaction(
-					signal::SIGCHLD,
-					&signal::SigAction::new(
-						signal::SigHandler::SigDfl,
-						signal::SaFlags::empty(),
-						signal::SigSet::empty(),
-					),
-				)
-				.unwrap();
-			};
-
-			let valgrind_start_fd = if valgrind::is() {
-				Some(valgrind::start_fd())
-			} else {
-				None
-			};
-			// FdIter uses libc::opendir which mallocs. Underlying syscall is getdents…
-			for fd in FdIter::new().unwrap().filter(|&fd| {
-				fd >= 3
-					&& fd != process_listener
-					&& fd != arg.as_raw_fd()
-					&& (valgrind_start_fd.is_none() || fd < valgrind_start_fd.unwrap())
-			}) {
-				unistd::close(fd).unwrap();
-			}
-
-			if process_listener != LISTENER_FD {
-				palaver::file::move_fd(
-					process_listener,
-					LISTENER_FD,
-					Some(fcntl::FdFlag::empty()),
-					true,
-				)
-				.unwrap();
-			}
-			if arg.as_raw_fd() != ARG_FD {
-				palaver::file::move_fd(arg.as_raw_fd(), ARG_FD, Some(fcntl::FdFlag::empty()), true)
+				// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
+				unsafe {
+					let _ = signal::sigaction(
+						signal::SIGCHLD,
+						&signal::SigAction::new(
+							signal::SigHandler::SigDfl,
+							signal::SaFlags::empty(),
+							signal::SigSet::empty(),
+						),
+					)
 					.unwrap();
-			}
+				};
 
-			if !valgrind::is() {
-				unistd::execve(&exe, &argv, &envp).expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
-			} else {
-				let fd = fcntl::open::<path::PathBuf>(
-					&fd_path(valgrind_start_fd.unwrap()).unwrap(),
-					fcntl::OFlag::O_RDONLY | fcntl::OFlag::O_CLOEXEC,
-					stat::Mode::empty(),
-				)
-				.unwrap();
-				let binary_desired_fd_ = valgrind_start_fd.unwrap() - 1;
-				assert!(binary_desired_fd_ > fd);
-				palaver::file::move_fd(fd, binary_desired_fd_, Some(fcntl::FdFlag::empty()), true)
+				let valgrind_start_fd = if valgrind::is() {
+					Some(valgrind::start_fd())
+				} else {
+					None
+				};
+				// FdIter uses libc::opendir which mallocs. Underlying syscall is getdents…
+				for fd in (0..1024).filter(|&fd| {
+					// FdIter::new().unwrap()
+					fd >= 3
+						&& fd != process_listener
+						&& fd != arg.as_raw_fd() && (valgrind_start_fd.is_none()
+						|| fd < valgrind_start_fd.unwrap())
+				}) {
+					let _ = unistd::close(fd); //.unwrap();
+				}
+
+				if process_listener != LISTENER_FD {
+					palaver::file::move_fd(
+						process_listener,
+						LISTENER_FD,
+						Some(fcntl::FdFlag::empty()),
+						true,
+					)
 					.unwrap();
-				fexecve(binary_desired_fd_, &argv, &envp)
-					.expect("Failed to execve /proc/self/fd/n");
-			}
-			unreachable!();
+				}
+				if arg.as_raw_fd() != ARG_FD {
+					palaver::file::move_fd(
+						arg.as_raw_fd(),
+						ARG_FD,
+						Some(fcntl::FdFlag::empty()),
+						true,
+					)
+					.unwrap();
+				}
+
+				if !valgrind::is() {
+					#[inline]
+					pub fn execve(
+						path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
+						env: &[CString], mut env_p: Vec<*const libc::c_char>,
+					) -> nix::Result<!> {
+						fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
+							for arg in args.iter().map(|s| s.as_ptr()) {
+								args_p.push(arg);
+							}
+							args_p.push(std::ptr::null());
+						}
+						assert_eq!(args_p.len(), 0);
+						assert_eq!(env_p.len(), 0);
+						assert_le!(args.len() + 1, args_p.capacity());
+						assert_le!(env.len() + 1, env_p.capacity());
+						to_exec_array(args, &mut args_p);
+						to_exec_array(env, &mut env_p);
+
+						let _ =
+							unsafe { libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr()) };
+
+						Err(nix::Error::Sys(nix::errno::Errno::last()))
+					}
+					execve(&exe, &argv, args_p, &envp, env_p)
+						.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
+				} else {
+					let fd = fcntl::open::<path::PathBuf>(
+						&fd_path(valgrind_start_fd.unwrap()).unwrap(),
+						fcntl::OFlag::O_RDONLY | fcntl::OFlag::O_CLOEXEC,
+						stat::Mode::empty(),
+					)
+					.unwrap();
+					let binary_desired_fd_ = valgrind_start_fd.unwrap() - 1;
+					assert!(binary_desired_fd_ > fd);
+					palaver::file::move_fd(
+						fd,
+						binary_desired_fd_,
+						Some(fcntl::FdFlag::empty()),
+						true,
+					)
+					.unwrap();
+					fexecve(binary_desired_fd_, &argv, &envp)
+						.expect("Failed to execve /proc/self/fd/n");
+				}
+				unreachable!();
+			})
 		}
 		unistd::ForkResult::Parent { child, .. } => child,
 	};
@@ -1094,9 +1134,9 @@ fn monitor_process(
 			target_os = "openbsd"
 		)))]
 		{
-			use std::env;
+			// use std::env;
 			if deployed {
-				unistd::unlink(&env::current_exe().unwrap()).unwrap();
+				// unistd::unlink(&env::current_exe().unwrap()).unwrap();
 			}
 		}
 		#[cfg(any(

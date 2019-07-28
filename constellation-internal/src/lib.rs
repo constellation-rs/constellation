@@ -32,6 +32,10 @@ type Fd = std::os::unix::io::RawFd;
 #[cfg(target_family = "windows")]
 type Fd = std::os::windows::io::RawHandle;
 
+#[cfg(feature = "alloc_counter")]
+#[global_allocator]
+static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
+
 pub use ext::*;
 pub use format::*;
 
@@ -513,6 +517,22 @@ pub fn map_bincode_err(err: bincode::Error) -> io::Error {
 	match *err {
 		bincode::ErrorKind::Io(err) => err,
 		e => panic!("{:?}", e),
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn forbid_alloc<F, R>(f: F) -> R
+where
+	F: FnOnce() -> R,
+{
+	#[cfg(feature = "alloc_counter")]
+	{
+		alloc_counter::forbid_alloc(f)
+	}
+	#[cfg(not(feature = "alloc_counter"))]
+	{
+		f()
 	}
 }
 

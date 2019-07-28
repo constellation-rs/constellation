@@ -40,6 +40,7 @@ atty = "0.2"
 docopt = "1.0"
 log = "0.4"
 futures-preview = "0.3.0-alpha.17"
+more-asserts = "0.2"
 constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
 serde_pipe = "0.1"
 serde_closure = "0.1"
@@ -65,6 +66,10 @@ sha1 = "0.6"
 hex = "0.3"
 escargot = "0.5"
 serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
+
+[features]
+fringe = ["serde_pipe/fringe"]
+no_alloc = ["constellation-internal/alloc_counter"]
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
