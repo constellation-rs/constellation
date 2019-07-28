@@ -352,6 +352,9 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
+		// if src == Path::new("tests/x.rs") {
+		// 	continue;
+		// }
 		println!("{}", src.display());
 		let file: Result<OutputTest, _> = serde_json::from_str(
 			&io::BufReader::new(fs::File::open(src).unwrap())
@@ -403,6 +406,7 @@ fn main() {
 		}
 	}
 
+	println!("killing");
 	fabric.kill().unwrap();
 	let _stderr_empty = fabric_stderr.join().unwrap();
 	// assert!(stderr_empty);

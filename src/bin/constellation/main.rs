@@ -79,7 +79,7 @@ use palaver::{
 	file::{copy, copy_fd, fexecve, memfd_create, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync::{self, mpsc}, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, iter, net, path::PathBuf, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -331,38 +331,16 @@ fn main() {
 		}
 		Arg::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
 	};
-	let mut count = 0;
+
 	for stream in listener.incoming() {
 		let stream = stream.unwrap();
 		println!("accepted");
 		let mut pending_inner = HashMap::new();
 		{
 			let pending = &sync::RwLock::new(&mut pending_inner);
-			let (sender, receiver) = mpsc::sync_channel::<(unistd::Pid, Either<u16, u16>)>(0);
-			let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
+			let (mut stream_read, stream_write) =
+				(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
 			crossbeam::scope(|scope| {
-				let _ = scope.spawn(move |_scope| {
-					let receiver = receiver;
-					for (pid, done) in receiver.iter() {
-						match done {
-							Either::Left(init) => {
-								count += 1;
-								println!("FABRIC: init({}) {}:{}", count, pid, init);
-							}
-							Either::Right(exit) => {
-								count -= 1;
-								println!("FABRIC: exit({}) {}:{}", count, pid, exit);
-							}
-						}
-						if bincode::serialize_into(&mut stream_write, &done)
-							.map_err(map_bincode_err)
-							.is_err()
-						{
-							break;
-						}
-					}
-					for _done in receiver.iter() {}
-				});
 				while let Ok((resources, ports, binary, args, vars, arg)) =
 					parse_request(&mut stream_read)
 				{
@@ -539,28 +517,44 @@ fn main() {
 					unistd::close(process_listener).unwrap();
 					let x = pending.write().unwrap().insert(process_id, child);
 					assert!(x.is_none());
-					sender.send((child, Either::Left(process_id))).unwrap();
-					let sender = sender.clone();
+					if bincode::serialize_into(
+						*stream_write.lock().unwrap(),
+						&Either::Left::<u16, u16>(process_id),
+					)
+					.map_err(map_bincode_err)
+					.is_err()
+					{
+						break;
+					}
 					let _ = scope.spawn(move |_scope| {
-						match wait::waitpid(child, None).unwrap() {
-							wait::WaitStatus::Exited(pid, code) if code == 0 => {
-								assert_eq!(pid, child)
+						loop {
+							match wait::waitpid(child, None) {
+								Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
+								Ok(wait::WaitStatus::Exited(pid, code)) if code == 0 => {
+									assert_eq!(pid, child);
+									break;
+								}
+								Ok(wait::WaitStatus::Signaled(pid, signal, _))
+									if signal == signal::Signal::SIGKILL =>
+								{
+									assert_eq!(pid, child);
+									break;
+								}
+								wait_status => panic!("{:?}", wait_status),
 							}
-							wait::WaitStatus::Signaled(pid, signal, _)
-								if signal == signal::Signal::SIGKILL =>
-							{
-								assert_eq!(pid, child)
-							}
-							wait_status => panic!("{:?}", wait_status),
 						}
-						let _ = pending.write().unwrap().remove(&process_id).unwrap();
-						sender.send((child, Either::Right(process_id))).unwrap();
+						let x = pending.write().unwrap().remove(&process_id).unwrap();
+						assert_eq!(x, child);
+						let _unchecked_error = bincode::serialize_into(
+							*stream_write.lock().unwrap(),
+							&Either::Right::<u16, u16>(process_id),
+						)
+						.map_err(map_bincode_err);
 					});
 				}
 				for (&_job, &pid) in pending.read().unwrap().iter() {
 					let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
 				}
-				drop(sender); // otherwise the done-forwarding thread never ends
 			})
 			.unwrap();
 		}

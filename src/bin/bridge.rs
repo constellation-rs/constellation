@@ -293,14 +293,21 @@ fn recce(
 			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
 		})
 		.unwrap();
-	match nix::sys::wait::waitpid(child, None).unwrap() {
-		nix::sys::wait::WaitStatus::Exited(pid, code) if code == 0 => assert_eq!(pid, child),
-		nix::sys::wait::WaitStatus::Signaled(pid, signal, _)
-			if signal == nix::sys::signal::Signal::SIGKILL =>
-		{
-			assert_eq!(pid, child)
+	loop {
+		match nix::sys::wait::waitpid(child, None) {
+			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
+			Ok(nix::sys::wait::WaitStatus::Exited(pid, code)) if code == 0 => {
+				assert_eq!(pid, child);
+				break;
+			}
+			Ok(nix::sys::wait::WaitStatus::Signaled(pid, signal, _))
+				if signal == nix::sys::signal::Signal::SIGKILL =>
+			{
+				assert_eq!(pid, child);
+				break;
+			}
+			wait_status => panic!("{:?}", wait_status),
 		}
-		wait_status => panic!("{:?}", wait_status),
 	}
 	let reader = unsafe { fs::File::from_raw_fd(reader) };
 	bincode::deserialize_from(&mut &reader)

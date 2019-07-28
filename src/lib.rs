@@ -104,7 +104,7 @@ impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{intrinsics::type_name::<T>()});
+			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{ intrinsics::type_name::<T>() });
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(sender) = channel::Sender::new(
@@ -267,7 +267,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{intrinsics::type_name::<T>()});
+			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{ intrinsics::type_name::<T>() });
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(receiver) = channel::Receiver::new(
@@ -815,6 +815,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			.spawn(|| {
 				loop {
 					match wait::waitpid(None, None) {
+						Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
 						Ok(wait::WaitStatus::Exited(_pid, code)) if code == 0 => (), //assert_eq!(pid, child),
 						// wait::WaitStatus::Signaled(pid, signal, _) if signal == signal::Signal::SIGKILL => assert_eq!(pid, child),
 						Err(nix::Error::Sys(errno::Errno::ECHILD)) => break,
@@ -1103,7 +1104,7 @@ fn monitor_process(
 
 		let exit = loop {
 			match wait::waitpid(child, None) {
-				Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => continue,
+				Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
 				exit => break exit,
 			}
 		}
