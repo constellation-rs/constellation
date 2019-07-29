@@ -39,6 +39,8 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
+const FORWARD_STDERR: bool = false;
+
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
 	output: HashMap<
@@ -64,7 +66,7 @@ impl hash::Hash for Output {
 	}
 }
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 struct OutputTest {
 	output: HashMap<os::unix::io::RawFd, (ext::serde_regex::SerdeRegex, bool)>,
 	#[serde(with = "ext::serde_multiset")]
@@ -117,9 +119,10 @@ impl OutputTest {
 }
 
 fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::Error>> {
-	if !output.stderr.is_empty() {
+	if !FORWARD_STDERR {
+		println!("stderr: {:?}", std::str::from_utf8(&output.stderr).unwrap());
+	} else if !output.stderr.is_empty() {
 		return Err(None);
-		// println!("{}", std::str::from_utf8(&output.stderr).unwrap()); // Useful if FORWARD_STDERR is disabled
 	}
 	let mut log = HashMap::new();
 	let mut top = None;
@@ -165,6 +168,22 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 	}
 	let top = top.unwrap();
 	Ok(treeize(log.remove(&top).unwrap(), &mut log))
+}
+
+fn remove_stderr(mut output_test: OutputTest) -> OutputTest {
+	let _stderr = output_test.output.remove(&2).unwrap();
+	let mut children = output_test.children;
+	let mut new_children = multiset::HashMultiSet::new();
+	while !children.is_empty() {
+		let key = children.distinct_elements().next().unwrap();
+		let count = children.count_of(key);
+		assert_ne!(count, 0);
+		let key = key.clone();
+		children.remove_all(&key);
+		new_children.insert_times(remove_stderr(key), count);
+	}
+	output_test.children = new_children;
+	output_test
 }
 
 fn treeize(
@@ -261,7 +280,7 @@ fn main() {
 		}
 	}
 
-	let (deploy, fabric, bridge) = (
+	let (_deploy, fabric, bridge) = (
 		&products[Path::new(DEPLOY)],
 		&products[Path::new(FABRIC)],
 		&products[Path::new(BRIDGE)],
@@ -352,11 +371,14 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
+		if src != Path::new("tests/f.rs") {
+			continue;
+		}
 		// if src == Path::new("tests/x.rs") {
 		// 	continue;
 		// }
 		println!("{}", src.display());
-		let file: Result<OutputTest, _> = serde_json::from_str(
+		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&io::BufReader::new(fs::File::open(src).unwrap())
 				.lines()
 				.map(Result::unwrap)
@@ -364,6 +386,9 @@ fn main() {
 				.flat_map(|x| ext::string::Chars::new(x).skip(3))
 				.collect::<String>(),
 		);
+		if !FORWARD_STDERR {
+			file = file.map(remove_stderr);
+		}
 		let mut x = |command: &mut process::Command| {
 			let result = command.output().unwrap();
 			let output = parse_output(&result);
@@ -396,14 +421,14 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
-		println!("  deployed");
-		for i in 0..iterations {
-			println!("    {}", i);
-			x(process::Command::new(deploy)
-				.env_remove("CONSTELLATION_VERSION")
-				.env_remove("CONSTELLATION_FORMAT")
-				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
-		}
+		// println!("  deployed");
+		// for i in 0..iterations {
+		// 	println!("    {}", i);
+		// 	x(process::Command::new(deploy)
+		// 		.env_remove("CONSTELLATION_VERSION")
+		// 		.env_remove("CONSTELLATION_FORMAT")
+		// 		.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
+		// }
 	}
 
 	println!("killing");

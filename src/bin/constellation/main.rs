@@ -288,6 +288,7 @@ fn parse_request<R: Read>(
 fn main() {
 	std::panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));
 	let arg = Arg::from_argv();

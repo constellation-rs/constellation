@@ -23,7 +23,7 @@ pub mod serde_regex {
 	};
 	use std::{fmt, hash};
 
-	#[derive(Serialize, Deserialize, Debug)]
+	#[derive(Clone, Serialize, Deserialize, Debug)]
 	pub struct SerdeRegex(#[serde(with = "self")] Regex);
 	impl SerdeRegex {
 		pub fn is_match(&self, text: &[u8]) -> bool {

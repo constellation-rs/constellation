@@ -41,6 +41,7 @@ docopt = "1.0"
 log = "0.4"
 futures-preview = "0.3.0-alpha.17"
 more-asserts = "0.2"
+backtrace = "0.3"
 constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
 serde_pipe = "0.1"
 serde_closure = "0.1"
