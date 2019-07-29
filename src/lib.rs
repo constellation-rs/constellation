@@ -1472,18 +1472,24 @@ fn forward_input_fd(
 	thread::Builder::new()
 		.name(String::from("monitor-forward_input_fd"))
 		.spawn(move || {
-			let writer = unsafe { fs::File::from_raw_fd(writer) };
-			let _ = fcntl::fcntl(writer.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
+			let mut writer = Some(unsafe { fs::File::from_raw_fd(writer) });
+			let _ = fcntl::fcntl(
+				writer.as_ref().unwrap().as_raw_fd(),
+				fcntl::FcntlArg::F_GETFD,
+			)
+			.unwrap();
 			for input in receiver {
+				if writer.is_none() {
+					continue;
+				}
 				match input {
 					ProcessInputEvent::Input(fd_, ref input) if fd_ == fd => {
 						if !input.is_empty() {
-							if (&writer).write_all(input).is_err() {
-								drop(writer);
-								break;
+							if writer.as_ref().unwrap().write_all(input).is_err() {
+								drop(writer.take().unwrap());
 							}
 						} else {
-							drop(writer);
+							drop(writer.take().unwrap());
 							break;
 						}
 					}
