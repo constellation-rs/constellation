@@ -1184,7 +1184,7 @@ fn monitor_process(
 		// stdin_thread.join().unwrap();
 		// trace!("exiting");
 		// unsafe{libc::_exit(0)};
-		thread::sleep_ms(100);
+		thread::sleep(std::time::Duration::from_millis(100));
 		process::exit(0);
 	}
 	unistd::close(monitor_reader).unwrap();
