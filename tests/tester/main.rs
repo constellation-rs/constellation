@@ -280,7 +280,7 @@ fn main() {
 		}
 	}
 
-	let (_deploy, fabric, bridge) = (
+	let (deploy, fabric, bridge) = (
 		&products[Path::new(DEPLOY)],
 		&products[Path::new(FABRIC)],
 		&products[Path::new(BRIDGE)],
@@ -371,9 +371,9 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
-		if src != Path::new("tests/f.rs") {
-			continue;
-		}
+		// if src != Path::new("tests/f.rs") {
+		// 	continue;
+		// }
 		// if src == Path::new("tests/x.rs") {
 		// 	continue;
 		// }
@@ -421,14 +421,14 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
-		// println!("  deployed");
-		// for i in 0..iterations {
-		// 	println!("    {}", i);
-		// 	x(process::Command::new(deploy)
-		// 		.env_remove("CONSTELLATION_VERSION")
-		// 		.env_remove("CONSTELLATION_FORMAT")
-		// 		.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
-		// }
+		println!("  deployed");
+		for i in 0..iterations {
+			println!("    {}", i);
+			x(process::Command::new(deploy)
+				.env_remove("CONSTELLATION_VERSION")
+				.env_remove("CONSTELLATION_FORMAT")
+				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
+		}
 	}
 
 	println!("killing");
