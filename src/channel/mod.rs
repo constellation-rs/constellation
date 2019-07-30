@@ -2,15 +2,12 @@ mod inner;
 mod inner_states;
 
 use either::Either;
-// use futures;
 use log::trace;
 use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
-use rand;
-use serde;
-use serde_pipe;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, cell, collections::{hash_map, HashMap}, error, fmt, marker, mem, net, os, ptr, sync::{self, Arc}, thread
+	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net, os, pin::Pin, ptr, sync::{self, Arc}, thread
 };
 use tcp_typed::{Connection, Listener};
 
@@ -463,11 +460,11 @@ impl error::Error for ChannelError {
 	}
 }
 
-pub struct Sender<T: serde::ser::Serialize> {
+pub struct Sender<T: Serialize> {
 	channel: Option<Arc<sync::RwLock<Option<Channel>>>>,
 	_marker: marker::PhantomData<fn(T)>,
 }
-impl<T: serde::ser::Serialize> Sender<T> {
+impl<T: Serialize> Sender<T> {
 	pub fn new(remote: net::SocketAddr, context: &Reactor) -> Option<Self> {
 		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
 		let sockets = &mut *sockets.write().unwrap();
@@ -551,26 +548,11 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		}
 	}
 
-	pub fn send<F: FnMut() -> C, C: Borrow<Reactor>>(&self, t: T, context: &mut F)
+	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(&'a self, f: F) -> Send<'a, T, F>
 	where
 		T: 'static,
 	{
-		let x = cell::RefCell::new(None);
-		let _ = select(
-			vec![Box::new(self.selectable_send(|| {
-				*x.borrow_mut() = Some(());
-				t
-			}))],
-			context,
-		);
-		x.into_inner().unwrap()
-	}
-
-	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(&'a self, f: F) -> impl Selectable + 'a
-	where
-		T: 'static,
-	{
-		Send(self, Some(f))
+		Send(self, std::sync::RwLock::new(Some(f)))
 	}
 
 	pub fn drop(mut self, context: &Reactor) {
@@ -611,7 +593,7 @@ impl<T: serde::ser::Serialize> Sender<T> {
 		}
 	}
 }
-impl<T: serde::ser::Serialize> Sender<Option<T>> {
+impl<T: Serialize> Sender<Option<T>> {
 	pub fn futures_poll_ready(
 		&self, cx: &mut futures::task::Context, context: &Reactor,
 	) -> futures::task::Poll<Result<(), !>>
@@ -669,18 +651,21 @@ impl<T: serde::ser::Serialize> Sender<Option<T>> {
 		}
 	}
 }
-impl<T: serde::ser::Serialize> Drop for Sender<T> {
+impl<T: Serialize> Drop for Sender<T> {
 	fn drop(&mut self) {
 		panic!("call .drop(context) rather than dropping a Sender<T>");
 	}
 }
-struct Send<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T>(&'a Sender<T>, Option<F>);
-impl<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T> fmt::Debug for Send<'a, T, F> {
+pub struct Send<'a, T: Serialize + 'static, F: FnOnce() -> T>(
+	pub &'a Sender<T>,
+	pub std::sync::RwLock<Option<F>>,
+);
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> fmt::Debug for Send<'a, T, F> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("Send").field("sender", &self.0).finish()
 	}
 }
-impl<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F> {
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F> {
 	fn subscribe(&self, thread: thread::Thread) {
 		let x = self
 			.0
@@ -701,7 +686,7 @@ impl<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T> Selectable for Se
 			.async_send(context)
 			.map(|t| -> Box<dyn FnOnce() + 'b> {
 				Box::new(move || {
-					let f = self.1.take().unwrap();
+					let f = self.1.get_mut().unwrap().take().unwrap();
 					t(f())
 				})
 			})
@@ -722,7 +707,31 @@ impl<'a, T: serde::ser::Serialize + 'static, F: FnOnce() -> T> Selectable for Se
 			.unwrap();
 	}
 }
-impl<T: serde::ser::Serialize> fmt::Debug for Sender<T> {
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
+	pub fn futures_poll(
+		self: Pin<&mut Self>, cx: &mut std::task::Context, context: &Reactor,
+	) -> std::task::Poll<()> {
+		self.0
+			.channel
+			.as_ref()
+			.unwrap()
+			.write()
+			.unwrap()
+			.as_mut()
+			.unwrap()
+			.senders_futures
+			.push(cx.waker().clone());
+		if let Some(send) = self.0.async_send(context) {
+			// TODO: remove from senders_futures
+			send(self.as_ref().1.write().unwrap().take().unwrap()());
+			futures::task::Poll::Ready(())
+		} else {
+			futures::task::Poll::Pending
+		}
+	}
+}
+
+impl<T: Serialize> fmt::Debug for Sender<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("Sender")
 			.field("inner", &self.channel)
@@ -730,11 +739,11 @@ impl<T: serde::ser::Serialize> fmt::Debug for Sender<T> {
 	}
 }
 
-pub struct Receiver<T: serde::de::DeserializeOwned> {
+pub struct Receiver<T: DeserializeOwned> {
 	channel: Option<Arc<sync::RwLock<Option<Channel>>>>,
 	_marker: marker::PhantomData<fn() -> T>,
 }
-impl<T: serde::de::DeserializeOwned> Receiver<T> {
+impl<T: DeserializeOwned> Receiver<T> {
 	pub fn new(remote: net::SocketAddr, context: &Reactor) -> Option<Self> {
 		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
 		let sockets = &mut *sockets.write().unwrap();
@@ -818,29 +827,13 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 		}
 	}
 
-	pub fn recv<F: FnMut() -> C, C: Borrow<Reactor>>(
-		&self, context: &mut F,
-	) -> Result<T, ChannelError>
-	where
-		T: 'static,
-	{
-		let x = cell::RefCell::new(None);
-		let _ = select(
-			vec![Box::new(
-				self.selectable_recv(|t| *x.borrow_mut() = Some(t)),
-			)],
-			context,
-		);
-		x.into_inner().unwrap()
-	}
-
 	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
 		&'a self, f: F,
-	) -> impl Selectable + 'a
+	) -> Recv<'a, T, F>
 	where
 		T: 'static,
 	{
-		Recv(self, Some(f))
+		Recv(self, std::sync::RwLock::new(Some(f)))
 	}
 
 	pub fn drop(mut self, context: &Reactor) {
@@ -881,7 +874,7 @@ impl<T: serde::de::DeserializeOwned> Receiver<T> {
 		}
 	}
 }
-impl<T: serde::de::DeserializeOwned> Receiver<Option<T>> {
+impl<T: DeserializeOwned> Receiver<Option<T>> {
 	pub fn futures_poll_next(
 		&self, cx: &mut futures::task::Context, context: &Reactor,
 	) -> futures::task::Poll<Option<Result<T, ChannelError>>>
@@ -909,23 +902,23 @@ impl<T: serde::de::DeserializeOwned> Receiver<Option<T>> {
 		}
 	}
 }
-impl<T: serde::de::DeserializeOwned> Drop for Receiver<T> {
+impl<T: DeserializeOwned> Drop for Receiver<T> {
 	fn drop(&mut self) {
 		panic!("call .drop(context) rather than dropping a Receiver<T>");
 	}
 }
-struct Recv<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)>(
-	&'a Receiver<T>,
-	Option<F>,
+pub struct Recv<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)>(
+	pub &'a Receiver<T>,
+	pub std::sync::RwLock<Option<F>>,
 );
-impl<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> fmt::Debug
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> fmt::Debug
 	for Recv<'a, T, F>
 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("Recv").field("receiver", &self.0).finish()
 	}
 }
-impl<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Selectable
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Selectable
 	for Recv<'a, T, F>
 {
 	fn subscribe(&self, thread: thread::Thread) {
@@ -948,7 +941,7 @@ impl<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelEr
 			.async_recv(context)
 			.map(|t| -> Box<dyn FnOnce() + 'b> {
 				Box::new(move || {
-					let f = self.1.take().unwrap();
+					let f = self.1.write().unwrap().take().unwrap();
 					f(t())
 				})
 			})
@@ -969,7 +962,34 @@ impl<'a, T: serde::de::DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelEr
 			.unwrap();
 	}
 }
-impl<T: serde::de::DeserializeOwned> fmt::Debug for Receiver<T> {
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv<'a, T, F> {
+	pub fn futures_poll(
+		self: Pin<&mut Self>, cx: &mut futures::task::Context, context: &Reactor,
+	) -> futures::task::Poll<()>
+	where
+		T: 'static,
+	{
+		self.0
+			.channel
+			.as_ref()
+			.unwrap()
+			.write()
+			.unwrap()
+			.as_mut()
+			.unwrap()
+			.receivers_futures
+			.push(cx.waker().clone());
+		if let Some(recv) = self.0.async_recv(context) {
+			// TODO: remove from receivers_futures
+			self.as_ref().1.write().unwrap().take().unwrap()(recv());
+			futures::task::Poll::Ready(())
+		} else {
+			futures::task::Poll::Pending
+		}
+	}
+}
+
+impl<T: DeserializeOwned> fmt::Debug for Receiver<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("Receiver")
 			.field("inner", &self.channel)

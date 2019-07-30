@@ -39,6 +39,7 @@
 mod channel;
 
 use either::Either;
+use futures::{sink::SinkExt, stream::StreamExt};
 use lazy_static::lazy_static;
 use log::trace;
 use more_asserts::*;
@@ -144,15 +145,17 @@ impl<T: Serialize> Sender<T> {
 	where
 		T: 'static,
 	{
-		self.0.as_ref().unwrap().send(t, &mut || {
-			BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option)
-		})
+		let _ = select(vec![Box::new(
+			self.0.as_ref().unwrap().selectable_send(|| t),
+		)]);
 	}
 
 	/// [Selectable] send.
 	///
 	/// This needs to be passed to [`select()`](select) to be executed.
-	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(&'a self, send: F) -> impl Selectable + 'a
+	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(
+		&'a self, send: F,
+	) -> impl Selectable + std::future::Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -259,6 +262,15 @@ impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
 	}
 }
 
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> std::future::Future for channel::Send<'a, T, F> {
+	type Output = ();
+
+	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+		let context = REACTOR.read().unwrap();
+		self.futures_poll(cx, context.as_ref().unwrap())
+	}
+}
+
 /// The receiving half of a channel.
 ///
 /// It has a synchronous blocking method [`recv()`](Receiver::recv) and an asynchronous nonblocking method [`selectable_recv()`](Receiver::selectable_recv).
@@ -279,7 +291,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 			Self(Some(receiver), remote)
 		} else {
 			panic!(
-				"Sender::<{}>::new() called for pid {} when a Sender to this pid already exists",
+				"Receiver::<{}>::new() called for pid {} when a Receiver to this pid already exists",
 				unsafe { intrinsics::type_name::<T>() },
 				remote
 			);
@@ -307,10 +319,12 @@ impl<T: DeserializeOwned> Receiver<T> {
 	where
 		T: 'static,
 	{
-		self.0
-			.as_ref()
-			.unwrap()
-			.recv(&mut || BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option))
+		let mut x = None;
+		let _ = select(vec![Box::new(
+			self.0.as_ref().unwrap().selectable_recv(|t| x = Some(t)),
+		)]);
+		// futures::executor::block_on(self.selectable_recv(|t| x = Some(t)));
+		x.unwrap()
 	}
 
 	/// [Selectable] receive.
@@ -318,7 +332,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// This needs to be passed to [`select()`](select) to be executed.
 	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
 		&'a self, recv: F,
-	) -> impl Selectable + 'a
+	) -> impl Selectable + std::future::Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -407,6 +421,17 @@ impl<T: 'static + DeserializeOwned> futures::stream::Stream for Receiver<Option<
 			.as_ref()
 			.unwrap()
 			.futures_poll_next(cx, context.as_ref().unwrap())
+	}
+}
+
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> std::future::Future
+	for channel::Recv<'a, T, F>
+{
+	type Output = ();
+
+	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+		let context = REACTOR.read().unwrap();
+		self.futures_poll(cx, context.as_ref().unwrap())
 	}
 }
 
@@ -934,7 +959,7 @@ fn native_process_listener() -> (Fd, u16) {
 fn monitor_process(
 	bridge: Pid, deployed: bool,
 ) -> (channel::SocketForwardee, Fd, Fd, Option<Fd>, Fd) {
-	const FORWARD_STDERR: bool = false;
+	const FORWARD_STDERR: bool = true;
 
 	let (socket_forwarder, socket_forwardee) = channel::socket_forwarder();
 
@@ -962,8 +987,8 @@ fn monitor_process(
 			unistd::close(stderr_writer).unwrap();
 		}
 		unistd::close(stdin_reader).unwrap();
-		let (bridge_outbound_sender, bridge_outbound_receiver) =
-			mpsc::sync_channel::<ProcessOutputEvent>(0);
+		let (mut bridge_outbound_sender, mut bridge_outbound_receiver) =
+			futures::channel::mpsc::channel::<ProcessOutputEvent>(0);
 		let (bridge_inbound_sender, bridge_inbound_receiver) =
 			mpsc::sync_channel::<ProcessInputEvent>(0);
 		let stdout_thread = forward_fd(
@@ -978,7 +1003,7 @@ fn monitor_process(
 				bridge_outbound_sender.clone(),
 			)
 		});
-		let _stdin_thread =
+		let stdin_thread =
 			forward_input_fd(libc::STDIN_FILENO, stdin_writer, bridge_inbound_receiver);
 		let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
 		palaver::file::move_fd(fd, libc::STDIN_FILENO, Some(fcntl::FdFlag::empty()), false)
@@ -1033,7 +1058,7 @@ fn monitor_process(
 		let sender = Sender::<ProcessOutputEvent>::new(bridge);
 		let receiver = Receiver::<ProcessInputEvent>::new(bridge);
 
-		let bridge_sender2 = bridge_outbound_sender.clone();
+		let mut bridge_sender2 = bridge_outbound_sender.clone();
 		let x3 = thread::Builder::new()
 			.name(String::from("monitor-monitorfd-to-channel"))
 			.spawn(move || {
@@ -1045,7 +1070,7 @@ fn monitor_process(
 						break;
 					}
 					let event = event.unwrap();
-					bridge_sender2.send(event).unwrap();
+					futures::executor::block_on(bridge_sender2.send(event)).unwrap();
 				}
 				let _ = file.into_raw_fd();
 			})
@@ -1055,40 +1080,51 @@ fn monitor_process(
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(move || {
 				loop {
-					let event = bridge_outbound_receiver.recv().unwrap();
-					sender.send(event.clone());
-					if let ProcessOutputEvent::Exit(_) = event {
-						// trace!("xxx exit");
-						break;
-					}
-				}
-			})
-			.unwrap();
-		let _x2 = thread::Builder::new()
-			.name(String::from("monitor-bridge-to-channel"))
-			.spawn(move || {
-				loop {
-					let event: Result<ProcessInputEvent, _> = receiver.recv();
-					if event.is_err() {
-						break;
-					}
-					let event = event.unwrap();
-					match event {
-						ProcessInputEvent::Input(fd, input) => {
-							// trace!("xxx INPUT {:?} {}", input, input.len());
-							if fd == libc::STDIN_FILENO {
-								bridge_inbound_sender
-									.send(ProcessInputEvent::Input(fd, input))
-									.unwrap();
-							} else {
-								unimplemented!()
+					let mut event = None;
+					let selected: futures::future::Either<Option<ProcessOutputEvent>, ()> = {
+						match futures::executor::block_on(futures::future::select(
+							bridge_outbound_receiver.next(),
+							receiver.selectable_recv(|t| event = Some(t)),
+						)) {
+							futures::future::Either::Left((a, _)) => {
+								futures::future::Either::Left(a)
+							}
+							futures::future::Either::Right(((), _)) => {
+								futures::future::Either::Right(())
 							}
 						}
-						ProcessInputEvent::Kill => {
-							signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(|e| {
-								assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
-							});
-							break;
+					};
+					match selected {
+						futures::future::Either::Left(event) => {
+							let event = event.unwrap();
+							sender.send(event.clone());
+							if let ProcessOutputEvent::Exit(_) = event {
+								// trace!("xxx exit");
+								break;
+							}
+						}
+						futures::future::Either::Right(()) => {
+							let event = event.unwrap();
+							if let Ok(event) = event {
+								match event {
+									ProcessInputEvent::Input(fd, input) => {
+										// trace!("xxx INPUT {:?} {}", input, input.len());
+										if fd == libc::STDIN_FILENO {
+											bridge_inbound_sender
+												.send(ProcessInputEvent::Input(fd, input))
+												.unwrap();
+										} else {
+											unimplemented!()
+										}
+									}
+									ProcessInputEvent::Kill => {
+										signal::kill(child, signal::Signal::SIGKILL)
+											.unwrap_or_else(|e| {
+												assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
+											});
+									}
+								}
+							}
 						}
 					}
 				}
@@ -1141,16 +1177,7 @@ fn monitor_process(
 				// unistd::unlink(&env::current_exe().unwrap()).unwrap();
 			}
 		}
-		#[cfg(any(
-			target_os = "android",
-			target_os = "freebsd",
-			target_os = "linux",
-			target_os = "netbsd",
-			target_os = "openbsd"
-		))]
-		{
-			let _ = deployed;
-		}
+		let _ = deployed;
 
 		let code = match exit {
 			wait::WaitStatus::Exited(pid, code) => {
@@ -1171,20 +1198,17 @@ fn monitor_process(
 		}
 		// trace!("joining x3");
 		x3.join().unwrap();
-		bridge_outbound_sender
-			.send(ProcessOutputEvent::Exit(code))
+		futures::executor::block_on(bridge_outbound_sender.send(ProcessOutputEvent::Exit(code)))
 			.unwrap();
 		drop(bridge_outbound_sender);
 		// trace!("joining x");
 		x.join().unwrap();
 		// unistd::close(libc::STDIN_FILENO).unwrap();
 		// trace!("joining x2");
-		// x2.join().unwrap();
 		// trace!("joining stdin_thread");
-		// stdin_thread.join().unwrap();
+		stdin_thread.join().unwrap();
 		// trace!("exiting");
-		// unsafe{libc::_exit(0)};
-		thread::sleep(std::time::Duration::from_millis(100));
+		// thread::sleep(std::time::Duration::from_millis(100));
 		process::exit(0);
 	}
 	unistd::close(monitor_reader).unwrap();
@@ -1441,7 +1465,7 @@ pub fn init(resources: Resources) {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn forward_fd(
-	fd: Fd, reader: Fd, bridge_sender: mpsc::SyncSender<ProcessOutputEvent>,
+	fd: Fd, reader: Fd, mut bridge_sender: futures::channel::mpsc::Sender<ProcessOutputEvent>,
 ) -> thread::JoinHandle<()> {
 	thread::Builder::new()
 		.name(String::from("monitor-forward_fd"))
@@ -1452,14 +1476,16 @@ fn forward_fd(
 				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
 				let n = (&reader).read(&mut buf).unwrap();
 				if n > 0 {
-					bridge_sender
-						.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
-						.unwrap();
+					futures::executor::block_on(
+						bridge_sender.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned())),
+					)
+					.unwrap();
 				} else {
 					drop(reader);
-					bridge_sender
-						.send(ProcessOutputEvent::Output(fd, Vec::new()))
-						.unwrap();
+					futures::executor::block_on(
+						bridge_sender.send(ProcessOutputEvent::Output(fd, Vec::new())),
+					)
+					.unwrap();
 					break;
 				}
 			}

@@ -1,6 +1,7 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::*;
+use serde::{de::DeserializeOwned, Serialize};
 use tcp_typed::Notifier;
 
 #[derive(Debug)]
@@ -71,7 +72,7 @@ impl Inner {
 		}
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(
 		&mut self, notifier: &E,
 	) -> Option<bool> {
 		if self.recvable() {
@@ -87,9 +88,7 @@ impl Inner {
 		}
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		match self {
 			&mut Inner::Connected(ref mut connected) => connected.recv(notifier),
 			&mut Inner::LocalClosed(ref mut local_closed) => local_closed.recv(notifier),
@@ -116,7 +115,7 @@ impl Inner {
 		}
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, x: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, x: T, notifier: &impl Notifier) {
 		match self {
 			&mut Inner::Connected(ref mut connected) => connected.send(x, notifier),
 			&mut Inner::RemoteClosed(ref mut remote_closed) => remote_closed.send(x, notifier),

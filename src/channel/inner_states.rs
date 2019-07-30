@@ -1,6 +1,7 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::*;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
 	collections::hash_map::DefaultHasher, hash::{Hash, Hasher}
 };
@@ -281,14 +282,12 @@ impl InnerConnected {
 		self.send_serializer.push_avail()
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
 		self.send_serializer.push().unwrap()(t);
 		notifier.queue();
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
-		&mut self, notifier: &E,
-	) -> bool {
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(&mut self, notifier: &E) -> bool {
 		if !self.recv_deserializer_given {
 			self.recv_deserializer_given = true;
 			notifier.queue(); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
@@ -296,9 +295,7 @@ impl InnerConnected {
 		self.recv_deserializer.pull::<T>().is_some()
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		self.recv_deserializer_given = false;
 		let ret = self.recv_deserializer.pull::<T>().unwrap()();
 		notifier.queue();
@@ -364,7 +361,7 @@ impl InnerRemoteClosed {
 		self.send_serializer.push_avail()
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
 		self.send_serializer.push().unwrap()(t);
 		notifier.queue();
 	}
@@ -451,9 +448,7 @@ impl InnerLocalClosed {
 		InnerLocalClosedPoll::LocalClosed(self)
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
-		&mut self, notifier: &E,
-	) -> bool {
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(&mut self, notifier: &E) -> bool {
 		if !self.recv_deserializer_given {
 			self.recv_deserializer_given = true;
 			notifier.queue(); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
@@ -461,9 +456,7 @@ impl InnerLocalClosed {
 		self.recv_deserializer.pull::<T>().is_some()
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		self.recv_deserializer_given = false;
 		let ret = self.recv_deserializer.pull::<T>().unwrap()();
 		notifier.queue();

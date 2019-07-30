@@ -39,7 +39,7 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
-const FORWARD_STDERR: bool = false;
+const FORWARD_STDERR: bool = true;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
