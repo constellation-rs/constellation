@@ -150,12 +150,11 @@ impl Reactor {
 							let mut now = Instant::now();
 							let until = now + Duration::new(60, 0);
 							while now < until {
+								#[allow(clippy::match_same_arms)]
 								match receiver.recv_timeout(until - now) {
 									Ok(()) => return,
 									Err(mpsc::RecvTimeoutError::Timeout) => (),
-									Err(mpsc::RecvTimeoutError::Disconnected) => {
-										panic!("disconnected?!")
-									}
+									Err(mpsc::RecvTimeoutError::Disconnected) => (), // panic!("omg")
 								}
 								now = Instant::now();
 							}
