@@ -756,11 +756,17 @@ extern "C" fn at_exit() {
 #[doc(hidden)]
 pub fn bridge_init() -> net::TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
+	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
 		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));
+	// simple_logging::log_to_file(
+	// 	format!("logs/{}.log", std::process::id()),
+	// 	log::LevelFilter::Trace,
+	// )
+	// .unwrap();
 	if valgrind::is() {
 		unistd::close(valgrind::start_fd() - 1 - 12).unwrap();
 	}
@@ -1242,11 +1248,17 @@ fn monitor_process(
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
 pub fn init(resources: Resources) {
+	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
 		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));
+	// simple_logging::log_to_file(
+	// 	format!("logs/{}.log", std::process::id()),
+	// 	log::LevelFilter::Trace,
+	// )
+	// .unwrap();
 	if valgrind::is() {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
@@ -1320,12 +1332,12 @@ pub fn init(resources: Resources) {
 		}
 	};
 
-	trace!(
-		"PROCESS {}:{}: start setup; pid: {}",
-		unistd::getpid(),
-		pid().addr().port(),
-		pid()
-	);
+	// trace!(
+	// 	"PROCESS {}:{}: start setup; pid: {}",
+	// 	unistd::getpid(),
+	// 	pid().addr().port(),
+	// 	pid()
+	// );
 
 	let bridge = bridge.unwrap_or_else(|| {
 		// We're in native topprocess

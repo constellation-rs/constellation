@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net, os, pin::Pin, ptr, sync::{self, Arc}, thread
+	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, os, pin::Pin, ptr, sync::{self, Arc, RwLock}, task, thread, time::Duration
 };
 use tcp_typed::{Connection, Listener};
 
@@ -49,20 +49,20 @@ impl Drop for Handle {
 }
 pub struct Reactor {
 	notifier: Notifier<Key>,
-	listener: sync::RwLock<Option<Listener>>,
-	sockets: sync::RwLock<HashMap<net::SocketAddr, Arc<sync::RwLock<Option<Channel>>>>>,
-	local: net::SocketAddr,
+	listener: RwLock<Option<Listener>>,
+	sockets: RwLock<HashMap<SocketAddr, Arc<RwLock<Option<Channel>>>>>,
+	local: SocketAddr,
 }
 impl Reactor {
-	pub fn new(host: net::IpAddr) -> (Self, u16) {
+	pub fn new(host: IpAddr) -> (Self, u16) {
 		let notifier = Notifier::new();
 		let (listener, port) = Listener::new_ephemeral(&host, &notifier.context(Key(ptr::null())));
-		let sockets = sync::RwLock::new(HashMap::new());
-		let local = net::SocketAddr::new(host, port);
+		let sockets = RwLock::new(HashMap::new());
+		let local = SocketAddr::new(host, port);
 		(
 			Self {
 				notifier,
-				listener: sync::RwLock::new(Some(listener)),
+				listener: RwLock::new(Some(listener)),
 				sockets,
 				local,
 			},
@@ -73,7 +73,7 @@ impl Reactor {
 	pub fn with_fd(fd: Fd) -> Self {
 		let notifier = Notifier::new();
 		let listener = Listener::with_fd(fd, &notifier.context(Key(ptr::null())));
-		let sockets = sync::RwLock::new(HashMap::new());
+		let sockets = RwLock::new(HashMap::new());
 		let local = if let socket::SockAddr::Inet(inet) = socket::getsockname(fd).unwrap() {
 			inet.to_std()
 		} else {
@@ -81,20 +81,20 @@ impl Reactor {
 		};
 		Self {
 			notifier,
-			listener: sync::RwLock::new(Some(listener)),
+			listener: RwLock::new(Some(listener)),
 			sockets,
 			local,
 		}
 	}
 
-	pub fn with_forwardee(socket_forwardee: SocketForwardee, local: net::SocketAddr) -> Self {
+	pub fn with_forwardee(socket_forwardee: SocketForwardee, local: SocketAddr) -> Self {
 		let notifier = Notifier::new();
 		let listener =
 			Listener::with_socket_forwardee(socket_forwardee, &notifier.context(Key(ptr::null())));
-		let sockets = sync::RwLock::new(HashMap::new());
+		let sockets = RwLock::new(HashMap::new());
 		Self {
 			notifier,
-			listener: sync::RwLock::new(Some(listener)),
+			listener: RwLock::new(Some(listener)),
 			sockets,
 			local,
 		}
@@ -129,9 +129,7 @@ impl Reactor {
 					&context.local,
 				);
 				let mut done: Option<
-					sync::RwLockWriteGuard<
-						HashMap<net::SocketAddr, Arc<sync::RwLock<Option<Channel>>>>,
-					>,
+					sync::RwLockWriteGuard<HashMap<SocketAddr, Arc<RwLock<Option<Channel>>>>>,
 				> = None;
 				while done.is_none()
 					|| done.as_ref().unwrap().iter().any(|(_, ref inner)| {
@@ -140,14 +138,42 @@ impl Reactor {
 						let inner = &inner.as_ref().unwrap().inner;
 						inner.valid() && !inner.closed()
 					}) {
-					// if let &Some(ref sockets) = &done {
-					// 	trace!(
-					// 		"sockets: {:?}",
-					// 		&**sockets
-					// 	); // called after rust runtime exited, not sure what trace does
-					// }
+					let mut sender = None;
+					let mut catcher = None;
+					if let &Some(ref sockets) = &done {
+						struct Ptr<T: ?Sized>(T);
+						unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
+						unsafe impl<T: ?Sized> Sync for Ptr<T> {}
+						let (sender_, receiver) = sync::mpsc::sync_channel(0);
+						sender = Some(sender_);
+						let sockets: Ptr<*const _> = Ptr(&**sockets);
+						catcher = Some(thread::spawn(move || {
+							if receiver.recv_timeout(Duration::new(120, 0)).is_err() {
+								use constellation_internal::PidInternal;
+								use std::io::Write;
+								std::io::stderr()
+									.lock()
+									.write_all(
+										format!(
+											"\n{}: {}: {}: sockets: {:?}\n",
+											super::pid(),
+											nix::unistd::getpid(),
+											super::pid().addr(),
+											unsafe { &*sockets.0 }
+										)
+										.as_bytes(),
+									)
+									.unwrap(); // called after rust runtime exited, not sure what trace does
+							}
+						}));
+					}
 					#[allow(clippy::cognitive_complexity)]
 					notifier.wait(|_events, data| {
+						if let Some(sender) = sender.take() {
+							let _ = sender.send(());
+							drop(sender);
+							catcher.take().unwrap().join().unwrap();
+						}
 						if data == Key(ptr::null()) {
 							for (remote, connection) in
 								listener.poll(&notifier.context(Key(ptr::null())), &mut accept_hook)
@@ -171,8 +197,7 @@ impl Reactor {
 								  // 	trace!("{:?} {:?} {:?}", e, local, remote);
 								  // 	continue;
 								  // }
-										let notifier_key: *const sync::RwLock<Option<Channel>> =
-											channel_;
+										let notifier_key: *const RwLock<Option<Channel>> = channel_;
 										let notifier =
 											&notifier.context(Key(notifier_key as *const ()));
 										let connectee: Connection = connection(notifier).into();
@@ -189,8 +214,13 @@ impl Reactor {
 												Some(connectee),
 												notifier,
 											);
-											if is_done && inner.closable() {
-												inner.close(notifier);
+											if is_done {
+												if inner.closable() {
+													inner.close(notifier);
+												}
+												if inner.drainable() {
+													inner.drain(notifier);
+												}
 											}
 											if !inner.closed() {
 												channel.inner = inner;
@@ -199,6 +229,13 @@ impl Reactor {
 											panic!("{:?} {:?} {:?}", channel, local, remote);
 										}
 										channel.inner.poll(notifier);
+										if channel.inner.closable()
+											&& !channel.inner.connecting() && !channel
+											.inner
+											.recvable()
+										{
+											channel.inner.close(notifier); // if the other end's process is ending; this could be given sooner
+										}
 										if !is_done {
 											for sender in channel.senders.values() {
 												sender.unpark(); // TODO: don't do unless actual progress
@@ -214,13 +251,18 @@ impl Reactor {
 											{
 												receiver_future.wake();
 											}
-										} else if channel.inner.closable() {
-											channel.inner.close(notifier);
+										} else {
+											if channel.inner.closable() {
+												channel.inner.close(notifier);
+											}
+											if channel.inner.drainable() {
+												channel.inner.drain(notifier);
+											}
 										}
 									}
 									hash_map::Entry::Vacant(vacant) => {
-										let channel = Arc::new(sync::RwLock::new(None));
-										let notifier_key: *const sync::RwLock<Option<Channel>> =
+										let channel = Arc::new(RwLock::new(None));
+										let notifier_key: *const RwLock<Option<Channel>> =
 											&*channel;
 										let notifier =
 											&notifier.context(Key(notifier_key as *const ()));
@@ -231,8 +273,13 @@ impl Reactor {
 											Some(connectee),
 											notifier,
 										);
-										if is_done && inner.closable() {
-											inner.close(notifier);
+										if is_done {
+											if inner.closable() {
+												inner.close(notifier);
+											}
+											if inner.drainable() {
+												inner.drain(notifier);
+											}
 										}
 										if !inner.closed() {
 											*channel.try_write().unwrap() =
@@ -243,32 +290,38 @@ impl Reactor {
 								}
 							}
 						} else if data != Key(1 as *const ()) {
-							if done.is_none() {
-								let mut sockets = sockets.write().unwrap();
-								let notifier_key: *const sync::RwLock<Option<Channel>> =
-									data.0 as *const _;
-								let notifier = &notifier.context(Key(notifier_key as *const ()));
-								// assert!(sockets.values().any(|channel|{
-								// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-								// 	notifier_key2 == notifier_key
-								// }));
-								// let mut channel = unsafe{&*notifier_key}.write().unwrap();
-								let channel_arc = sockets.values().find(|&channel| {
-									let notifier_key2: *const sync::RwLock<Option<Channel>> =
-										&**channel;
-									notifier_key2 == notifier_key
-								});
-								if let Some(channel_arc) = channel_arc {
-									let mut channel = channel_arc.write().unwrap();
-									assert_eq!(
-										sync::Arc::strong_count(&channel_arc),
-										1 + channel.as_ref().unwrap().senders_count
-											+ channel.as_ref().unwrap().receivers_count
-									);
-									let finished = {
-										let channel: &mut Channel = channel.as_mut().unwrap();
-										let inner: &mut Inner = &mut channel.inner;
-										inner.poll(notifier);
+							let is_done = done.is_some();
+							let mut sockets = done.as_mut().map_or_else(
+								|| Either::Left(sockets.write().unwrap()),
+								|x| Either::Right(&mut **x),
+							);
+							let notifier_key: *const RwLock<Option<Channel>> = data.0 as *const _;
+							let notifier = &notifier.context(Key(notifier_key as *const ()));
+							// assert!(sockets.values().any(|channel|{
+							// 	let notifier_key2: *const RwLock<Option<Channel>> = &**channel;
+							// 	notifier_key2 == notifier_key
+							// }));
+							// let mut channel = unsafe{&*notifier_key}.write().unwrap();
+							let channel_arc = sockets.values().find(|&channel| {
+								let notifier_key2: *const RwLock<Option<Channel>> = &**channel;
+								notifier_key2 == notifier_key
+							});
+							if let Some(channel_arc) = channel_arc {
+								let mut channel = channel_arc.write().unwrap();
+								assert_eq!(
+									Arc::strong_count(&channel_arc),
+									1 + channel.as_ref().unwrap().senders_count
+										+ channel.as_ref().unwrap().receivers_count
+								);
+								let finished = {
+									let channel: &mut Channel = channel.as_mut().unwrap();
+									let inner: &mut Inner = &mut channel.inner;
+									inner.poll(notifier);
+									if inner.closable() && !inner.connecting() && !inner.recvable()
+									{
+										inner.close(notifier); // if the other end's process is ending; this could be given sooner
+									}
+									if !is_done {
 										for sender in channel.senders.values() {
 											sender.unpark(); // TODO: don't do unless actual progress
 										}
@@ -281,84 +334,36 @@ impl Reactor {
 										for receiver_future in channel.receivers_futures.drain(..) {
 											receiver_future.wake();
 										}
-										channel.senders_count == 0
-											&& channel.receivers_count == 0 && inner.closed()
-									};
-									if finished {
-										let x = channel.take().unwrap();
-										assert!(
-											x.senders_count == 0
-												&& x.receivers_count == 0 && x.inner.closed()
-										);
-										let key = *sockets
-											.iter()
-											.find(|&(_key, channel)| {
-												let notifier_key2: *const sync::RwLock<
-													Option<Channel>,
-												> = &**channel;
-												notifier_key2 == notifier_key
-											})
-											.unwrap()
-											.0;
-										drop(channel);
-										let mut x =
-											Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
-										assert!(x.get_mut().unwrap().is_none());
-									}
-								}
-							} else {
-								let sockets = &mut **done.as_mut().unwrap();
-								let notifier_key: *const sync::RwLock<Option<Channel>> =
-									data.0 as *const _;
-								let notifier = &notifier.context(Key(notifier_key as *const ()));
-								// assert!(sockets.values().any(|channel|{
-								// 	let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
-								// 	notifier_key2 == notifier_key
-								// }));
-								// let mut channel = unsafe{&*notifier_key}.write().unwrap();
-								let channel_arc = sockets.values().find(|&channel| {
-									let notifier_key2: *const sync::RwLock<Option<Channel>> =
-										&**channel;
-									notifier_key2 == notifier_key
-								});
-								if let Some(channel_arc) = channel_arc {
-									let mut channel = channel_arc.write().unwrap();
-									assert_eq!(
-										sync::Arc::strong_count(&channel_arc),
-										1 + channel.as_ref().unwrap().senders_count
-											+ channel.as_ref().unwrap().receivers_count
-									);
-									let finished = {
-										let channel: &mut Channel = channel.as_mut().unwrap();
-										let inner: &mut Inner = &mut channel.inner;
-										inner.poll(notifier);
+									} else {
 										if inner.closable() {
 											inner.close(notifier);
 										}
-										channel.senders_count == 0
-											&& channel.receivers_count == 0 && inner.closed()
-									};
-									if finished {
-										let x = channel.take().unwrap();
-										assert!(
-											x.senders_count == 0
-												&& x.receivers_count == 0 && x.inner.closed()
-										);
-										let key = *sockets
-											.iter()
-											.find(|&(_key, channel)| {
-												let notifier_key2: *const sync::RwLock<
-													Option<Channel>,
-												> = &**channel;
-												notifier_key2 == notifier_key
-											})
-											.unwrap()
-											.0;
-										drop(channel);
-										let mut x =
-											Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
-										assert!(x.get_mut().unwrap().is_none());
+										if inner.drainable() {
+											inner.drain(notifier);
+										}
 									}
+									channel.senders_count == 0
+										&& channel.receivers_count == 0 && inner.closed()
+								};
+								if finished {
+									let x = channel.take().unwrap();
+									assert!(
+										x.senders_count == 0
+											&& x.receivers_count == 0 && x.inner.closed()
+									);
+									let key = *sockets
+										.iter()
+										.find(|&(_key, channel)| {
+											let notifier_key2: *const RwLock<Option<Channel>> =
+												&**channel;
+											notifier_key2 == notifier_key
+										})
+										.unwrap()
+										.0;
+									drop(channel);
+									let mut x =
+										Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
+									assert!(x.get_mut().unwrap().is_none());
 								}
 							}
 						} else {
@@ -369,13 +374,16 @@ impl Reactor {
 							done = Some(sockets.write().unwrap());
 							let sockets = &mut **done.as_mut().unwrap();
 							for inner in sockets.values_mut() {
-								let notifier_key: *const sync::RwLock<Option<Channel>> = &**inner;
+								let notifier_key: *const RwLock<Option<Channel>> = &**inner;
 								let notifier = &notifier.context(Key(notifier_key as *const ()));
 								let mut channel = inner.write().unwrap();
 								let channel: &mut Channel = channel.as_mut().unwrap();
 								let inner: &mut Inner = &mut channel.inner;
 								if inner.closable() {
 									inner.close(notifier);
+								}
+								if inner.drainable() {
+									inner.drain(notifier);
 								}
 							}
 						}
@@ -408,9 +416,9 @@ pub struct Channel {
 	senders_count: usize,
 	receivers_count: usize,
 	senders: HashMap<thread::ThreadId, thread::Thread>, // TODO: linked list
-	senders_futures: Vec<futures::task::Waker>,
+	senders_futures: Vec<task::Waker>,
 	receivers: HashMap<thread::ThreadId, thread::Thread>,
-	receivers_futures: Vec<futures::task::Waker>,
+	receivers_futures: Vec<task::Waker>,
 }
 impl Channel {
 	fn new(inner: Inner) -> Self {
@@ -461,17 +469,17 @@ impl error::Error for ChannelError {
 }
 
 pub struct Sender<T: Serialize> {
-	channel: Option<Arc<sync::RwLock<Option<Channel>>>>,
+	channel: Option<Arc<RwLock<Option<Channel>>>>,
 	_marker: marker::PhantomData<fn(T)>,
 }
 impl<T: Serialize> Sender<T> {
-	pub fn new(remote: net::SocketAddr, context: &Reactor) -> Option<Self> {
+	pub fn new(remote: SocketAddr, context: &Reactor) -> Option<Self> {
 		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
 		let sockets = &mut *sockets.write().unwrap();
 		let channel = match sockets.entry(remote) {
 			hash_map::Entry::Vacant(vacant) => {
-				let channel = Arc::new(sync::RwLock::new(None));
-				let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel;
+				let channel = Arc::new(RwLock::new(None));
+				let notifier_key: *const RwLock<Option<Channel>> = &*channel;
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
 				let mut inner = Channel::new(Inner::connect(*local, remote, None, notifier));
 				inner.senders_count += 1;
@@ -486,13 +494,13 @@ impl<T: Serialize> Sender<T> {
 					return None;
 				}
 				channel.write().unwrap().as_mut().unwrap().senders_count += 1;
-				let notifier_key: *const sync::RwLock<Option<Channel>> = &**channel;
+				let notifier_key: *const RwLock<Option<Channel>> = &**channel;
 				trace!("retain sender {:?}", notifier_key);
 				channel.clone()
 			}
 		};
 		assert_eq!(
-			sync::Arc::strong_count(&channel),
+			Arc::strong_count(&channel),
 			1 + {
 				let channel = channel.read().unwrap();
 				channel.as_ref().unwrap().senders_count + channel.as_ref().unwrap().receivers_count
@@ -505,19 +513,18 @@ impl<T: Serialize> Sender<T> {
 	}
 
 	pub fn async_send<'a, C: Borrow<Reactor> + 'a>(
-		&'a self, context_: C,
+		&'a self, context: C,
 	) -> Option<impl FnOnce(T) + 'a>
 	where
 		T: 'static,
 	{
 		let mut channel = self.channel.as_ref().unwrap().write().unwrap();
 		let unblocked = {
-			// let context = context_.borrow();
-			// let notifier = &context.notifier;
-			// let notifier_key: *const sync::RwLock<Option<Channel>> =
+			// let notifier = &context.borrow().notifier;
+			// let notifier_key: *const RwLock<Option<Channel>> =
 			// 	&**self.channel.as_ref().unwrap();
 			// let notifier = &notifier.context(Key(notifier_key as *const ()));
-			// assert_eq!(sync::Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
+			// assert_eq!(Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
 			let inner = &mut channel.as_mut().unwrap().inner;
 			inner.send_avail().unwrap_or(!inner.valid()) // || inner.closed()
 		};
@@ -528,9 +535,8 @@ impl<T: Serialize> Sender<T> {
 					.unwrap()
 					.senders
 					.remove(&thread::current().id()); //.unwrap();
-				let context = context_.borrow();
-				let notifier = &context.notifier;
-				let notifier_key: *const sync::RwLock<Option<Channel>> =
+				let notifier = &context.borrow().notifier;
+				let notifier_key: *const RwLock<Option<Channel>> =
 					&**self.channel.as_ref().unwrap();
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
 				let inner = &mut channel.as_mut().unwrap().inner;
@@ -552,17 +558,17 @@ impl<T: Serialize> Sender<T> {
 	where
 		T: 'static,
 	{
-		Send(self, std::sync::RwLock::new(Some(f)))
+		Send(self, RwLock::new(Some(f)))
 	}
 
 	pub fn drop(mut self, context: &Reactor) {
 		let mut sockets = context.sockets.write().unwrap();
 		let channel_arc = self.channel.take().unwrap();
 		mem::forget(self);
-		let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel_arc;
+		let notifier_key: *const RwLock<Option<Channel>> = &*channel_arc;
 		let mut channel = channel_arc.write().unwrap();
 		assert_eq!(
-			sync::Arc::strong_count(&channel_arc),
+			Arc::strong_count(&channel_arc),
 			1 + channel.as_ref().unwrap().senders_count + channel.as_ref().unwrap().receivers_count,
 		);
 		let finished = {
@@ -578,13 +584,13 @@ impl<T: Serialize> Sender<T> {
 			let key = *sockets
 				.iter()
 				.find(|&(_key, channel)| {
-					let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+					let notifier_key2: *const RwLock<Option<Channel>> = &**channel;
 					notifier_key2 == notifier_key
 				})
 				.unwrap()
 				.0;
 			drop(channel);
-			assert_eq!(sync::Arc::strong_count(&channel_arc), 2);
+			assert_eq!(Arc::strong_count(&channel_arc), 2);
 			drop(channel_arc);
 			trace!("drop sender {:?}", notifier_key);
 			let mut x = Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
@@ -595,8 +601,8 @@ impl<T: Serialize> Sender<T> {
 }
 impl<T: Serialize> Sender<Option<T>> {
 	pub fn futures_poll_ready(
-		&self, cx: &mut futures::task::Context, context: &Reactor,
-	) -> futures::task::Poll<Result<(), !>>
+		&self, cx: &mut task::Context, context: &Reactor,
+	) -> task::Poll<Result<(), !>>
 	where
 		T: 'static,
 	{
@@ -611,9 +617,9 @@ impl<T: Serialize> Sender<Option<T>> {
 			.push(cx.waker().clone());
 		if let Some(_send) = self.async_send(context) {
 			// TODO: remove from senders_futures
-			futures::task::Poll::Ready(Ok(()))
+			task::Poll::Ready(Ok(()))
 		} else {
-			futures::task::Poll::Pending
+			task::Poll::Pending
 		}
 	}
 
@@ -628,8 +634,8 @@ impl<T: Serialize> Sender<Option<T>> {
 	}
 
 	pub fn futures_poll_close(
-		&self, cx: &mut futures::task::Context, context: &Reactor,
-	) -> futures::task::Poll<Result<(), !>>
+		&self, cx: &mut task::Context, context: &Reactor,
+	) -> task::Poll<Result<(), !>>
 	where
 		T: 'static,
 	{
@@ -645,9 +651,9 @@ impl<T: Serialize> Sender<Option<T>> {
 		if let Some(send) = self.async_send(context) {
 			// TODO: remove from senders_futures
 			send(None);
-			futures::task::Poll::Ready(Ok(()))
+			task::Poll::Ready(Ok(()))
 		} else {
-			futures::task::Poll::Pending
+			task::Poll::Pending
 		}
 	}
 }
@@ -658,7 +664,7 @@ impl<T: Serialize> Drop for Sender<T> {
 }
 pub struct Send<'a, T: Serialize + 'static, F: FnOnce() -> T>(
 	pub &'a Sender<T>,
-	pub std::sync::RwLock<Option<F>>,
+	pub RwLock<Option<F>>,
 );
 impl<'a, T: Serialize + 'static, F: FnOnce() -> T> fmt::Debug for Send<'a, T, F> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -709,8 +715,8 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F>
 }
 impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
 	pub fn futures_poll(
-		self: Pin<&mut Self>, cx: &mut std::task::Context, context: &Reactor,
-	) -> std::task::Poll<()> {
+		self: Pin<&mut Self>, cx: &mut task::Context, context: &Reactor,
+	) -> task::Poll<()> {
 		self.0
 			.channel
 			.as_ref()
@@ -724,9 +730,9 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
 		if let Some(send) = self.0.async_send(context) {
 			// TODO: remove from senders_futures
 			send(self.as_ref().1.write().unwrap().take().unwrap()());
-			futures::task::Poll::Ready(())
+			task::Poll::Ready(())
 		} else {
-			futures::task::Poll::Pending
+			task::Poll::Pending
 		}
 	}
 }
@@ -740,17 +746,17 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 }
 
 pub struct Receiver<T: DeserializeOwned> {
-	channel: Option<Arc<sync::RwLock<Option<Channel>>>>,
+	channel: Option<Arc<RwLock<Option<Channel>>>>,
 	_marker: marker::PhantomData<fn() -> T>,
 }
 impl<T: DeserializeOwned> Receiver<T> {
-	pub fn new(remote: net::SocketAddr, context: &Reactor) -> Option<Self> {
+	pub fn new(remote: SocketAddr, context: &Reactor) -> Option<Self> {
 		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
 		let sockets = &mut *sockets.write().unwrap();
 		let channel = match sockets.entry(remote) {
 			hash_map::Entry::Vacant(vacant) => {
-				let channel = Arc::new(sync::RwLock::new(None));
-				let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel;
+				let channel = Arc::new(RwLock::new(None));
+				let notifier_key: *const RwLock<Option<Channel>> = &*channel;
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
 				let mut inner = Channel::new(Inner::connect(*local, remote, None, notifier));
 				inner.receivers_count += 1;
@@ -765,13 +771,13 @@ impl<T: DeserializeOwned> Receiver<T> {
 					return None;
 				}
 				channel.write().unwrap().as_mut().unwrap().receivers_count += 1;
-				let notifier_key: *const sync::RwLock<Option<Channel>> = &**channel;
+				let notifier_key: *const RwLock<Option<Channel>> = &**channel;
 				trace!("retain receiver {:?}", notifier_key);
 				channel.clone()
 			}
 		};
 		assert_eq!(
-			sync::Arc::strong_count(&channel),
+			Arc::strong_count(&channel),
 			1 + {
 				let channel = channel.read().unwrap();
 				channel.as_ref().unwrap().senders_count + channel.as_ref().unwrap().receivers_count
@@ -792,10 +798,9 @@ impl<T: DeserializeOwned> Receiver<T> {
 		let mut channel = self.channel.as_ref().unwrap().write().unwrap();
 		let unblocked = {
 			let notifier = &context.borrow().notifier;
-			let notifier_key: *const sync::RwLock<Option<Channel>> =
-				&**self.channel.as_ref().unwrap();
+			let notifier_key: *const RwLock<Option<Channel>> = &**self.channel.as_ref().unwrap();
 			let notifier = &notifier.context(Key(notifier_key as *const ()));
-			// assert_eq!(sync::Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
+			// assert_eq!(Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
 			let inner = &mut channel.as_mut().unwrap().inner;
 			inner.recv_avail::<T, _>(notifier).unwrap_or(!inner.valid()) // || inner.closed()
 		};
@@ -807,11 +812,11 @@ impl<T: DeserializeOwned> Receiver<T> {
 					.receivers
 					.remove(&thread::current().id()); //.unwrap();
 				let notifier = &context.borrow().notifier;
-				let notifier_key: *const sync::RwLock<Option<Channel>> =
+				let notifier_key: *const RwLock<Option<Channel>> =
 					&**self.channel.as_ref().unwrap();
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
 				// let mut channel = self.channel.as_ref().unwrap().write().unwrap();
-				// assert_eq!(sync::Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
+				// assert_eq!(Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
 				let inner = &mut channel.as_mut().unwrap().inner;
 				if !inner.valid() {
 					return Err(ChannelError::Error);
@@ -833,17 +838,17 @@ impl<T: DeserializeOwned> Receiver<T> {
 	where
 		T: 'static,
 	{
-		Recv(self, std::sync::RwLock::new(Some(f)))
+		Recv(self, RwLock::new(Some(f)))
 	}
 
 	pub fn drop(mut self, context: &Reactor) {
 		let mut sockets = context.sockets.write().unwrap();
 		let channel_arc = self.channel.take().unwrap();
 		mem::forget(self);
-		let notifier_key: *const sync::RwLock<Option<Channel>> = &*channel_arc;
+		let notifier_key: *const RwLock<Option<Channel>> = &*channel_arc;
 		let mut channel = channel_arc.write().unwrap();
 		assert_eq!(
-			sync::Arc::strong_count(&channel_arc),
+			Arc::strong_count(&channel_arc),
 			1 + channel.as_ref().unwrap().senders_count + channel.as_ref().unwrap().receivers_count
 		);
 		let finished = {
@@ -859,13 +864,13 @@ impl<T: DeserializeOwned> Receiver<T> {
 			let key = *sockets
 				.iter()
 				.find(|&(_key, channel)| {
-					let notifier_key2: *const sync::RwLock<Option<Channel>> = &**channel;
+					let notifier_key2: *const RwLock<Option<Channel>> = &**channel;
 					notifier_key2 == notifier_key
 				})
 				.unwrap()
 				.0;
 			drop(channel);
-			assert_eq!(sync::Arc::strong_count(&channel_arc), 2);
+			assert_eq!(Arc::strong_count(&channel_arc), 2);
 			drop(channel_arc);
 			trace!("drop receiver {:?}", notifier_key);
 			let mut x = Arc::try_unwrap(sockets.remove(&key).unwrap()).unwrap();
@@ -876,8 +881,8 @@ impl<T: DeserializeOwned> Receiver<T> {
 }
 impl<T: DeserializeOwned> Receiver<Option<T>> {
 	pub fn futures_poll_next(
-		&self, cx: &mut futures::task::Context, context: &Reactor,
-	) -> futures::task::Poll<Option<Result<T, ChannelError>>>
+		&self, cx: &mut task::Context, context: &Reactor,
+	) -> task::Poll<Option<Result<T, ChannelError>>>
 	where
 		T: 'static,
 	{
@@ -892,13 +897,13 @@ impl<T: DeserializeOwned> Receiver<Option<T>> {
 			.push(cx.waker().clone());
 		if let Some(recv) = self.async_recv(context) {
 			// TODO: remove from receivers_futures
-			futures::task::Poll::Ready(match recv() {
+			task::Poll::Ready(match recv() {
 				Ok(Some(t)) => Some(Ok(t)),
 				Ok(None) => None,
 				Err(err) => Some(Err(err)),
 			})
 		} else {
-			futures::task::Poll::Pending
+			task::Poll::Pending
 		}
 	}
 }
@@ -909,7 +914,7 @@ impl<T: DeserializeOwned> Drop for Receiver<T> {
 }
 pub struct Recv<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)>(
 	pub &'a Receiver<T>,
-	pub std::sync::RwLock<Option<F>>,
+	pub RwLock<Option<F>>,
 );
 impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> fmt::Debug
 	for Recv<'a, T, F>
@@ -964,8 +969,8 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Sele
 }
 impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv<'a, T, F> {
 	pub fn futures_poll(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context, context: &Reactor,
-	) -> futures::task::Poll<()>
+		self: Pin<&mut Self>, cx: &mut task::Context, context: &Reactor,
+	) -> task::Poll<()>
 	where
 		T: 'static,
 	{
@@ -982,9 +987,9 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv
 		if let Some(recv) = self.0.async_recv(context) {
 			// TODO: remove from receivers_futures
 			self.as_ref().1.write().unwrap().take().unwrap()(recv());
-			futures::task::Poll::Ready(())
+			task::Poll::Ready(())
 		} else {
-			futures::task::Poll::Pending
+			task::Poll::Pending
 		}
 	}
 }

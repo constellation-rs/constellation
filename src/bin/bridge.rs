@@ -26,7 +26,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 use log::trace;
 use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd};
 use std::{
-	collections::HashMap, convert::TryInto, env, ffi::{CString, OsString}, fs, io::{self, Read}, iter, os::{
+	collections::HashMap, convert::TryInto, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::{
 		self, unix::{
 			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 		}
@@ -150,9 +150,7 @@ fn monitor_process(
 				let sender_ = sender_.clone();
 				let _ = thread::Builder::new()
 					.name(String::from("d"))
-					.spawn(move || {
-						monitor_process(new_pid, sender_, receiver1);
-					})
+					.spawn(move || monitor_process(new_pid, sender_, receiver1))
 					.unwrap();
 			}
 			ProcessOutputEvent::Output(fd, output) => {
@@ -315,165 +313,162 @@ fn recce(
 		.map_err(|_| ())
 }
 
+fn manage_connection(
+	stream: TcpStream,
+	sender: mpsc::SyncSender<(
+		Resources,
+		Vec<OsString>,
+		Vec<(OsString, OsString)>,
+		fs::File,
+		Vec<u8>,
+		mpsc::SyncSender<Option<Pid>>,
+	)>,
+) -> Result<(), ()> {
+	#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+	nix::sys::socket::setsockopt(
+		stream.as_raw_fd(),
+		nix::sys::socket::sockopt::Linger,
+		&nix::libc::linger {
+			l_onoff: 1,
+			l_linger: 10,
+		},
+	)
+	.map_err(drop)?;
+	#[cfg(any(target_os = "macos", target_os = "ios"))]
+	{
+		const SO_LINGER_SEC: nix::libc::c_int = 0x1080;
+		let res = unsafe {
+			nix::libc::setsockopt(
+				stream.as_raw_fd(),
+				nix::libc::SOL_SOCKET,
+				SO_LINGER_SEC,
+				&nix::libc::linger {
+					l_onoff: 1,
+					l_linger: 10,
+				} as *const nix::libc::linger as *const nix::libc::c_void,
+				std::mem::size_of::<nix::libc::linger>().try_into().unwrap(),
+			)
+		};
+		nix::errno::Errno::result(res).map(drop).map_err(drop)?;
+	}
+	let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
+	let (process, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
+	assert_eq!(arg.len(), 0);
+	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
+	let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+	sender
+		.send((
+			process.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
+			args,
+			vars,
+			binary,
+			arg,
+			sender_,
+		))
+		.unwrap();
+	let pid: Option<Pid> = receiver.recv().unwrap();
+	bincode::serialize_into(&mut stream_write, &pid).map_err(drop)?;
+	if let Some(pid) = pid {
+		let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+		trace!("BRIDGE: SPAWN ({})", x);
+		let (sender, receiver) = mpsc::sync_channel::<_>(0);
+		let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
+		let _ = thread::Builder::new()
+			.name(String::from("c"))
+			.spawn(move || monitor_process(pid, sender, receiver1))
+			.unwrap();
+		let hashmap = &sync::Mutex::new(HashMap::new());
+		let _ = hashmap.lock().unwrap().insert(pid, sender1);
+		crossbeam::scope(|scope| {
+			let _ = scope.spawn(move |_scope| {
+				loop {
+					let event: Result<DeployInputEvent, _> =
+						bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err);
+					if event.is_err() {
+						break;
+					}
+					match event.unwrap() {
+						DeployInputEvent::Input(pid, fd, input) => {
+							hashmap
+								.lock()
+								.unwrap()
+								.get(&pid)
+								.unwrap()
+								.send(InputEventInt::Input(fd, input))
+								.unwrap();
+						}
+						DeployInputEvent::Kill(Some(pid)) => {
+							hashmap
+								.lock()
+								.unwrap()
+								.get(&pid)
+								.unwrap()
+								.send(InputEventInt::Kill)
+								.unwrap();
+						}
+						DeployInputEvent::Kill(None) => {
+							break;
+						}
+					}
+				}
+				let x = hashmap.lock().unwrap();
+				for (_, process) in x.iter() {
+					process.send(InputEventInt::Kill).unwrap();
+				}
+			});
+			for event in receiver.iter() {
+				let event = match event {
+					OutputEventInt::Spawn(pid, new_pid, sender) => {
+						let x = hashmap.lock().unwrap().insert(new_pid, sender);
+						assert!(x.is_none());
+						DeployOutputEvent::Spawn(pid, new_pid)
+					}
+					OutputEventInt::Output(pid, fd, output) => {
+						DeployOutputEvent::Output(pid, fd, output)
+					}
+					OutputEventInt::Exit(pid, exit_code) => {
+						let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
+						DeployOutputEvent::Exit(pid, exit_code)
+					}
+				};
+				if bincode::serialize_into(&mut stream_write, &event).is_err() {
+					break;
+				}
+			}
+			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
+			let mut x = hashmap.lock().unwrap();
+			for (_, process) in x.drain() {
+				process.send(InputEventInt::Kill).unwrap();
+			}
+			for _event in receiver {}
+		})
+		.unwrap();
+		assert_eq!(
+			hashmap.lock().unwrap().len(),
+			0,
+			"{:?}",
+			*hashmap.lock().unwrap()
+		);
+	}
+	nix::sys::socket::shutdown(stream.as_raw_fd(), nix::sys::socket::Shutdown::Write)
+		.map_err(drop)?;
+	drop((stream, sender));
+	Ok(())
+}
+
 fn main() {
-	env::set_var("RUST_BACKTRACE", "full");
-	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let listener = constellation::bridge_init();
+	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let (sender, receiver) = mpsc::sync_channel::<_>(0);
 	let _ = thread::Builder::new()
 		.name(String::from("a"))
 		.spawn(move || {
 			for stream in listener.incoming() {
 				trace!("BRIDGE: accepted");
-				let stream = stream.unwrap();
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
 					.name(String::from("b"))
-					.spawn(move || {
-						let stream = stream;
-						#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-						nix::sys::socket::setsockopt(
-							stream.as_raw_fd(),
-							nix::sys::socket::sockopt::Linger,
-							&nix::libc::linger {
-								l_onoff: 1,
-								l_linger: 10,
-							},
-						)
-						.unwrap();
-						#[cfg(any(target_os = "macos", target_os = "ios"))]
-						{
-							const SO_LINGER_SEC: nix::libc::c_int = 0x1080;
-							let err = unsafe {
-								nix::libc::setsockopt(
-									stream.as_raw_fd(),
-									nix::libc::SOL_SOCKET,
-									SO_LINGER_SEC,
-									&nix::libc::linger {
-										l_onoff: 1,
-										l_linger: 10,
-									} as *const nix::libc::linger as *const nix::libc::c_void,
-									std::mem::size_of::<nix::libc::linger>().try_into().unwrap(),
-								)
-							};
-							assert_eq!(err, 0);
-						}
-						let (mut stream_read, mut stream_write) =
-							(BufferedStream::new(&stream), &stream);
-						if let Ok((process, args, vars, binary, mut arg)) =
-							parse_request(&mut stream_read)
-						{
-							assert_eq!(arg.len(), 0);
-							bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
-							let (sender_, receiver) = mpsc::sync_channel::<_>(0);
-							sender
-								.send((
-									process
-										.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
-									args,
-									vars,
-									binary,
-									arg,
-									sender_,
-								))
-								.unwrap();
-							let pid: Option<Pid> = receiver.recv().unwrap();
-							bincode::serialize_into(&mut stream_write, &pid).unwrap(); // TODO: catch this failing
-							if let Some(pid) = pid {
-								let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
-								trace!("BRIDGE: SPAWN ({})", x);
-								let (sender, receiver) = mpsc::sync_channel::<_>(0);
-								let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
-								let _ = thread::Builder::new().name(String::from("c")).spawn(
-									move || {
-										monitor_process(pid, sender, receiver1);
-									},
-								);
-								let hashmap = &sync::Mutex::new(HashMap::new());
-								let _ = hashmap.lock().unwrap().insert(pid, sender1);
-								crossbeam::scope(|scope| {
-									let _ = scope.spawn(move |_scope| {
-										loop {
-											let event: Result<DeployInputEvent, _> =
-												bincode::deserialize_from(&mut stream_read)
-													.map_err(map_bincode_err);
-											if event.is_err() {
-												break;
-											}
-											match event.unwrap() {
-												DeployInputEvent::Input(pid, fd, input) => {
-													hashmap
-														.lock()
-														.unwrap()
-														.get(&pid)
-														.unwrap()
-														.send(InputEventInt::Input(fd, input))
-														.unwrap();
-												}
-												DeployInputEvent::Kill(Some(pid)) => {
-													hashmap
-														.lock()
-														.unwrap()
-														.get(&pid)
-														.unwrap()
-														.send(InputEventInt::Kill)
-														.unwrap();
-												}
-												DeployInputEvent::Kill(None) => {
-													break;
-												}
-											}
-										}
-										let x = hashmap.lock().unwrap();
-										for (_, process) in x.iter() {
-											process.send(InputEventInt::Kill).unwrap();
-										}
-									});
-									for event in receiver.iter() {
-										let event = match event {
-											OutputEventInt::Spawn(pid, new_pid, sender) => {
-												let x =
-													hashmap.lock().unwrap().insert(new_pid, sender);
-												assert!(x.is_none());
-												DeployOutputEvent::Spawn(pid, new_pid)
-											}
-											OutputEventInt::Output(pid, fd, output) => {
-												DeployOutputEvent::Output(pid, fd, output)
-											}
-											OutputEventInt::Exit(pid, exit_code) => {
-												let _ =
-													hashmap.lock().unwrap().remove(&pid).unwrap();
-												DeployOutputEvent::Exit(pid, exit_code)
-											}
-										};
-										if bincode::serialize_into(&mut stream_write, &event)
-											.is_err()
-										{
-											break;
-										}
-									}
-									trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
-									let mut x = hashmap.lock().unwrap();
-									for (_, process) in x.drain() {
-										process.send(InputEventInt::Kill).unwrap();
-									}
-									for _event in receiver {}
-								})
-								.unwrap();
-								assert_eq!(
-									hashmap.lock().unwrap().len(),
-									0,
-									"{:?}",
-									*hashmap.lock().unwrap()
-								);
-							}
-							nix::sys::socket::shutdown(
-								stream.as_raw_fd(),
-								nix::sys::socket::Shutdown::Write,
-							)
-							.unwrap();
-						}
-					})
+					.spawn(|| manage_connection(stream.unwrap(), sender))
 					.unwrap();
 			}
 		})

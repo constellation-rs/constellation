@@ -286,11 +286,17 @@ fn parse_request<R: Read>(
 }
 
 fn main() {
+	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
 		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
 		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));
+	// simple_logging::log_to_file(
+	// 	format!("logs/{}.log", std::process::id()),
+	// 	log::LevelFilter::Trace,
+	// )
+	// .unwrap();
 	let arg = Arg::from_argv();
 	let (listen, listener) = match arg {
 		Arg::Master(listen, mut nodes) => {

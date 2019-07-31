@@ -247,7 +247,7 @@ pub fn run(
 				}
 			}
 			Either::Right((node_, Either::Left(init))) => {
-				println!("init {}:{}", node_, init);
+				println!("init {}:{} ({})", node_, init, processes.len());
 				let node = &mut nodes[node_];
 				let (sender, process) = node.3.pop_front().unwrap();
 				let x = processes.insert((node_, init), process);
@@ -257,7 +257,7 @@ pub fn run(
 			}
 			Either::Right((node, Either::Right(done))) => {
 				let process = processes.remove(&(node, done)).unwrap();
-				println!("done {}:{}", node, done);
+				println!("done {}:{} ({})", node, done, processes.len());
 				let node = &mut nodes[node];
 				node.1.free(&process);
 			}

@@ -2,6 +2,7 @@
 
 use super::*;
 use serde::{de::DeserializeOwned, Serialize};
+use std::net::SocketAddr;
 use tcp_typed::Notifier;
 
 #[derive(Debug)]
@@ -17,7 +18,7 @@ pub enum Inner {
 }
 impl Inner {
 	pub fn connect(
-		local: net::SocketAddr, remote: net::SocketAddr, incoming: Option<Connection>,
+		local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
 		notifier: &impl Notifier,
 	) -> Self {
 		InnerConnecting::new(local, remote, incoming, notifier).into()
@@ -36,9 +37,6 @@ impl Inner {
 			Inner::Closed => Inner::Closed,
 			Inner::Killed => Inner::Killed,
 		};
-		if let &mut Inner::RemoteClosed(_) = self {
-			self.close(notifier);
-		}
 	}
 
 	pub fn add_incoming<'a>(
@@ -94,6 +92,21 @@ impl Inner {
 			&mut Inner::LocalClosed(ref mut local_closed) => local_closed.recv(notifier),
 			_ => panic!(),
 		}
+	}
+
+	pub fn drainable(&self) -> bool {
+		match self {
+			&Inner::Connected(_) | &Inner::LocalClosed(_) => true,
+			_ => false,
+		}
+	}
+
+	pub fn drain(&mut self, notifier: &impl Notifier) {
+		*self = match mem::replace(self, Inner::Killed) {
+			Inner::Connected(connected) => connected.drain(notifier).into(),
+			Inner::LocalClosed(local_closed) => local_closed.drain(notifier).into(),
+			_ => panic!(),
+		};
 	}
 
 	pub fn sendable(&self) -> bool {
