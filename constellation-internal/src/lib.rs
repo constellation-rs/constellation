@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, env, ffi::OsString, fmt, io, net, ops};
 
 #[cfg(target_family = "unix")]
-type Fd = std::os::unix::io::RawFd;
+pub type Fd = std::os::unix::io::RawFd;
 #[cfg(target_family = "windows")]
-type Fd = std::os::windows::io::RawHandle;
+pub type Fd = std::os::windows::io::RawHandle;
 
 #[cfg(feature = "alloc_counter")]
 #[global_allocator]

@@ -7,16 +7,13 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, os, pin::Pin, ptr, sync::{self, Arc, RwLock}, task, thread, time::Duration
+	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{self, mpsc, Arc, RwLock}, task, thread, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
 use constellation_internal::Rand;
 
-#[cfg(target_family = "unix")]
-type Fd = os::unix::io::RawFd;
-#[cfg(target_family = "windows")]
-type Fd = os::windows::io::RawHandle;
+use super::{Fd, Never};
 
 pub use self::{inner::*, inner_states::*};
 pub use tcp_typed::{socket_forwarder, SocketForwardee, SocketForwarder};
@@ -144,27 +141,37 @@ impl Reactor {
 						struct Ptr<T: ?Sized>(T);
 						unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
 						unsafe impl<T: ?Sized> Sync for Ptr<T> {}
-						let (sender_, receiver) = sync::mpsc::sync_channel(0);
+						let (sender_, receiver) = mpsc::sync_channel(0);
 						sender = Some(sender_);
 						let sockets: Ptr<*const _> = Ptr(&**sockets);
 						catcher = Some(thread::spawn(move || {
-							if receiver.recv_timeout(Duration::new(120, 0)).is_err() {
-								use constellation_internal::PidInternal;
-								use std::io::Write;
-								std::io::stderr()
-									.lock()
-									.write_all(
-										format!(
-											"\n{}: {}: {}: sockets: {:?}\n",
-											super::pid(),
-											nix::unistd::getpid(),
-											super::pid().addr(),
-											unsafe { &*sockets.0 }
-										)
-										.as_bytes(),
-									)
-									.unwrap(); // called after rust runtime exited, not sure what trace does
+							use constellation_internal::PidInternal;
+							use std::io::Write;
+							let mut now = Instant::now();
+							let until = now + Duration::new(60, 0);
+							while now < until {
+								match receiver.recv_timeout(until - now) {
+									Ok(()) => return,
+									Err(mpsc::RecvTimeoutError::Timeout) => (),
+									Err(mpsc::RecvTimeoutError::Disconnected) => {
+										panic!("disconnected?!")
+									}
+								}
+								now = Instant::now();
 							}
+							std::io::stderr()
+								.lock()
+								.write_all(
+									format!(
+										"\n{}: {}: {}: sockets: {:?}\n",
+										super::pid(),
+										nix::unistd::getpid(),
+										super::pid().addr(),
+										unsafe { &*sockets.0 }
+									)
+									.as_bytes(),
+								)
+								.unwrap(); // called after rust runtime exited, not sure what trace does
 						}));
 					}
 					#[allow(clippy::cognitive_complexity)]
@@ -602,7 +609,7 @@ impl<T: Serialize> Sender<T> {
 impl<T: Serialize> Sender<Option<T>> {
 	pub fn futures_poll_ready(
 		&self, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<Result<(), !>>
+	) -> task::Poll<Result<(), Never>>
 	where
 		T: 'static,
 	{
@@ -623,7 +630,7 @@ impl<T: Serialize> Sender<Option<T>> {
 		}
 	}
 
-	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), !>
+	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), Never>
 	where
 		T: 'static,
 	{
@@ -635,7 +642,7 @@ impl<T: Serialize> Sender<Option<T>> {
 
 	pub fn futures_poll_close(
 		&self, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<Result<(), !>>
+	) -> task::Poll<Result<(), Never>>
 	where
 		T: 'static,
 	{

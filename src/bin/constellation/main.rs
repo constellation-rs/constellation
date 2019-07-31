@@ -89,13 +89,8 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, parse_binary_size, BufferedStream, Pid, PidInternal, Resources
+	forbid_alloc, map_bincode_err, parse_binary_size, BufferedStream, Fd, Pid, PidInternal, Resources
 };
-
-#[cfg(unix)]
-type Fd = std::os::unix::io::RawFd;
-#[cfg(windows)]
-type Fd = std::os::windows::io::RawHandle;
 
 const DESCRIPTION: &str = r"
 constellation
@@ -500,7 +495,7 @@ fn main() {
 									execve(&args[0], &args, args_p, &vars, vars_p)
 										.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
 								} else {
-									if valgrind::is() {
+									if valgrind::is().unwrap_or(false) {
 										let binary_desired_fd_ = valgrind::start_fd() - 1;
 										assert!(binary_desired_fd_ > binary_desired_fd);
 										copy_fd(

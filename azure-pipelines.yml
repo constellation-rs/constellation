@@ -16,7 +16,7 @@ jobs:
   parameters:
     default:
       rust_toolchain: nightly
-      rust_lint_toolchain: nightly-2019-07-19
+      rust_lint_toolchain: nightly-2019-07-31
       rust_flags: ''
       rust_features: 'no_alloc'
       rust_target_check: ''

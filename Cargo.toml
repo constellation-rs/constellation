@@ -28,6 +28,11 @@ name = "constellation"
 azure-devops = { project = "alecmocatta/constellation", pipeline = "tests" }
 maintenance = { status = "actively-developed" }
 
+[features]
+fringe = ["serde_pipe/fringe"]
+no_alloc = ["constellation-internal/alloc_counter"]
+nightly = ["palaver/nightly", "relative/nightly"]
+
 [dependencies]
 bincode = "1.0"
 crossbeam = "0.7"
@@ -48,8 +53,9 @@ constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
 serde_pipe = "0.1"
 serde_closure = "0.1"
 tcp_typed = "0.1"
+relative = "0.1"
 notifier = { version = "0.1", features = ["tcp_typed"] }
-palaver = { version = "0.2", features = ["nightly"] }
+palaver = { version = "0.2" }
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.14"
@@ -58,7 +64,8 @@ nix = "0.14"
 winapi = "0.3"
 
 [patch.crates-io]
-# palaver = { path = "../palaver", features = ["nightly"] }
+# palaver = { path = "../palaver" }
+# uuid = { path = "../uuid" }
 # serde_pipe = { path = "../serde_pipe" }
 
 [dev-dependencies]
@@ -69,10 +76,6 @@ sha1 = "0.6"
 hex = "0.3"
 escargot = "0.5"
 serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
-
-[features]
-fringe = ["serde_pipe/fringe"]
-no_alloc = ["constellation-internal/alloc_counter"]
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297

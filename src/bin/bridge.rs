@@ -26,21 +26,14 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 use log::trace;
 use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd};
 use std::{
-	collections::HashMap, convert::TryInto, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::{
-		self, unix::{
-			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-		}
+	collections::HashMap, convert::TryInto, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::unix::{
+		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{self, mpsc}, thread, time
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
-
-#[cfg(target_family = "unix")]
-type Fd = os::unix::io::RawFd;
-#[cfg(target_family = "windows")]
-type Fd = os::windows::io::RawHandle;
 
 const SCHEDULER_FD: Fd = 4;
 

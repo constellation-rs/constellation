@@ -29,7 +29,6 @@
 //! where `10.0.0.1` is the address of the master. See [here](https://github.com/alecmocatta/constellation)
 //! for instructions on setting up the cluster.
 
-#![feature(unboxed_closures)]
 #![allow(where_clauses_object_safety, clippy::type_complexity)]
 
 use rand::Rng;
@@ -38,10 +37,14 @@ use std::{any, collections::VecDeque, env, marker, mem, thread, time};
 
 use constellation::*;
 
+// type Request = st::Box<dyn st::FnOnce() -> Response>; // when #![feature(unboxed_closures)] is stable
+type Request = st::Box<dyn st::FnOnce<(), Output = Response>>;
+type Response = st::Box<dyn st::Any>;
+
 struct Process {
-	sender: Sender<Option<st::Box<dyn st::FnOnce() -> st::Box<dyn st::Any>>>>,
-	receiver: Receiver<st::Box<dyn st::Any>>,
-	queue: VecDeque<Queued<st::Box<dyn st::Any>>>,
+	sender: Sender<Option<Request>>,
+	receiver: Receiver<Response>,
+	queue: VecDeque<Queued<Response>>,
 	received: usize,
 	tail: usize,
 }
@@ -85,10 +88,10 @@ impl ProcessPool {
 						// println!("process {}: awaiting work", i);
 
 						// Create a `Sender` half of a channel to our parent
-						let receiver = Receiver::<Option<st::Box<dyn st::FnOnce()->st::Box<dyn st::Any>>>>::new(parent);
+						let receiver = Receiver::<Option<Request>>::new(parent);
 
 						// Create a `Sender` half of a channel to our parent
-						let sender = Sender::<st::Box<dyn st::Any>>::new(parent);
+						let sender = Sender::<Response>::new(parent);
 
 						while let Some(work) = receiver.recv().unwrap() {
 							// println!("process {}: got work", i);
@@ -134,9 +137,8 @@ impl ProcessPool {
 			.sender
 			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
 				let work: F = work;
-				st::Box::new(work()) as st::Box<dyn st::Any>
-			}))
-				as st::Box<dyn st::FnOnce() -> st::Box<dyn st::Any>>));
+				st::Box::new(work()) as Response
+			})) as Request));
 		process.queue.push_back(Queued::Awaiting);
 		JoinHandle(
 			process_index,

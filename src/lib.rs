@@ -10,7 +10,7 @@
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.4")]
-#![feature(read_initializer, core_intrinsics, never_type)]
+#![cfg_attr(feature = "nightly", feature(read_initializer, never_type))]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -53,21 +53,23 @@ use palaver::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, intrinsics, io::{self, Read, Write}, iter, marker, mem, net, ops, os::{
-		self, unix::{
-			ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-		}
+	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, io::{self, Read, Write}, iter, marker, mem, net, ops, os::unix::{
+		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{self, mpsc}, thread
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
-#[cfg(target_family = "unix")]
-type Fd = os::unix::io::RawFd;
-#[cfg(target_family = "windows")]
-type Fd = os::windows::io::RawHandle;
+/// The Never type
+#[cfg(feature = "nightly")]
+pub type Never = !;
+#[cfg(not(feature = "nightly"))]
+/// The Never type
+#[derive(Copy, Clone)]
+#[allow(clippy::empty_enum)]
+pub enum Never {}
 
 pub use channel::{ChannelError, Selectable};
 pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
@@ -105,7 +107,7 @@ impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{ intrinsics::type_name::<T>() });
+			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", any::type_name::<T>());
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(sender) = channel::Sender::new(
@@ -118,7 +120,7 @@ impl<T: Serialize> Sender<T> {
 		} else {
 			panic!(
 				"Sender::<{}>::new() called for pid {} when a Sender to this pid already exists",
-				unsafe { intrinsics::type_name::<T>() },
+				any::type_name::<T>(),
 				remote
 			);
 		}
@@ -225,7 +227,7 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 	}
 }
 impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
-	type Error = !;
+	type Error = Never;
 
 	fn poll_ready(
 		self: Pin<&mut Self>, cx: &mut futures::task::Context,
@@ -279,7 +281,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", unsafe{ intrinsics::type_name::<T>() });
+			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", any::type_name::<T>());
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(receiver) = channel::Receiver::new(
@@ -292,7 +294,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 		} else {
 			panic!(
 				"Receiver::<{}>::new() called for pid {} when a Receiver to this pid already exists",
-				unsafe { intrinsics::type_name::<T>() },
+				any::type_name::<T>(),
 				remote
 			);
 		}
@@ -384,6 +386,7 @@ impl<'a> Read for &'a Receiver<u8> {
 		Ok(())
 	}
 
+	#[cfg(feature = "nightly")]
 	#[inline(always)]
 	unsafe fn initializer(&self) -> io::Initializer {
 		io::Initializer::nop()
@@ -400,6 +403,7 @@ impl Read for Receiver<u8> {
 		(&*self).read_exact(buf)
 	}
 
+	#[cfg(feature = "nightly")]
 	#[inline(always)]
 	unsafe fn initializer(&self) -> io::Initializer {
 		(&&*self).initializer()
@@ -559,7 +563,7 @@ fn spawn_native(
 					.unwrap();
 				};
 
-				let valgrind_start_fd = if valgrind::is() {
+				let valgrind_start_fd = if valgrind::is().unwrap_or(false) {
 					Some(valgrind::start_fd())
 				} else {
 					None
@@ -594,12 +598,12 @@ fn spawn_native(
 					.unwrap();
 				}
 
-				if !valgrind::is() {
+				if !valgrind::is().unwrap_or(false) {
 					#[inline]
 					pub fn execve(
 						path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
 						env: &[CString], mut env_p: Vec<*const libc::c_char>,
-					) -> nix::Result<!> {
+					) -> nix::Result<Never> {
 						fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
 							for arg in args.iter().map(|s| s.as_ptr()) {
 								args_p.push(arg);
@@ -664,7 +668,7 @@ fn spawn_deployed(
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
 	let mut stream_write_ = stream_write.write();
-	let binary = if !valgrind::is() {
+	let binary = if !valgrind::is().unwrap_or(false) {
 		env::exe().unwrap()
 	} else {
 		unsafe {
@@ -767,7 +771,7 @@ pub fn bridge_init() -> net::TcpListener {
 	// 	log::LevelFilter::Trace,
 	// )
 	// .unwrap();
-	if valgrind::is() {
+	if valgrind::is().unwrap_or(false) {
 		unistd::close(valgrind::start_fd() - 1 - 12).unwrap();
 	}
 	// init();
@@ -1259,7 +1263,7 @@ pub fn init(resources: Resources) {
 	// 	log::LevelFilter::Trace,
 	// )
 	// .unwrap();
-	if valgrind::is() {
+	if valgrind::is().unwrap_or(false) {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
 	let envs = Envs::from(&env::vars_os().expect("Couldn't get envp"));
