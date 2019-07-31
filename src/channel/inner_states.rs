@@ -350,6 +350,9 @@ impl InnerRemoteClosed {
 	}
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerRemoteClosedPoll {
+		if self.drain && !self.connection.recvable() {
+			self.drain = false;
+		}
 		if self.drain {
 			let mut progress = false;
 			while self.connection.recv_avail().unwrap() > 0 {
@@ -526,6 +529,9 @@ impl InnerClosing {
 	}
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerClosingPoll {
+		if self.drain && !self.connection.recvable() {
+			self.drain = false;
+		}
 		if self.drain {
 			let mut progress = false;
 			while self.connection.recv_avail().unwrap() > 0 {
