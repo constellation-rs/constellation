@@ -159,7 +159,6 @@ impl Reactor {
 								now = Instant::now();
 							}
 							std::io::stderr()
-								.lock()
 								.write_all(
 									format!(
 										"\n{}: {}: {}: sockets: {:?}\n",

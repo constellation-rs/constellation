@@ -128,6 +128,7 @@ fn main() {
 		let mut ref_count = 1;
 		let mut pids = HashSet::new();
 		let _ = pids.insert(pid);
+		let (stdout, stderr) = (io::stdout(), io::stderr());
 		let mut formatter = if let Format::Human = format {
 			Either::Left(Formatter::new(
 				pid,
@@ -136,9 +137,11 @@ fn main() {
 				} else {
 					StyleSupport::None
 				},
+				stdout.lock(),
+				stderr.lock(),
 			))
 		} else {
-			Either::Right(io::stdout())
+			Either::Right(stdout.lock())
 		};
 		loop {
 			let event: DeployOutputEvent = bincode::deserialize_from(&mut stream_read)

@@ -10,13 +10,13 @@ const STDOUT: os::unix::io::RawFd = 1;
 const STDERR: os::unix::io::RawFd = 2;
 
 #[derive(Debug)]
-struct Writer {
+struct Writer<A: Write, B: Write> {
 	// TODO: handle buffering better: write returns a referencing struct that buffers and flushes on drop
 	fd: os::unix::io::RawFd,
-	stdout: io::Stdout,
-	stderr: io::Stderr,
+	stdout: A,
+	stderr: B,
 }
-impl Writer {
+impl<A: Write, B: Write> Writer<A, B> {
 	fn write_fmt(&mut self, fd: os::unix::io::RawFd, args: fmt::Arguments) {
 		if self.fd == STDOUT && fd != STDOUT {
 			self.stdout.flush().unwrap();
@@ -61,21 +61,21 @@ impl Writer {
 }
 
 #[derive(Debug)]
-pub struct Formatter {
+pub struct Formatter<A: Write, B: Write> {
 	// TODO: if we get half a multi-byte character/combined thing, then something else, then rest of it, it'll be malformatted. deadline cache?
-	writer: Writer,
+	writer: Writer<A, B>,
 	pid: Pid,
 	nl: Option<os::unix::io::RawFd>,
 	style_support: StyleSupport,
 }
-impl Formatter {
-	pub fn new(pid: Pid, style_support: StyleSupport) -> Self {
+impl<A: Write, B: Write> Formatter<A, B> {
+	pub fn new(pid: Pid, style_support: StyleSupport, stdout: A, stderr: B) -> Self {
 		eprintln!("{}:", pretty_pid(&pid, true, style_support));
 		Self {
 			writer: Writer {
 				fd: STDERR,
-				stdout: io::stdout(),
-				stderr: io::stderr(),
+				stdout,
+				stderr,
 			},
 			pid,
 			nl: None,

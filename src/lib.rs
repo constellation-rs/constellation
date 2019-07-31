@@ -23,17 +23,13 @@
 	clippy::pedantic
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 #![allow(
-	dead_code,
 	clippy::match_ref_pats,
 	clippy::inline_always,
-	clippy::or_fun_call,
 	clippy::similar_names,
 	clippy::if_not_else,
 	clippy::module_name_repetitions,
 	clippy::new_ret_no_self,
-	clippy::type_complexity,
-	clippy::cast_ptr_alignment,
-	clippy::explicit_write
+	clippy::type_complexity
 )]
 
 mod channel;
@@ -863,6 +859,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			})
 			.unwrap();
 		let mut exit_code = ExitStatus::Success;
+		let (stdout, stderr) = (io::stdout(), io::stderr());
 		let mut formatter = if let Format::Human = format {
 			Either::Left(Formatter::new(
 				our_pid,
@@ -871,9 +868,11 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 				} else {
 					StyleSupport::None
 				},
+				stdout.lock(),
+				stderr.lock(),
 			))
 		} else {
-			Either::Right(io::stdout())
+			Either::Right(stdout.lock())
 		};
 		let mut processes = vec![(
 			Sender::<ProcessInputEvent>::new(our_pid),
@@ -1279,7 +1278,7 @@ pub fn init(resources: Resources) {
 	let deployed = envs.deploy == Some(Some(Deploy::Fabric));
 	if version {
 		assert!(!recce);
-		write!(io::stdout(), "deploy-lib {}", env!("CARGO_PKG_VERSION")).unwrap();
+		print!("deploy-lib {}", env!("CARGO_PKG_VERSION"));
 		process::exit(0);
 	}
 	if recce {
