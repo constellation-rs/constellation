@@ -31,33 +31,33 @@ jobs:
       # mac:
       #   imageName: 'macos-10.13'
       #   rust_target_run: 'x86_64-apple-darwin i686-apple-darwin'
-      linux:
+      linux0:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux1:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux2:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux3:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux4:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux5:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux6:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux7:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux8:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux:
+      linux9:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
