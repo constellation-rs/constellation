@@ -11,6 +11,7 @@ resources:
 jobs:
 - template: rust.yml@templates
   parameters:
+    endpoint: alecmocatta
     default:
       rust_toolchain: stable nightly
       rust_lint_toolchain: nightly-2019-07-19
