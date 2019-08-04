@@ -67,7 +67,7 @@ fn main() {
 	let args: Args = docopt::Docopt::new(USAGE)
 		.and_then(|d| d.deserialize())
 		.unwrap_or_else(|e| e.exit());
-	let _version = args.flag_version
+	let version = args.flag_version
 		|| envs
 			.version
 			.map_or(false, |x| x.expect("CONSTELLATION_VERSION must be 0 or 1"));
@@ -78,6 +78,10 @@ fn main() {
 				.map(|x| x.expect("CONSTELLATION_FORMAT must be json or human"))
 		})
 		.unwrap_or(Format::Human);
+	if version {
+		println!("constellation-deploy {}", env!("CARGO_PKG_VERSION"));
+		process::exit(0);
+	}
 	let bridge_address: net::SocketAddr = args.arg_host.parse().unwrap();
 	let path = args.arg_binary;
 	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(path.clone()))

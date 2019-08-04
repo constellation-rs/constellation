@@ -16,16 +16,23 @@
 	clippy::boxed_local,
 	clippy::needless_pass_by_value,
 	clippy::large_enum_variant,
-	clippy::if_not_else
+	clippy::if_not_else,
+	clippy::inline_always
 )]
 
 mod ext;
 mod format;
+pub mod msg;
 
 #[cfg(unix)]
-use nix::sys::signal;
+use nix::{fcntl, sys::signal, unistd};
+use palaver::file::{copy, memfd_create};
 use serde::{Deserialize, Serialize};
-use std::{convert::TryInto, env, ffi::OsString, fmt, io, net, ops};
+use std::{
+	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read}, net, ops, os::unix::{
+		ffi::OsStringExt, io::{AsRawFd, FromRawFd}
+	}, sync::{Arc, Mutex}
+};
 
 #[cfg(target_family = "unix")]
 pub type Fd = std::os::unix::io::RawFd;
@@ -93,12 +100,12 @@ impl Pid {
 			.into_iter()
 	}
 }
-impl fmt::Display for Pid {
+impl Display for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{}", self.format().take(7).collect::<String>())
 	}
 }
-impl fmt::Debug for Pid {
+impl Debug for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_tuple("Pid")
 			.field(&self.format().collect::<String>())
@@ -285,8 +292,8 @@ pub const RESOURCES_DEFAULT: Resources = Resources {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(/*tag = "event", */rename_all = "lowercase")]
 pub enum FabricOutputEvent {
-	Init(u16, u64),
-	Exit(u16, u64),
+	Init { pid: Pid, system_pid: u64 },
+	Exit { pid: Pid, system_pid: u64 },
 	// Spawn(Pid, Pid),
 	// Output(Pid, Fd, Vec<u8>),
 	// Exit(Pid, ExitStatus),
@@ -519,6 +526,69 @@ pub enum ProcessOutputEvent {
 pub enum ProcessInputEvent {
 	Input(Fd, Vec<u8>),
 	Kill,
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[allow(missing_debug_implementations)]
+#[derive(Clone)]
+pub struct Trace<W: io::Write> {
+	stdout: Arc<Mutex<W>>,
+	format: Format,
+	verbose: bool,
+}
+impl<W: io::Write> Trace<W> {
+	pub fn new(stdout: W, format: Format, verbose: bool) -> Self {
+		Self {
+			stdout: Arc::new(Mutex::new(stdout)),
+			format,
+			verbose,
+		}
+	}
+	fn json<T: Serialize>(&self, event: T) {
+		let mut stdout = self.stdout.lock().unwrap();
+		serde_json::to_writer(&mut *stdout, &event).unwrap();
+		stdout.write_all(b"\n").unwrap()
+	}
+	fn human<T: Debug>(&self, event: T) {
+		// TODO: Display
+		let mut stdout = self.stdout.lock().unwrap();
+		stdout.write_fmt(format_args!("{:?}", event)).unwrap()
+	}
+	pub fn fabric(&self, event: FabricOutputEvent) {
+		match (self.format, self.verbose) {
+			(Format::Json, true) => self.json(event),
+			(Format::Human, true) => self.human(event),
+			_ => (),
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn file_from_reader<R: Read>(
+	reader: &mut R, len: u64, name: &OsString, cloexec: bool,
+) -> Result<File, io::Error> {
+	let mut file = unsafe {
+		File::from_raw_fd(
+			memfd_create(
+				&CString::new(OsStringExt::into_vec(name.clone())).unwrap(),
+				cloexec,
+			)
+			.expect("Failed to memfd_create"),
+		)
+	};
+	assert_eq!(
+		fcntl::FdFlag::from_bits(fcntl::fcntl(file.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap())
+			.unwrap()
+			.contains(fcntl::FdFlag::FD_CLOEXEC),
+		cloexec
+	);
+	unistd::ftruncate(file.as_raw_fd(), len.try_into().unwrap()).unwrap();
+	copy(reader, &mut file, len)?;
+	let x = unistd::lseek(file.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
+	assert_eq!(x, 0);
+	Ok(file)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////

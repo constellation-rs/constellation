@@ -56,6 +56,7 @@ tcp_typed = "0.1"
 relative = "0.1"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 palaver = { version = "0.2" }
+runtime = "0.3.0-alpha.6"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.14"
@@ -67,6 +68,7 @@ winapi = "0.3"
 # palaver = { path = "../palaver" }
 # uuid = { path = "../uuid" }
 # serde_pipe = { path = "../serde_pipe" }
+bincode = { path = "../bincode" }
 
 [dev-dependencies]
 itertools = "0.8"

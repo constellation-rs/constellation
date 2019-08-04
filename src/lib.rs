@@ -45,7 +45,7 @@ use nix::{
 	}, unistd
 };
 use palaver::{
-	env, file::{copy_sendfile, fd_path, fexecve, memfd_create}, socket::{socket as palaver_socket, SockFlag}, valgrind
+	env, file::{copy_sendfile, fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -55,7 +55,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	file_from_reader, forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 /// The Never type
@@ -511,14 +511,13 @@ fn spawn_native(
 	bincode::serialize_into(&mut spawn_arg, &our_pid).unwrap();
 	bincode::serialize_into(&mut spawn_arg, &f).unwrap();
 
-	let mut arg = unsafe {
-		fs::File::from_raw_fd(memfd_create(&argv[0], false).expect("Failed to memfd_create"))
-	};
-	// assert_eq!(arg.as_raw_fd(), ARG_FD);
-	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
-	arg.write_all(&spawn_arg).unwrap();
-	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
+	let arg = file_from_reader(
+		&mut &*spawn_arg,
+		spawn_arg.len().try_into().unwrap(),
+		&env::args_os().unwrap()[0],
+		false,
+	)
+	.unwrap();
 
 	let exe = CString::new(<OsString as OsStringExt>::into_vec(
 		env::exe_path().unwrap().into(),
@@ -1262,6 +1261,7 @@ pub fn init(resources: Resources) {
 	// 	log::LevelFilter::Trace,
 	// )
 	// .unwrap();
+	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
 	if valgrind::is().unwrap_or(false) {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
@@ -1278,7 +1278,7 @@ pub fn init(resources: Resources) {
 	let deployed = envs.deploy == Some(Some(Deploy::Fabric));
 	if version {
 		assert!(!recce);
-		print!("deploy-lib {}", env!("CARGO_PKG_VERSION"));
+		println!("constellation-lib {}", env!("CARGO_PKG_VERSION"));
 		process::exit(0);
 	}
 	if recce {

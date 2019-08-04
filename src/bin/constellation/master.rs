@@ -1,13 +1,12 @@
 use bincode;
 use crossbeam;
 use either::Either;
-use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net, path, sync::mpsc, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr}, path, sync::mpsc, thread
 };
 
-use constellation_internal::{map_bincode_err, BufferedStream, Pid, PidInternal, Resources};
+use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
 
 #[derive(Debug)]
 pub struct Node {
@@ -33,35 +32,12 @@ impl Node {
 
 #[derive(Serialize)]
 struct SchedulerArg {
-	ip: net::IpAddr,
+	ip: IpAddr,
 	scheduler: Pid,
 }
 
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		Vec<u8>,
-		Vec<u8>,
-	),
-	io::Error,
-> {
-	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = Vec::with_capacity(len.try_into().unwrap());
-	copy(stream, &mut binary, len)?;
-	assert_eq!(binary.len(), usize::try_from(len).unwrap());
-	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	Ok((process, args, vars, binary, arg))
-}
-
 pub fn run(
-	bind_addr: net::SocketAddr, pid: Pid,
+	bind_addr: net::SocketAddr, master_pid: Pid,
 	nodes: HashMap<net::SocketAddr, (u64, f32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
 ) {
 	let (sender, receiver) = mpsc::sync_channel::<
@@ -76,7 +52,7 @@ pub fn run(
 				Option<usize>,
 				Vec<net::SocketAddr>,
 			),
-			(usize, Either<u16, u16>),
+			(usize, Either<Pid, Pid>),
 		>,
 	>(0);
 
@@ -103,30 +79,40 @@ pub fn run(
 					let (receiver, sender) = (receiver_a, sender1);
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
+					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &addr.ip()).unwrap();
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(|_spawn| {
 							for (process, args, vars, binary, arg, ports) in receiver {
 								let mut stream_write = stream_write.write();
-								bincode::serialize_into(&mut stream_write, &process).unwrap();
-								bincode::serialize_into(&mut stream_write, &ports).unwrap(); // TODO: do all ports before everything else
-								bincode::serialize_into(&mut stream_write, &args).unwrap();
-								bincode::serialize_into(&mut stream_write, &vars).unwrap();
-								bincode::serialize_into(&mut stream_write, &(binary.len() as u64))
-									.unwrap();
-								stream_write.write_all(&binary).unwrap();
-								bincode::serialize_into(&mut stream_write, &arg).unwrap();
+								bincode::serialize_into(
+									&mut stream_write,
+									&FabricRequest::<Vec<u8>, Vec<u8>> {
+										resources: process,
+										bind: ports,
+										args,
+										vars,
+										arg,
+										binary,
+									},
+								)
+								.unwrap();
+								// bincode::serialize_into(&mut stream_write, &process).unwrap();
+								// bincode::serialize_into(&mut stream_write, &ports).unwrap(); // TODO: do all ports before everything else
+								// bincode::serialize_into(&mut stream_write, &args).unwrap();
+								// bincode::serialize_into(&mut stream_write, &vars).unwrap();
+								// bincode::serialize_into(&mut stream_write, &arg).unwrap();
+								// bincode::serialize_into(&mut stream_write, &(binary.len() as u64))
+								// 	.unwrap();
+								// stream_write.write_all(&binary).unwrap();
 								drop(stream_write);
 							}
 						});
-						let _ = scope.spawn(|_spawn| {
-							let sender = sender;
-							while let Ok(done) =
-								bincode::deserialize_from::<_, Either<u16, u16>>(&mut stream_read)
-									.map_err(map_bincode_err)
-							{
-								sender.send(Either::Right((i, done))).unwrap();
-							}
-						});
+						while let Ok(done) =
+							bincode::deserialize_from::<_, Either<Pid, Pid>>(&mut stream_read)
+								.map_err(map_bincode_err)
+						{
+							sender.send(Either::Right((i, done))).unwrap();
+						}
 					})
 					.unwrap();
 				})
@@ -160,8 +146,8 @@ pub fn run(
 								ports,
 							)))
 							.unwrap();
-						let pid: Option<Pid> = receiver.recv().unwrap();
-						println!("bridge at {:?}", pid.unwrap());
+						let _pid: Option<Pid> = receiver.recv().unwrap();
+						// println!("bridge at {:?}", pid.unwrap());
 					})
 					.unwrap();
 			}
@@ -181,7 +167,7 @@ pub fn run(
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
 						while let Ok((process, args, vars, binary, arg)) =
-							parse_request(&mut stream_read)
+							bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							// println!("parsed");
 							let (sender_, receiver) = mpsc::sync_channel::<Option<Pid>>(0);
@@ -209,12 +195,12 @@ pub fn run(
 		})
 		.unwrap();
 
-	let mut processes: HashMap<(usize, u16), Resources> = HashMap::new();
+	let mut processes: HashMap<(usize, Pid), Resources> = HashMap::new();
 
 	for msg in receiver.iter() {
 		match msg {
 			Either::Left((process, args, vars, binary, arg, sender, force, ports)) => {
-				println!("spawn {:?}", process);
+				// println!("spawn {:?}", process);
 				let node = if force.is_none() {
 					nodes.iter().position(|node| node.1.fits(&process))
 				} else {
@@ -229,7 +215,7 @@ pub fn run(
 						&mut sched_arg,
 						&SchedulerArg {
 							ip: node.2,
-							scheduler: pid,
+							scheduler: master_pid,
 						},
 					)
 					.unwrap();
@@ -239,25 +225,24 @@ pub fn run(
 						.unwrap();
 					node.3.push_back((sender, process));
 				} else {
-					println!(
-						"Failing a spawn! Cannot allocate process {:#?} to nodes {:#?}",
-						process, nodes
-					);
+					// println!(
+					// 	"Failing a spawn! Cannot allocate process {:#?} to nodes {:#?}",
+					// 	process, nodes
+					// );
 					sender.send(None).unwrap();
 				}
 			}
-			Either::Right((node_, Either::Left(init))) => {
-				println!("init {}:{} ({})", node_, init, processes.len());
+			Either::Right((node_, Either::Left(pid))) => {
+				// println!("init {}:{} ({})", node_, pid, processes.len());
 				let node = &mut nodes[node_];
 				let (sender, process) = node.3.pop_front().unwrap();
-				let x = processes.insert((node_, init), process);
+				let x = processes.insert((node_, pid), process);
 				assert!(x.is_none());
-				let pid = Pid::new(node.2, init);
 				sender.send(Some(pid)).unwrap();
 			}
-			Either::Right((node, Either::Right(done))) => {
-				let process = processes.remove(&(node, done)).unwrap();
-				println!("done {}:{} ({})", node, done, processes.len());
+			Either::Right((node, Either::Right(pid))) => {
+				let process = processes.remove(&(node, pid)).unwrap();
+				// println!("done {}:{} ({})", node, pid, processes.len());
 				let node = &mut nodes[node];
 				node.1.free(&process);
 			}

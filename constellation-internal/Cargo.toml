@@ -21,6 +21,7 @@ either = { version = "1.5", features = ["serde"] }
 ansi_term = "0.12"
 rand = { version = "0.7", features = ["small_rng"] }
 bincode = "1.0"
+palaver = "0.2"
 cargo_metadata = { version = "0.8", default-features = false }
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
 

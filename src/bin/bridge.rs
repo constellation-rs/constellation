@@ -24,7 +24,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 )]
 
 use log::trace;
-use palaver::file::{copy, copy_sendfile, fexecve, memfd_create, move_fds, seal_fd};
+use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
 use std::{
 	collections::HashMap, convert::TryInto, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
@@ -32,7 +32,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	file_from_reader, forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -68,26 +68,8 @@ fn parse_request<R: Read>(
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	// let mut binary = Vec::with_capacity(len as usize);
 	// copy(stream, &mut binary, len as usize)?; assert_eq!(binary.len(), len as usize);
-	let mut binary = unsafe {
-		fs::File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				true,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	assert!(nix::fcntl::FdFlag::from_bits(
-		nix::fcntl::fcntl(binary.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFD).unwrap()
-	)
-	.unwrap()
-	.contains(nix::fcntl::FdFlag::FD_CLOEXEC));
-	nix::unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
-	copy(stream, &mut binary, len)?;
-	let x = nix::unistd::lseek(binary.as_raw_fd(), 0, nix::unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
+	let binary = file_from_reader(&mut stream, len, &args[0], true)?;
 	seal_fd(binary.as_raw_fd());
-
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	Ok((process, args, vars, binary, arg))
 }
@@ -436,12 +418,7 @@ fn manage_connection(
 			for _event in receiver {}
 		})
 		.unwrap();
-		assert_eq!(
-			hashmap.lock().unwrap().len(),
-			0,
-			"{:?}",
-			*hashmap.lock().unwrap()
-		);
+		assert_eq!(hashmap.lock().unwrap().len(), 0);
 	}
 	nix::sys::socket::shutdown(stream.as_raw_fd(), nix::sys::socket::Shutdown::Write)
 		.map_err(drop)?;
