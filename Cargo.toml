@@ -68,7 +68,7 @@ winapi = "0.3"
 # palaver = { path = "../palaver" }
 # uuid = { path = "../uuid" }
 # serde_pipe = { path = "../serde_pipe" }
-bincode = { path = "../bincode" }
+bincode = { git = "https://github.com/alecmocatta/bincode" } #{ path = "../bincode" }
 
 [dev-dependencies]
 itertools = "0.8"
