@@ -3,7 +3,7 @@ use crossbeam;
 use either::Either;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr}, path, sync::mpsc, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
@@ -11,7 +11,7 @@ use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream
 #[derive(Debug)]
 pub struct Node {
 	mem: u64,
-	cpu: f32,
+	cpu: u32,
 }
 impl Node {
 	fn fits(&self, process: &Resources) -> bool {
@@ -38,19 +38,14 @@ struct SchedulerArg {
 
 pub fn run(
 	bind_addr: net::SocketAddr, master_pid: Pid,
-	nodes: HashMap<net::SocketAddr, (u64, f32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
+	nodes: HashMap<net::SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
 ) {
-	let (sender, receiver) = mpsc::sync_channel::<
+	let (sender, receiver) = sync_channel::<
 		Either<
 			(
-				Resources,
-				Vec<OsString>,
-				Vec<(OsString, OsString)>,
-				Vec<u8>,
-				Vec<u8>,
-				mpsc::SyncSender<Option<Pid>>,
+				FabricRequest<Vec<u8>, Vec<u8>>,
+				SyncSender<Option<Pid>>,
 				Option<usize>,
-				Vec<net::SocketAddr>,
 			),
 			(usize, Either<Pid, Pid>),
 		>,
@@ -64,14 +59,7 @@ pub fn run(
 			let mut check_addresses = HashSet::new();
 			let check_port = check_addresses.insert(addr);
 			assert!(check_port);
-			let (sender_a, receiver_a) = mpsc::sync_channel::<(
-				Resources,
-				Vec<OsString>,
-				Vec<(OsString, OsString)>,
-				Vec<u8>,
-				Vec<u8>,
-				Vec<net::SocketAddr>,
-			)>(0);
+			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
 			let stream = net::TcpStream::connect(&addr).unwrap();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
@@ -82,29 +70,9 @@ pub fn run(
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &addr.ip()).unwrap();
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(|_spawn| {
-							for (process, args, vars, binary, arg, ports) in receiver {
-								let mut stream_write = stream_write.write();
-								bincode::serialize_into(
-									&mut stream_write,
-									&FabricRequest::<Vec<u8>, Vec<u8>> {
-										resources: process,
-										bind: ports,
-										args,
-										vars,
-										arg,
-										binary,
-									},
-								)
-								.unwrap();
-								// bincode::serialize_into(&mut stream_write, &process).unwrap();
-								// bincode::serialize_into(&mut stream_write, &ports).unwrap(); // TODO: do all ports before everything else
-								// bincode::serialize_into(&mut stream_write, &args).unwrap();
-								// bincode::serialize_into(&mut stream_write, &vars).unwrap();
-								// bincode::serialize_into(&mut stream_write, &arg).unwrap();
-								// bincode::serialize_into(&mut stream_write, &(binary.len() as u64))
-								// 	.unwrap();
-								// stream_write.write_all(&binary).unwrap();
-								drop(stream_write);
+							for request in receiver {
+								bincode::serialize_into(&mut stream_write.write(), &request)
+									.unwrap();
 							}
 						});
 						while let Ok(done) =
@@ -117,8 +85,8 @@ pub fn run(
 					.unwrap();
 				})
 				.unwrap();
-			for (bridge, ports) in bridges {
-				for &port in &ports {
+			for (bridge, bind) in bridges {
+				for &port in &bind {
 					let check_port = check_addresses.insert(port);
 					assert!(check_port);
 				}
@@ -133,17 +101,19 @@ pub fn run(
 							.unwrap_or_else(|_| panic!("Failed to open bridge {:?}", &bridge));
 						let mut binary = Vec::new();
 						let _ = file_in.read_to_end(&mut binary).unwrap();
-						let (sender_, receiver) = mpsc::sync_channel::<Option<Pid>>(0);
+						let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
 						sender
 							.send(Either::Left((
-								Resources { mem: 0, cpu: 0.0 },
-								vec![OsString::from(bridge)],
-								Vec::new(),
-								binary,
-								Vec::new(),
+								FabricRequest {
+									resources: Resources { mem: 0, cpu: 0 },
+									bind,
+									args: vec![OsString::from(bridge)],
+									vars: Vec::new(),
+									binary,
+									arg: Vec::new(),
+								},
 								sender_,
 								Some(i),
-								ports,
 							)))
 							.unwrap();
 						let _pid: Option<Pid> = receiver.recv().unwrap();
@@ -166,23 +136,12 @@ pub fn run(
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
-						while let Ok((process, args, vars, binary, arg)) =
+						while let Ok(request) =
 							bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							// println!("parsed");
-							let (sender_, receiver) = mpsc::sync_channel::<Option<Pid>>(0);
-							sender
-								.send(Either::Left((
-									process,
-									args,
-									vars,
-									binary,
-									arg,
-									sender_,
-									None,
-									vec![],
-								)))
-								.unwrap();
+							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
+							sender.send(Either::Left((request, sender_, None))).unwrap();
 							let pid: Option<Pid> = receiver.recv().unwrap();
 							// let mut stream_write = stream_write.write();
 							if bincode::serialize_into(&mut stream_write, &pid).is_err() {
@@ -199,35 +158,36 @@ pub fn run(
 
 	for msg in receiver.iter() {
 		match msg {
-			Either::Left((process, args, vars, binary, arg, sender, force, ports)) => {
-				// println!("spawn {:?}", process);
+			Either::Left((mut request, sender, force)) => {
+				// println!("spawn {:?}", request.resources);
 				let node = if force.is_none() {
-					nodes.iter().position(|node| node.1.fits(&process))
+					nodes
+						.iter()
+						.position(|node| node.1.fits(&request.resources))
 				} else {
 					Some(force.unwrap())
 				};
 				if let Some(node) = node {
 					let node = &mut nodes[node];
-					node.1.alloc(&process);
+					node.1.alloc(&request.resources);
 
-					let mut sched_arg = Vec::new();
+					let mut arg = Vec::new();
 					bincode::serialize_into(
-						&mut sched_arg,
+						&mut arg,
 						&SchedulerArg {
 							ip: node.2,
 							scheduler: master_pid,
 						},
 					)
 					.unwrap();
-					sched_arg.extend(arg);
-					node.0
-						.send((process, args, vars, binary, sched_arg, ports))
-						.unwrap();
-					node.3.push_back((sender, process));
+					arg.extend(request.arg);
+					request.arg = arg;
+					node.3.push_back((sender, request.resources));
+					node.0.send(request).unwrap();
 				} else {
 					// println!(
 					// 	"Failing a spawn! Cannot allocate process {:#?} to nodes {:#?}",
-					// 	process, nodes
+					// 	resources, nodes
 					// );
 					sender.send(None).unwrap();
 				}

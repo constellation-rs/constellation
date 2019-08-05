@@ -26,13 +26,13 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 use log::trace;
 use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
 use std::{
-	collections::HashMap, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::unix::{
+	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{self, mpsc}, thread, time
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	file_from_reader, forbid_alloc, map_bincode_err, msg::FabricRequest, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -56,7 +56,7 @@ fn parse_request<R: Read>(
 		Option<Resources>,
 		Vec<OsString>,
 		Vec<(OsString, OsString)>,
-		fs::File,
+		File,
 		Vec<u8>,
 	),
 	io::Error,
@@ -142,9 +142,7 @@ fn monitor_process(
 	drop(sender_); // placate clippy needless_pass_by_value
 }
 
-fn recce(
-	binary: &fs::File, args: &[OsString], vars: &[(OsString, OsString)],
-) -> Result<Resources, ()> {
+fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Result<Resources, ()> {
 	let (reader, writer) = nix::unistd::pipe().unwrap();
 
 	let vars = iter::once((
@@ -282,7 +280,7 @@ fn recce(
 			wait_status => panic!("{:?}", wait_status),
 		}
 	}
-	let reader = unsafe { fs::File::from_raw_fd(reader) };
+	let reader = unsafe { File::from_raw_fd(reader) };
 	bincode::deserialize_from(&mut &reader)
 		.map_err(map_bincode_err)
 		.map_err(|_| ())
@@ -290,14 +288,7 @@ fn recce(
 
 fn manage_connection(
 	stream: TcpStream,
-	sender: mpsc::SyncSender<(
-		Resources,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		fs::File,
-		Vec<u8>,
-		mpsc::SyncSender<Option<Pid>>,
-	)>,
+	sender: mpsc::SyncSender<(FabricRequest<Vec<u8>, File>, mpsc::SyncSender<Option<Pid>>)>,
 ) -> Result<(), ()> {
 	#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 	nix::sys::socket::setsockopt(
@@ -328,17 +319,21 @@ fn manage_connection(
 		nix::errno::Errno::result(res).map(drop).map_err(drop)?;
 	}
 	let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
-	let (process, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
+	let (resources, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
+	// let request = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
 	assert_eq!(arg.len(), 0);
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
 	let (sender_, receiver) = mpsc::sync_channel::<_>(0);
 	sender
 		.send((
-			process.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
-			args,
-			vars,
-			binary,
-			arg,
+			FabricRequest {
+				resources: resources.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
+				bind: vec![],
+				args,
+				vars,
+				arg,
+				binary,
+			},
 			sender_,
 		))
 		.unwrap();
@@ -445,25 +440,25 @@ fn main() {
 		})
 		.unwrap();
 
-	for (process, args, vars, binary, arg, sender) in receiver {
-		let scheduler = unsafe { fs::File::from_raw_fd(SCHEDULER_FD) };
+	for (request, sender) in receiver {
+		let scheduler = unsafe { File::from_raw_fd(SCHEDULER_FD) };
 		let (mut scheduler_read, mut scheduler_write) = (
 			BufferedStream::new(&scheduler),
 			BufferedStream::new(&scheduler),
 		);
 
-		let len: u64 = binary.metadata().unwrap().len();
+		let len: u64 = request.binary.metadata().unwrap().len();
 		assert_ne!(len, 0);
 		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &process).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &args).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &vars).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.bind).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
 		drop(scheduler_write_);
-		copy_sendfile(&binary, &**scheduler_write.get_ref(), len).unwrap();
-		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &arg).unwrap();
-		drop(scheduler_write_);
+		copy_sendfile(&request.binary, &**scheduler_write.get_ref(), len).unwrap();
+		// bincode::serialize_into(&mut scheduler_write.write(), &request).map_err(map_bincode_err).unwrap();
 
 		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)

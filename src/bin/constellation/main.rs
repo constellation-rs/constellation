@@ -106,7 +106,7 @@ enum Role {
 struct Node {
 	addr: SocketAddr,
 	mem: u64,
-	cpu: f32,
+	cpu: u32,
 	run: Vec<Run>,
 }
 #[derive(PartialEq, Debug)]
@@ -187,15 +187,10 @@ fn main() {
 			(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
 		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
 		crossbeam::scope(|scope| {
-			while let Ok(FabricRequest::<File, File> {
-				resources,
-				bind: ports,
-				args,
-				vars,
-				arg,
-				binary,
-			}) = bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+			while let Ok(request) =
+				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 			{
+				let request: FabricRequest<File, File> = request;
 				let process_listener = socket(
 					socket::AddressFamily::Inet,
 					socket::SockType::Stream,
@@ -227,9 +222,9 @@ fn main() {
 				))
 				.chain(iter::once((
 					CString::new("CONSTELLATION_RESOURCES").unwrap(),
-					CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
+					CString::new(serde_json::to_string(&request.resources).unwrap()).unwrap(),
 				)))
-				.chain(vars.into_iter().map(|(x, y)| {
+				.chain(request.vars.into_iter().map(|(x, y)| {
 					(
 						CString::new(OsStringExt::into_vec(x)).unwrap(),
 						CString::new(OsStringExt::into_vec(y)).unwrap(),
@@ -245,13 +240,19 @@ fn main() {
 				})
 				.collect::<Vec<_>>();
 				// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
-				let args = args
+				let args = request
+					.args
 					.into_iter()
 					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
 					.collect::<Vec<_>>();
 
 				let args_p = Vec::with_capacity(args.len() + 1);
 				let vars_p = Vec::with_capacity(vars.len() + 1);
+
+				let binary = request.binary.into_raw_fd();
+				let arg = request.arg.into_raw_fd();
+
+				let bind = request.bind;
 
 				let child = match unistd::fork().expect("Fork failed") {
 					unistd::ForkResult::Child => {
@@ -270,10 +271,8 @@ fn main() {
 							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
-							let binary = binary.into_raw_fd();
 							let mut binary_desired_fd =
-								BOUND_FD_START + Fd::try_from(ports.len()).unwrap();
-							let arg = arg.into_raw_fd();
+								BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
 							move_fds(
 								&mut [
 									(arg, ARG_FD),
@@ -283,7 +282,7 @@ fn main() {
 								Some(fcntl::FdFlag::empty()),
 								true,
 							);
-							for (i, port) in ports.iter().enumerate() {
+							for (i, addr) in bind.iter().enumerate() {
 								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
 								let fd = socket::socket(
 									socket::AddressFamily::Inet,
@@ -301,7 +300,7 @@ fn main() {
 									.unwrap();
 								socket::bind(
 									socket,
-									&socket::SockAddr::Inet(socket::InetAddr::from_std(&port)),
+									&socket::SockAddr::Inet(socket::InetAddr::from_std(&addr)),
 								)
 								.unwrap();
 							}

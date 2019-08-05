@@ -110,10 +110,11 @@ impl Args {
 					match (
 						args.next().map(|x| x.parse()),
 						args.next().map(|x| parse_binary_size(&x)),
-						args.next().map(|x| x.parse()),
+						args.next().map(|x| x.parse::<u32>()), // TODO
 					) {
 						(None, _, _) if !nodes.is_empty() => break,
 						(Some(Ok(addr)), Some(Ok(mem)), Some(Ok(cpu))) => {
+							let cpu = cpu * 65536; // TODO
 							let mut run = Vec::new();
 							while let Some(Err(_binary)) =
 								args.peek().map(|x| x.parse::<SocketAddr>())
@@ -224,7 +225,7 @@ mod tests {
 					vec![Node {
 						addr: "10.0.0.1:8888".parse().unwrap(),
 						mem: 400 * 1024 * 1024 * 1024,
-						cpu: 34.0,
+						cpu: 34 * 65536,
 						run: vec![Run {
 							binary: PathBuf::from("bridge"),
 							addr: "10.0.0.1:7777".parse().unwrap()

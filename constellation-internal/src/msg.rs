@@ -57,7 +57,9 @@ mod fabric_request {
 			R: Read,
 			Self: Sized,
 		{
-			self_.next_element()
+			self_
+				.next_element::<serde_bytes::ByteBuf>()
+				.map(|x| x.map(serde_bytes::ByteBuf::into_vec))
 		}
 	}
 
@@ -71,8 +73,8 @@ mod fabric_request {
 			state.serialize_element(&self.bind)?;
 			state.serialize_element(&self.args)?;
 			state.serialize_element(&self.vars)?;
-			state.serialize_element(&self.arg)?;
-			state.serialize_element(&self.binary)?;
+			state.serialize_element(&serde_bytes::Bytes::new(&self.arg))?;
+			state.serialize_element(&serde_bytes::Bytes::new(&self.binary))?;
 			state.end()
 		}
 	}
@@ -108,11 +110,13 @@ mod fabric_request {
 				.next_element()?
 				.ok_or_else(|| de::Error::invalid_length(3, &self))?;
 			let arg = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+				.next_element::<serde_bytes::ByteBuf>()?
+				.ok_or_else(|| de::Error::invalid_length(4, &self))?
+				.into_vec();
 			let binary = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(5, &self))?;
+				.next_element::<serde_bytes::ByteBuf>()?
+				.ok_or_else(|| de::Error::invalid_length(5, &self))?
+				.into_vec();
 			Ok(FabricRequest {
 				resources,
 				bind,
@@ -326,4 +330,11 @@ mod fabric_request {
 		let reader = UnsafeCellReader::new(stream);
 		bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 	}
+	// pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
+	// 	stream: &mut W,
+	// 	value: &FabricRequest<A, B>
+	// ) -> Result<(), bincode::Error> {
+	// 	let writer = UnsafeCellReader::new(stream);
+	// 	bincode::config().deserialize_into(FabricRequestSeed::new(&writer), &writer)
+	// }
 }

@@ -275,8 +275,8 @@ pub enum Format {
 pub struct Resources {
 	/// Memory requirement in bytes
 	pub mem: u64,
-	/// CPU requirement as a fraction of one logical core. Any positive value is valid.
-	pub cpu: f32,
+	/// CPU requirement as a fraction of one logical core multiplied by 2^16.
+	pub cpu: u32,
 }
 impl Default for Resources {
 	fn default() -> Self {
@@ -286,7 +286,7 @@ impl Default for Resources {
 /// The [Resources] returned by [`Resources::default()`](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
 pub const RESOURCES_DEFAULT: Resources = Resources {
 	mem: 1024 * 1024 * 1024,
-	cpu: 0.05,
+	cpu: 65536 / 16,
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
