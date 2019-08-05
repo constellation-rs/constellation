@@ -180,7 +180,7 @@ fn main() {
 
 	for stream in listener.incoming() {
 		let stream = stream.unwrap();
-		println!("accepted");
+		// println!("accepted");
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		let (mut stream_read, stream_write) =
@@ -190,14 +190,7 @@ fn main() {
 			while let Ok(request) =
 				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 			{
-				let FabricRequest::<File, File> {
-					resources,
-					bind,
-					args,
-					vars,
-					arg,
-					binary,
-				} = request;
+				let request: FabricRequest<File, File> = request;
 				let process_listener = socket(
 					socket::AddressFamily::Inet,
 					socket::SockType::Stream,
@@ -229,9 +222,9 @@ fn main() {
 				))
 				.chain(iter::once((
 					CString::new("CONSTELLATION_RESOURCES").unwrap(),
-					CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
+					CString::new(serde_json::to_string(&request.resources).unwrap()).unwrap(),
 				)))
-				.chain(vars.into_iter().map(|(x, y)| {
+				.chain(request.vars.into_iter().map(|(x, y)| {
 					(
 						CString::new(OsStringExt::into_vec(x)).unwrap(),
 						CString::new(OsStringExt::into_vec(y)).unwrap(),
@@ -247,7 +240,8 @@ fn main() {
 				})
 				.collect::<Vec<_>>();
 				// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
-				let args = args
+				let args = request
+					.args
 					.into_iter()
 					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
 					.collect::<Vec<_>>();
@@ -255,9 +249,11 @@ fn main() {
 				let args_p = Vec::with_capacity(args.len() + 1);
 				let vars_p = Vec::with_capacity(vars.len() + 1);
 
-				let binary = binary.into_raw_fd();
-				let mut binary_desired_fd = BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
-				let arg = arg.into_raw_fd();
+				let binary = request.binary.into_raw_fd();
+				let mut binary_desired_fd =
+					BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
+				let arg = request.arg.into_raw_fd();
+				let bind = request.bind;
 
 				let child = match unistd::fork().expect("Fork failed") {
 					unistd::ForkResult::Child => {

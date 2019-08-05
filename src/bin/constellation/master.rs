@@ -1,10 +1,9 @@
 use bincode;
 use crossbeam;
 use either::Either;
-use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
@@ -35,31 +34,6 @@ impl Node {
 struct SchedulerArg {
 	ip: IpAddr,
 	scheduler: Pid,
-}
-
-fn _parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<SocketAddr>,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		Vec<u8>,
-		Vec<u8>,
-	),
-	io::Error,
-> {
-	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let bind = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = Vec::with_capacity(len.try_into().unwrap());
-	copy(stream, &mut binary, len)?;
-	assert_eq!(binary.len(), usize::try_from(len).unwrap());
-	Ok((process, bind, args, vars, binary, arg))
 }
 
 pub fn run(
