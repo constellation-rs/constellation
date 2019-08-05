@@ -29,7 +29,8 @@
 	clippy::if_not_else,
 	clippy::module_name_repetitions,
 	clippy::new_ret_no_self,
-	clippy::type_complexity
+	clippy::type_complexity,
+	clippy::all
 )]
 
 mod channel;
@@ -679,7 +680,6 @@ fn spawn_deployed(
 	};
 	let len: u64 = binary.metadata().unwrap().len();
 	bincode::serialize_into(&mut stream_write_, &resources).unwrap();
-	bincode::serialize_into::<_, Vec<SocketAddr>>(&mut stream_write_, &vec![]).unwrap();
 	bincode::serialize_into::<_, Vec<OsString>>(
 		&mut stream_write_,
 		&env::args_os().expect("Couldn't get argv"),
@@ -690,16 +690,18 @@ fn spawn_deployed(
 		&env::vars_os().expect("Couldn't get envp"),
 	)
 	.unwrap();
+	bincode::serialize_into(&mut stream_write_, &len).unwrap();
+	drop(stream_write_);
+	// copy(&mut &binary, &mut stream_write_, len as usize).unwrap();
+	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
+	let mut stream_write_ = stream_write.write();
 	let mut arg_: Vec<u8> = Vec::new();
 	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
 	bincode::serialize_into(&mut arg_, &bridge_pid).unwrap();
 	bincode::serialize_into(&mut arg_, &pid()).unwrap();
 	bincode::serialize_into(&mut arg_, &f).unwrap();
 	bincode::serialize_into(&mut stream_write_, &arg_).unwrap();
-	bincode::serialize_into(&mut stream_write_, &len).unwrap();
 	drop(stream_write_);
-	// copy(&mut &binary, &mut stream_write_, len as usize).unwrap();
-	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
 	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap();
@@ -945,7 +947,7 @@ fn native_process_listener() -> (Fd, u16) {
 	socket::setsockopt(process_listener, sockopt::ReuseAddr, &true).unwrap();
 	socket::bind(
 		process_listener,
-		&socket::SockAddr::Inet(socket::InetAddr::from_std(&net::SocketAddr::new(
+		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
 			net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
 			0,
 		))),

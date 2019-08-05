@@ -14,7 +14,7 @@ where
 	pub arg: A,
 	pub binary: B,
 }
-pub use fabric_request::{bincode_deserialize_from, FileOrVec};
+pub use fabric_request::{FileOrVec,bincode_serialize_into,bincode_deserialize_from};
 
 mod fabric_request {
 	use super::FabricRequest;
@@ -78,31 +78,31 @@ mod fabric_request {
 			state.end()
 		}
 	}
-	// struct FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
-	// 	writer: W,
-	// 	value: &'a FabricRequest<A,B>
-	// }
-	// impl<'a, W,A,B> FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
-	// 	fn new(writer: W, value: &'a FabricRequest<A,B>) -> Self {
-	// 		FabricRequestSerializer{writer,value}
-	// 	}
-	// }
-	// impl<'a, W,A,B> Serialize for FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec{
-	// 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-	// 	where
-	// 		S: Serializer,
-	// 	{
-	// 		let mut state = serializer.serialize_tuple(6)?;
-	// 		state.serialize_element(&self.value.resources)?;
-	// 		state.serialize_element(&self.value.bind)?;
-	// 		state.serialize_element(&self.value.args)?;
-	// 		state.serialize_element(&self.value.vars)?;
-	// 		unimplemented!();
-	// 		// state.serialize_element(&serde_bytes::Bytes::new(&self.value.arg))?;
-	// 		// state.serialize_element(&serde_bytes::Bytes::new(&self.value.binary))?;
-	// 		state.end()
-	// 	}
-	// }
+	struct FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
+		writer: W,
+		value: &'a FabricRequest<A,B>
+	}
+	impl<'a, W,A,B> FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
+		fn new(writer: W, value: &'a FabricRequest<A,B>) -> Self {
+			FabricRequestSerializer{writer,value}
+		}
+	}
+	impl<'a, W,A,B> Serialize for FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec{
+		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+			let mut state = serializer.serialize_tuple(6)?;
+			state.serialize_element(&self.value.resources)?;
+			state.serialize_element(&self.value.bind)?;
+			state.serialize_element(&self.value.args)?;
+			state.serialize_element(&self.value.vars)?;
+			unimplemented!();
+			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.arg))?;
+			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.binary))?;
+			// state.end()
+		}
+	}
 
 	impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
 		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -326,11 +326,11 @@ mod fabric_request {
 		let reader = UnsafeCellReaderWriter::new(stream);
 		bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 	}
-	// pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
-	// 	stream: &mut W,
-	// 	value: &FabricRequest<A, B>
-	// ) -> Result<(), bincode::Error> {
-	// 	let writer = UnsafeCellReaderWriter::new(stream);
-	// 	bincode::config().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
-	// }
+	pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
+		stream: &mut W,
+		value: &FabricRequest<A, B>
+	) -> Result<(), bincode::Error> {
+		let writer = UnsafeCellReaderWriter::new(stream);
+		bincode::config().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
+	}
 }

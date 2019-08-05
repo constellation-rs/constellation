@@ -451,14 +451,14 @@ fn main() {
 		assert_ne!(len, 0);
 		let mut scheduler_write_ = scheduler_write.write();
 		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.bind).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
 		drop(scheduler_write_);
 		copy_sendfile(&request.binary, &**scheduler_write.get_ref(), len).unwrap();
-		// bincode::serialize_into(&mut scheduler_write.write(), &request).map_err(map_bincode_err).unwrap();
+		let mut scheduler_write_ = scheduler_write.write();
+		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
+		drop(scheduler_write_);
 
 		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)
