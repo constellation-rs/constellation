@@ -24,7 +24,7 @@ mod fabric_request {
 		de::{self, DeserializeSeed, Error, SeqAccess, Visitor}, ser::SerializeTuple, Deserialize, Deserializer, Serialize, Serializer
 	};
 	use std::{
-		cell::UnsafeCell, ffi::OsString, fmt, fs::File, io::{self, Read}, marker::PhantomData, os::unix::io::AsRawFd
+		cell::UnsafeCell, ffi::OsString, fmt, fs::File, io::{self, Read, Write}, marker::PhantomData, os::unix::io::AsRawFd
 	};
 
 	pub trait FileOrVec {
@@ -78,6 +78,32 @@ mod fabric_request {
 			state.end()
 		}
 	}
+	// struct FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
+	// 	writer: W,
+	// 	value: &'a FabricRequest<A,B>
+	// }
+	// impl<'a, W,A,B> FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
+	// 	fn new(writer: W, value: &'a FabricRequest<A,B>) -> Self {
+	// 		FabricRequestSerializer{writer,value}
+	// 	}
+	// }
+	// impl<'a, W,A,B> Serialize for FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec{
+	// 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	// 	where
+	// 		S: Serializer,
+	// 	{
+	// 		let mut state = serializer.serialize_tuple(6)?;
+	// 		state.serialize_element(&self.value.resources)?;
+	// 		state.serialize_element(&self.value.bind)?;
+	// 		state.serialize_element(&self.value.args)?;
+	// 		state.serialize_element(&self.value.vars)?;
+	// 		unimplemented!();
+	// 		// state.serialize_element(&serde_bytes::Bytes::new(&self.value.arg))?;
+	// 		// state.serialize_element(&serde_bytes::Bytes::new(&self.value.binary))?;
+	// 		state.end()
+	// 	}
+	// }
+
 	impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
 		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 		where
@@ -257,37 +283,14 @@ mod fabric_request {
 	// 		self.0.borrow_mut().read_exact(out)
 	// 	}
 	// }
-	// impl<'a, 'b, R> bincode::BincodeRead<'a> for &'b RefCellReader<R>
-	// where
-	// 	R: bincode::BincodeRead<'a>,
-	// {
-	// 	#[inline(always)]
-	// 	fn forward_read_str<V>(&mut self, length: usize, visitor: V) -> bincode::Result<V::Value>
-	// 	where
-	// 		V: Visitor<'a>,
-	// 	{
-	// 		self.0.borrow_mut().forward_read_str(length, visitor)
-	// 	}
-	// 	#[inline(always)]
-	// 	fn get_byte_buffer(&mut self, length: usize) -> bincode::Result<Vec<u8>> {
-	// 		self.0.borrow_mut().get_byte_buffer(length)
-	// 	}
-	// 	#[inline(always)]
-	// 	fn forward_read_bytes<V>(&mut self, length: usize, visitor: V) -> bincode::Result<V::Value>
-	// 	where
-	// 		V: Visitor<'a>,
-	// 	{
-	// 		self.0.borrow_mut().forward_read_bytes(length, visitor)
-	// 	}
-	// }
 	#[allow(missing_debug_implementations)]
-	struct UnsafeCellReader<R>(UnsafeCell<R>);
-	impl<R> UnsafeCellReader<R> {
+	struct UnsafeCellReaderWriter<R>(UnsafeCell<R>);
+	impl<R> UnsafeCellReaderWriter<R> {
 		fn new(reader: R) -> Self {
 			Self(UnsafeCell::new(reader))
 		}
 	}
-	impl<'a, R> Read for &'a UnsafeCellReader<R>
+	impl<'a, R> Read for &'a UnsafeCellReaderWriter<R>
 	where
 		R: Read,
 	{
@@ -300,41 +303,34 @@ mod fabric_request {
 			unsafe { &mut *self.0.get() }.read_exact(out)
 		}
 	}
-	impl<'a, 'b, R> bincode::BincodeRead<'a> for &'b UnsafeCellReader<R>
+	impl<'a, W> Write for &'a UnsafeCellReaderWriter<W>
 	where
-		R: bincode::BincodeRead<'a>,
+		W: Write,
 	{
 		#[inline(always)]
-		fn forward_read_str<V>(&mut self, length: usize, visitor: V) -> bincode::Result<V::Value>
-		where
-			V: Visitor<'a>,
-		{
-			unsafe { &mut *self.0.get() }.forward_read_str(length, visitor)
+		fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+			unsafe { &mut *self.0.get() }.write(buf)
 		}
 		#[inline(always)]
-		fn get_byte_buffer(&mut self, length: usize) -> bincode::Result<Vec<u8>> {
-			unsafe { &mut *self.0.get() }.get_byte_buffer(length)
+		fn flush(&mut self) -> io::Result<()> {
+			unsafe { &mut *self.0.get() }.flush()
 		}
 		#[inline(always)]
-		fn forward_read_bytes<V>(&mut self, length: usize, visitor: V) -> bincode::Result<V::Value>
-		where
-			V: Visitor<'a>,
-		{
-			unsafe { &mut *self.0.get() }.forward_read_bytes(length, visitor)
+		fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+			unsafe { &mut *self.0.get() }.write_all(buf)
 		}
 	}
-
 	pub fn bincode_deserialize_from<R: Read, A: FileOrVec, B: FileOrVec>(
 		stream: &mut R,
 	) -> Result<FabricRequest<A, B>, bincode::Error> {
-		let reader = UnsafeCellReader::new(stream);
+		let reader = UnsafeCellReaderWriter::new(stream);
 		bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 	}
 	// pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
 	// 	stream: &mut W,
 	// 	value: &FabricRequest<A, B>
 	// ) -> Result<(), bincode::Error> {
-	// 	let writer = UnsafeCellReader::new(stream);
-	// 	bincode::config().deserialize_into(FabricRequestSeed::new(&writer), &writer)
+	// 	let writer = UnsafeCellReaderWriter::new(stream);
+	// 	bincode::config().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
 	// }
 }
