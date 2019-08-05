@@ -14,7 +14,7 @@ where
 	pub arg: A,
 	pub binary: B,
 }
-pub use fabric_request::{FileOrVec,bincode_serialize_into,bincode_deserialize_from};
+pub use fabric_request::{bincode_deserialize_from, bincode_serialize_into, FileOrVec};
 
 mod fabric_request {
 	use super::FabricRequest;
@@ -78,16 +78,31 @@ mod fabric_request {
 			state.end()
 		}
 	}
-	struct FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
+	struct FabricRequestSerializer<'a, W, A, B>
+	where
+		W: Write,
+		A: FileOrVec,
+		B: FileOrVec,
+	{
 		writer: W,
-		value: &'a FabricRequest<A,B>
+		value: &'a FabricRequest<A, B>,
 	}
-	impl<'a, W,A,B> FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec {
-		fn new(writer: W, value: &'a FabricRequest<A,B>) -> Self {
-			FabricRequestSerializer{writer,value}
+	impl<'a, W, A, B> FabricRequestSerializer<'a, W, A, B>
+	where
+		W: Write,
+		A: FileOrVec,
+		B: FileOrVec,
+	{
+		fn new(writer: W, value: &'a FabricRequest<A, B>) -> Self {
+			FabricRequestSerializer { writer, value }
 		}
 	}
-	impl<'a, W,A,B> Serialize for FabricRequestSerializer<'a, W, A, B> where W: Write, A: FileOrVec, B: FileOrVec{
+	impl<'a, W, A, B> Serialize for FabricRequestSerializer<'a, W, A, B>
+	where
+		W: Write,
+		A: FileOrVec,
+		B: FileOrVec,
+	{
 		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 		where
 			S: Serializer,
@@ -327,8 +342,7 @@ mod fabric_request {
 		bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 	}
 	pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
-		stream: &mut W,
-		value: &FabricRequest<A, B>
+		stream: &mut W, value: &FabricRequest<A, B>,
 	) -> Result<(), bincode::Error> {
 		let writer = UnsafeCellReaderWriter::new(stream);
 		bincode::config().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
