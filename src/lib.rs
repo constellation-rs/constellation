@@ -1114,24 +1114,21 @@ fn monitor_process(
 						}
 						futures::future::Either::Right(()) => {
 							let event = event.unwrap();
-							if let Ok(event) = event {
-								match event {
-									ProcessInputEvent::Input(fd, input) => {
-										// trace!("xxx INPUT {:?} {}", input, input.len());
-										if fd == libc::STDIN_FILENO {
-											bridge_inbound_sender
-												.send(ProcessInputEvent::Input(fd, input))
-												.unwrap();
-										} else {
-											unimplemented!()
-										}
+							match event.unwrap() {
+								ProcessInputEvent::Input(fd, input) => {
+									// trace!("xxx INPUT {:?} {}", input, input.len());
+									if fd == libc::STDIN_FILENO {
+										bridge_inbound_sender
+											.send(ProcessInputEvent::Input(fd, input))
+											.unwrap();
+									} else {
+										unimplemented!()
 									}
-									ProcessInputEvent::Kill => {
-										signal::kill(child, signal::Signal::SIGKILL)
-											.unwrap_or_else(|e| {
-												assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
-											});
-									}
+								}
+								ProcessInputEvent::Kill => {
+									signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(
+										|e| assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH)),
+									);
 								}
 							}
 						}

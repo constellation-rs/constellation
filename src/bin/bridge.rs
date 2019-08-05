@@ -23,6 +23,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 	clippy::shadow_unrelated
 )]
 
+use futures::{sink::SinkExt, stream::StreamExt};
 use log::trace;
 use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
 use std::{
@@ -39,7 +40,7 @@ const SCHEDULER_FD: Fd = 4;
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
-	Spawn(Pid, Pid, mpsc::SyncSender<InputEventInt>),
+	Spawn(Pid, Pid, futures::channel::mpsc::Sender<InputEventInt>),
 	Output(Pid, Fd, Vec<u8>),
 	Exit(Pid, ExitStatus),
 }
@@ -77,65 +78,78 @@ fn parse_request<R: Read>(
 static PROCESS_COUNT: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
 
 fn monitor_process(
-	pid: Pid, sender_: mpsc::SyncSender<OutputEventInt>, receiver_: mpsc::Receiver<InputEventInt>,
+	pid: Pid, sender_: mpsc::SyncSender<OutputEventInt>,
+	mut receiver_: futures::channel::mpsc::Receiver<InputEventInt>,
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	let _ = thread::Builder::new()
-		.name(String::from("monitor_process"))
-		.spawn(move || {
-			for event in receiver_.iter() {
-				let event = match event {
-					InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-					InputEventInt::Kill => ProcessInputEvent::Kill,
-				};
-				sender.send(event);
-				//  {
-				// 	Ok(()) => (),
-				// 	Err(constellation::ChannelError::Exited) => break, // TODO,
-				// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
-				// }
-				// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
-				// 	break; // TODO: remove
-				// }
-			}
-			for _event in receiver_ {}
-			let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
-			assert_ne!(x, 0);
-			trace!("BRIDGE: KILL ({})", x);
-		})
-		.unwrap();
+	// let _ = thread::Builder::new()
+	// 	.name(String::from("monitor_process"))
+	// 	.spawn(move || {
+	// 		while let Some(event) = futures::executor::block_on(receiver_.next()) {
+	// 			let event = match event {
+	// 				InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
+	// 				InputEventInt::Kill => ProcessInputEvent::Kill,
+	// 			};
+	// 			sender.send(event);
+	// 			//  {
+	// 			// 	Ok(()) => (),
+	// 			// 	Err(constellation::ChannelError::Exited) => break, // TODO,
+	// 			// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
+	// 			// }
+	// 			// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
+	// 			// 	break; // TODO: remove
+	// 			// }
+	// 		}
+	// 		// for _event in receiver_ {}
+	// 	})
+	// 	.unwrap();
 	loop {
-		// let event: Result<ProcessOutputEvent,_> = bincode::deserialize_from(&mut receiver).map_err(map_bincode_err);
-		let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
+		let mut event = None;
+		let x = match futures::executor::block_on(futures::future::select(
+			receiver_.next(),
+			receiver.selectable_recv(|t| event = Some(t)),
+		)) {
+			futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
+			futures::future::Either::Right(((), _)) => futures::future::Either::Right(()),
+		};
+		// let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
 		// if event.is_err() {
 		// 	trace!("BRIDGE: {:?} died {:?}", pid, event.err().unwrap());
 		// 	sender_.send(OutputEventInt::Exit(pid, 101)).unwrap();
 		// 	break;
 		// }
-		match event {
-			//.unwrap() {
-			ProcessOutputEvent::Spawn(new_pid) => {
-				let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
-				trace!("BRIDGE: SPAWN ({})", x);
-				let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
-				sender_
-					.send(OutputEventInt::Spawn(pid, new_pid, sender1))
-					.unwrap();
-				let sender_ = sender_.clone();
-				let _ = thread::Builder::new()
-					.name(String::from("d"))
-					.spawn(move || monitor_process(new_pid, sender_, receiver1))
-					.unwrap();
+		match x {
+			futures::future::Either::Left(event) => {
+				sender.send(match event.unwrap() {
+					InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
+					InputEventInt::Kill => ProcessInputEvent::Kill,
+				});
 			}
-			ProcessOutputEvent::Output(fd, output) => {
-				sender_
-					.send(OutputEventInt::Output(pid, fd, output))
-					.unwrap();
-			}
-			ProcessOutputEvent::Exit(exit_code) => {
-				sender_.send(OutputEventInt::Exit(pid, exit_code)).unwrap();
-				break;
+			futures::future::Either::Right(()) => {
+				let event = event.unwrap();
+				match event.unwrap() {
+					ProcessOutputEvent::Spawn(new_pid) => {
+						let (sender1, receiver1) = futures::channel::mpsc::channel(0);
+						sender_
+							.send(OutputEventInt::Spawn(pid, new_pid, sender1))
+							.unwrap();
+						let sender_ = sender_.clone();
+						let _ = thread::Builder::new()
+							.name(String::from("d"))
+							.spawn(move || monitor_process(new_pid, sender_, receiver1))
+							.unwrap();
+					}
+					ProcessOutputEvent::Output(fd, output) => {
+						sender_
+							.send(OutputEventInt::Output(pid, fd, output))
+							.unwrap();
+					}
+					ProcessOutputEvent::Exit(exit_code) => {
+						sender_.send(OutputEventInt::Exit(pid, exit_code)).unwrap();
+						break;
+					}
+				}
 			}
 		}
 	}
@@ -343,7 +357,7 @@ fn manage_connection(
 		let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
 		let (sender, receiver) = mpsc::sync_channel::<_>(0);
-		let (sender1, receiver1) = mpsc::sync_channel::<_>(0);
+		let (sender1, receiver1) = futures::channel::mpsc::channel::<_>(0);
 		let _ = thread::Builder::new()
 			.name(String::from("c"))
 			.spawn(move || monitor_process(pid, sender, receiver1))
@@ -360,36 +374,42 @@ fn manage_connection(
 					}
 					match event.unwrap() {
 						DeployInputEvent::Input(pid, fd, input) => {
-							hashmap
-								.lock()
-								.unwrap()
-								.get(&pid)
-								.unwrap()
-								.send(InputEventInt::Input(fd, input))
-								.unwrap();
+							futures::executor::block_on(
+								hashmap
+									.lock()
+									.unwrap()
+									.get_mut(&pid)
+									.unwrap()
+									.send(InputEventInt::Input(fd, input)),
+							)
+							.unwrap();
 						}
 						DeployInputEvent::Kill(Some(pid)) => {
-							hashmap
-								.lock()
-								.unwrap()
-								.get(&pid)
-								.unwrap()
-								.send(InputEventInt::Kill)
-								.unwrap();
+							futures::executor::block_on(
+								hashmap
+									.lock()
+									.unwrap()
+									.get_mut(&pid)
+									.unwrap()
+									.send(InputEventInt::Kill),
+							)
+							.unwrap();
 						}
 						DeployInputEvent::Kill(None) => {
 							break;
 						}
 					}
 				}
-				let x = hashmap.lock().unwrap();
-				for (_, process) in x.iter() {
-					process.send(InputEventInt::Kill).unwrap();
+				let mut x = hashmap.lock().unwrap();
+				for (_, process) in x.iter_mut() {
+					futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
 				}
 			});
 			for event in receiver.iter() {
 				let event = match event {
 					OutputEventInt::Spawn(pid, new_pid, sender) => {
+						let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+						trace!("BRIDGE: SPAWN ({})", x);
 						let x = hashmap.lock().unwrap().insert(new_pid, sender);
 						assert!(x.is_none());
 						DeployOutputEvent::Spawn(pid, new_pid)
@@ -398,6 +418,9 @@ fn manage_connection(
 						DeployOutputEvent::Output(pid, fd, output)
 					}
 					OutputEventInt::Exit(pid, exit_code) => {
+						let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
+						assert_ne!(x, 0);
+						trace!("BRIDGE: KILL ({})", x);
 						let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
 						DeployOutputEvent::Exit(pid, exit_code)
 					}
@@ -408,8 +431,8 @@ fn manage_connection(
 			}
 			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
 			let mut x = hashmap.lock().unwrap();
-			for (_, process) in x.drain() {
-				process.send(InputEventInt::Kill).unwrap();
+			for (_, mut process) in x.drain() {
+				futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
 			}
 			for _event in receiver {}
 		})
