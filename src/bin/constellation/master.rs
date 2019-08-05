@@ -37,7 +37,7 @@ struct SchedulerArg {
 	scheduler: Pid,
 }
 
-fn parse_request<R: Read>(
+fn _parse_request<R: Read>(
 	mut stream: &mut R,
 ) -> Result<
 	(
@@ -162,26 +162,13 @@ pub fn run(
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
-						while let Ok((resources, bind, args, vars, binary, arg)) =
-							parse_request(&mut stream_read)
+						while let Ok(request) =
+							bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
-							assert_eq!(bind.len(), 0); // TODO: remove
-						   // println!("parsed");
+							let request: FabricRequest<Vec<u8>, Vec<u8>> = request;
+							// println!("parsed");
 							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-							sender
-								.send(Either::Left((
-									FabricRequest {
-										resources,
-										bind,
-										args,
-										vars,
-										arg,
-										binary,
-									},
-									sender_,
-									None,
-								)))
-								.unwrap();
+							sender.send(Either::Left((request, sender_, None))).unwrap();
 							let pid: Option<Pid> = receiver.recv().unwrap();
 							// let mut stream_write = stream_write.write();
 							if bincode::serialize_into(&mut stream_write, &pid).is_err() {

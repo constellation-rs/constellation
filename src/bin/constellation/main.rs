@@ -255,6 +255,10 @@ fn main() {
 				let args_p = Vec::with_capacity(args.len() + 1);
 				let vars_p = Vec::with_capacity(vars.len() + 1);
 
+				let binary = binary.into_raw_fd();
+				let mut binary_desired_fd = BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
+				let arg = arg.into_raw_fd();
+
 				let child = match unistd::fork().expect("Fork failed") {
 					unistd::ForkResult::Child => {
 						forbid_alloc(|| {
@@ -272,10 +276,6 @@ fn main() {
 							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
-							let binary = binary.into_raw_fd();
-							let mut binary_desired_fd =
-								BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
-							let arg = arg.into_raw_fd();
 							move_fds(
 								&mut [
 									(arg, ARG_FD),
