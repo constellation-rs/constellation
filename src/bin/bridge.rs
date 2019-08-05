@@ -26,7 +26,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 use log::trace;
 use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
 use std::{
-	collections::HashMap, convert::TryInto, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::unix::{
+	collections::HashMap, ffi::{CString, OsString}, fs, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{self, mpsc}, thread, time
 };
@@ -311,6 +311,7 @@ fn manage_connection(
 	.map_err(drop)?;
 	#[cfg(any(target_os = "macos", target_os = "ios"))]
 	{
+		use std::convert::TryInto;
 		const SO_LINGER_SEC: nix::libc::c_int = 0x1080;
 		let res = unsafe {
 			nix::libc::setsockopt(
