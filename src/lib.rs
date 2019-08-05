@@ -680,6 +680,7 @@ fn spawn_deployed(
 	};
 	let len: u64 = binary.metadata().unwrap().len();
 	bincode::serialize_into(&mut stream_write_, &resources).unwrap();
+	bincode::serialize_into::<_, Vec<SocketAddr>>(&mut stream_write_, &vec![]).unwrap();
 	bincode::serialize_into::<_, Vec<OsString>>(
 		&mut stream_write_,
 		&env::args_os().expect("Couldn't get argv"),

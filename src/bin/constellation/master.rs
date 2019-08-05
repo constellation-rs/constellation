@@ -4,7 +4,7 @@ use either::Either;
 use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
@@ -42,6 +42,7 @@ fn parse_request<R: Read>(
 ) -> Result<
 	(
 		Resources,
+		Vec<SocketAddr>,
 		Vec<OsString>,
 		Vec<(OsString, OsString)>,
 		Vec<u8>,
@@ -50,6 +51,7 @@ fn parse_request<R: Read>(
 	io::Error,
 > {
 	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let bind = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
@@ -57,12 +59,12 @@ fn parse_request<R: Read>(
 	copy(stream, &mut binary, len)?;
 	assert_eq!(binary.len(), usize::try_from(len).unwrap());
 	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	Ok((process, args, vars, binary, arg))
+	Ok((process, bind, args, vars, binary, arg))
 }
 
 pub fn run(
-	bind_addr: net::SocketAddr, master_pid: Pid,
-	nodes: HashMap<net::SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
+	bind_addr: SocketAddr, master_pid: Pid,
+	nodes: HashMap<SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<SocketAddr>)>)>,
 ) {
 	let (sender, receiver) = sync_channel::<
 		Either<
@@ -160,16 +162,17 @@ pub fn run(
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
-						while let Ok((resources, args, vars, binary, arg)) =
+						while let Ok((resources, bind, args, vars, binary, arg)) =
 							parse_request(&mut stream_read)
 						{
-							// println!("parsed");
+							assert_eq!(bind.len(), 0); // TODO: remove
+						   // println!("parsed");
 							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
 							sender
 								.send(Either::Left((
 									FabricRequest {
 										resources,
-										bind: vec![],
+										bind,
 										args,
 										vars,
 										arg,

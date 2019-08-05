@@ -26,7 +26,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 use log::trace;
 use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
 use std::{
-	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
+	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::{SocketAddr, TcpStream}, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{self, mpsc}, thread, time
 };
@@ -451,6 +451,7 @@ fn main() {
 		assert_ne!(len, 0);
 		let mut scheduler_write_ = scheduler_write.write();
 		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
+		bincode::serialize_into::<_, Vec<SocketAddr>>(&mut scheduler_write_, &vec![]).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
