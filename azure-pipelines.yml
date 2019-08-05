@@ -44,21 +44,21 @@ jobs:
       linux3:
         imageName: 'ubuntu-16.04'
         rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux4:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux5:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux6:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux7:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux8:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
-      linux9:
-        imageName: 'ubuntu-16.04'
-        rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux4:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux5:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux6:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux7:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux8:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'
+      # linux9:
+      #   imageName: 'ubuntu-16.04'
+      #   rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'

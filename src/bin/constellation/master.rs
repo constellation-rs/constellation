@@ -7,9 +7,7 @@ use std::{
 	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
-use constellation_internal::{
-	map_bincode_err, msg::FabricRequest, BufferedStream, Pid, PidInternal, Resources
-};
+use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
 
 #[derive(Debug)]
 pub struct Node {
@@ -73,7 +71,7 @@ pub fn run(
 				SyncSender<Option<Pid>>,
 				Option<usize>,
 			),
-			(usize, Either<u16, u16>),
+			(usize, Either<Pid, Pid>),
 		>,
 	>(0);
 
@@ -93,6 +91,7 @@ pub fn run(
 					let (receiver, sender) = (receiver_a, sender1);
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
+					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &addr.ip()).unwrap();
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(|_spawn| {
 							for request in receiver {
@@ -102,18 +101,18 @@ pub fn run(
 								bincode::serialize_into(&mut stream_write, &request.bind).unwrap(); // TODO: do all ports before everything else
 								bincode::serialize_into(&mut stream_write, &request.args).unwrap();
 								bincode::serialize_into(&mut stream_write, &request.vars).unwrap();
+								bincode::serialize_into(&mut stream_write, &request.arg).unwrap();
 								bincode::serialize_into(
 									&mut stream_write,
 									&(request.binary.len() as u64),
 								)
 								.unwrap();
 								stream_write.write_all(&request.binary).unwrap();
-								bincode::serialize_into(&mut stream_write, &request.arg).unwrap();
 								drop(stream_write);
 							}
 						});
 						while let Ok(done) =
-							bincode::deserialize_from::<_, Either<u16, u16>>(&mut stream_read)
+							bincode::deserialize_from::<_, Either<Pid, Pid>>(&mut stream_read)
 								.map_err(map_bincode_err)
 						{
 							sender.send(Either::Right((i, done))).unwrap();
@@ -204,7 +203,7 @@ pub fn run(
 		})
 		.unwrap();
 
-	let mut processes: HashMap<(usize, u16), Resources> = HashMap::new();
+	let mut processes: HashMap<(usize, Pid), Resources> = HashMap::new();
 
 	for msg in receiver.iter() {
 		match msg {
@@ -248,7 +247,6 @@ pub fn run(
 				let (sender, process) = node.3.pop_front().unwrap();
 				let x = processes.insert((node_, pid), process);
 				assert!(x.is_none());
-				let pid = Pid::new(node.2, pid);
 				sender.send(Some(pid)).unwrap();
 			}
 			Either::Right((node, Either::Right(pid))) => {

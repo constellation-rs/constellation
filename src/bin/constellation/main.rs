@@ -88,7 +88,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, BufferedStream, Fd, Format, Pid, PidInternal, Resources, Trace
+	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Resources, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -137,6 +137,20 @@ fn parse_request<R: Read>(
 	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(OsString, OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let mut arg = unsafe {
+		File::from_raw_fd(
+			memfd_create(
+				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
+				false,
+			)
+			.expect("Failed to memfd_create"),
+		)
+	};
+	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
+	arg.write_all(&spawn_arg).unwrap();
+	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
+	assert_eq!(x, 0);
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let mut binary = unsafe {
 		File::from_raw_fd(
@@ -157,20 +171,6 @@ fn parse_request<R: Read>(
 	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
 	assert_eq!(x, 0);
 	seal_fd(binary.as_raw_fd());
-	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut arg = unsafe {
-		File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				false,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
-	arg.write_all(&spawn_arg).unwrap();
-	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
 	Ok((resources, ports, binary, args, vars, arg))
 }
 
@@ -191,7 +191,7 @@ fn main() {
 		process::exit(if success { 0 } else { 1 })
 	});
 	let stdout = io::stdout();
-	let _trace = &Trace::new(stdout, args.format, args.verbose);
+	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		Role::Master(listen, mut nodes) => {
 			let fabric = net::TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
@@ -237,228 +237,237 @@ fn main() {
 		let stream = stream.unwrap();
 		println!("accepted");
 		let mut pending_inner = HashMap::new();
-		{
-			let pending = &sync::RwLock::new(&mut pending_inner);
-			let (mut stream_read, stream_write) =
-				(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
-			crossbeam::scope(|scope| {
-				while let Ok((resources, ports, binary, args, vars, arg)) =
-					parse_request(&mut stream_read)
+		let pending = &sync::RwLock::new(&mut pending_inner);
+		let (mut stream_read, stream_write) =
+			(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
+		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
+		crossbeam::scope(|scope| {
+			while let Ok(request) =
+				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+			{
+				let FabricRequest::<File, File> {
+					resources,
+					bind,
+					args,
+					vars,
+					arg,
+					binary,
+				} = request;
+				let process_listener = socket(
+					socket::AddressFamily::Inet,
+					socket::SockType::Stream,
+					SockFlag::SOCK_NONBLOCK,
+					socket::SockProtocol::Tcp,
+				)
+				.unwrap();
+				socket::setsockopt(process_listener, socket::sockopt::ReuseAddr, &true).unwrap();
+				socket::bind(
+					process_listener,
+					&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
+						listen, 0,
+					))),
+				)
+				.unwrap();
+				socket::setsockopt(process_listener, socket::sockopt::ReusePort, &true).unwrap();
+				let port = if let socket::SockAddr::Inet(inet) =
+					socket::getsockname(process_listener).unwrap()
 				{
-					let process_listener = socket(
-						socket::AddressFamily::Inet,
-						socket::SockType::Stream,
-						SockFlag::SOCK_NONBLOCK,
-						socket::SockProtocol::Tcp,
+					inet.to_std()
+				} else {
+					panic!()
+				}
+				.port();
+				let process_id = Pid::new(ip, port);
+				let vars = iter::once((
+					CString::new("CONSTELLATION").unwrap(),
+					CString::new("fabric").unwrap(),
+				))
+				.chain(iter::once((
+					CString::new("CONSTELLATION_RESOURCES").unwrap(),
+					CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
+				)))
+				.chain(vars.into_iter().map(|(x, y)| {
+					(
+						CString::new(OsStringExt::into_vec(x)).unwrap(),
+						CString::new(OsStringExt::into_vec(y)).unwrap(),
 					)
-					.unwrap();
-					socket::setsockopt(process_listener, socket::sockopt::ReuseAddr, &true)
-						.unwrap();
-					socket::bind(
-						process_listener,
-						&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
-							listen, 0,
-						))),
-					)
-					.unwrap();
-					socket::setsockopt(process_listener, socket::sockopt::ReusePort, &true)
-						.unwrap();
-					let process_id = if let socket::SockAddr::Inet(inet) =
-						socket::getsockname(process_listener).unwrap()
-					{
-						inet.to_std()
-					} else {
-						panic!()
-					}
-					.port();
-					let vars = iter::once((
-						CString::new("CONSTELLATION").unwrap(),
-						CString::new("fabric").unwrap(),
+				}))
+				.map(|(key, value)| {
+					CString::new(format!(
+						"{}={}",
+						key.to_str().unwrap(),
+						value.to_str().unwrap()
 					))
-					.chain(iter::once((
-						CString::new("CONSTELLATION_RESOURCES").unwrap(),
-						CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
-					)))
-					.chain(vars.into_iter().map(|(x, y)| {
-						(
-							CString::new(OsStringExt::into_vec(x)).unwrap(),
-							CString::new(OsStringExt::into_vec(y)).unwrap(),
-						)
-					}))
-					.map(|(key, value)| {
-						CString::new(format!(
-							"{}={}",
-							key.to_str().unwrap(),
-							value.to_str().unwrap()
-						))
-						.unwrap()
-					})
+					.unwrap()
+				})
+				.collect::<Vec<_>>();
+				// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
+				let args = args
+					.into_iter()
+					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
 					.collect::<Vec<_>>();
-					// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
-					let args = args
-						.into_iter()
-						.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
-						.collect::<Vec<_>>();
 
-					let args_p = Vec::with_capacity(args.len() + 1);
-					let vars_p = Vec::with_capacity(vars.len() + 1);
+				let args_p = Vec::with_capacity(args.len() + 1);
+				let vars_p = Vec::with_capacity(vars.len() + 1);
 
-					let child = match unistd::fork().expect("Fork failed") {
-						unistd::ForkResult::Child => {
-							forbid_alloc(|| {
-								// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-								// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-								// Including malloc.
+				let child = match unistd::fork().expect("Fork failed") {
+					unistd::ForkResult::Child => {
+						forbid_alloc(|| {
+							// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+							// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+							// Including malloc.
 
-								// println!("{:?}", args[0]);
-								#[cfg(any(target_os = "android", target_os = "linux"))]
-								{
-									use nix::libc;
-									let err = unsafe {
-										libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)
-									};
-									assert_eq!(err, 0);
-								}
-								unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
-									.unwrap();
-								let binary = binary.into_raw_fd();
-								let mut binary_desired_fd =
-									BOUND_FD_START + Fd::try_from(ports.len()).unwrap();
-								let arg = arg.into_raw_fd();
-								move_fds(
-									&mut [
-										(arg, ARG_FD),
-										(process_listener, LISTENER_FD),
-										(binary, binary_desired_fd),
-									],
-									Some(fcntl::FdFlag::empty()),
-									true,
-								);
-								for (i, port) in ports.iter().enumerate() {
-									let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
-									let fd = socket::socket(
-										socket::AddressFamily::Inet,
-										socket::SockType::Stream,
-										socket::SockFlag::empty(),
-										socket::SockProtocol::Tcp,
-									)
-									.unwrap();
-									if fd != socket {
-										copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
-											.unwrap();
-										unistd::close(fd).unwrap();
-									}
-									socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
-										.unwrap();
-									socket::bind(
-										socket,
-										&socket::SockAddr::Inet(socket::InetAddr::from_std(&port)),
-									)
-									.unwrap();
-								}
-								if true {
-									// unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
-									use more_asserts::*;
-									use nix::libc;
-									#[inline]
-									pub fn execve(
-										path: &CString, args: &[CString],
-										mut args_p: Vec<*const libc::c_char>, env: &[CString],
-										mut env_p: Vec<*const libc::c_char>,
-									) -> nix::Result<()> {
-										fn to_exec_array(
-											args: &[CString], args_p: &mut Vec<*const libc::c_char>,
-										) {
-											for arg in args.iter().map(|s| s.as_ptr()) {
-												args_p.push(arg);
-											}
-											args_p.push(std::ptr::null());
-										}
-										assert_eq!(args_p.len(), 0);
-										assert_eq!(env_p.len(), 0);
-										assert_le!(args.len() + 1, args_p.capacity());
-										assert_le!(env.len() + 1, env_p.capacity());
-										to_exec_array(args, &mut args_p);
-										to_exec_array(env, &mut env_p);
-
-										let _ = unsafe {
-											libc::execve(
-												path.as_ptr(),
-												args_p.as_ptr(),
-												env_p.as_ptr(),
-											)
-										};
-
-										Err(nix::Error::Sys(nix::errno::Errno::last()))
-									}
-									execve(&args[0], &args, args_p, &vars, vars_p)
-										.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
-								} else {
-									if valgrind::is().unwrap_or(false) {
-										let binary_desired_fd_ = valgrind::start_fd() - 1;
-										assert!(binary_desired_fd_ > binary_desired_fd);
-										copy_fd(
-											binary_desired_fd,
-											binary_desired_fd_,
-											Some(fcntl::FdFlag::empty()),
-											true,
-										)
-										.unwrap();
-										unistd::close(binary_desired_fd).unwrap();
-										binary_desired_fd = binary_desired_fd_;
-									}
-									fexecve(binary_desired_fd, &args, &vars)
-										.expect("Failed to fexecve");
-								}
-								unreachable!()
-							})
-						}
-						unistd::ForkResult::Parent { child, .. } => child,
-					};
-					unistd::close(process_listener).unwrap();
-					let x = pending.write().unwrap().insert(process_id, child);
-					assert!(x.is_none());
-					if bincode::serialize_into(
-						*stream_write.lock().unwrap(),
-						&Either::Left::<u16, u16>(process_id),
-					)
-					.map_err(map_bincode_err)
-					.is_err()
-					{
-						break;
-					}
-					let _ = scope.spawn(move |_scope| {
-						loop {
-							match wait::waitpid(child, None) {
-								Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-								Ok(wait::WaitStatus::Exited(pid, code)) if code == 0 => {
-									assert_eq!(pid, child);
-									break;
-								}
-								Ok(wait::WaitStatus::Signaled(pid, signal, _))
-									if signal == signal::Signal::SIGKILL =>
-								{
-									assert_eq!(pid, child);
-									break;
-								}
-								wait_status => panic!("{:?}", wait_status),
+							// println!("{:?}", args[0]);
+							#[cfg(any(target_os = "android", target_os = "linux"))]
+							{
+								use nix::libc;
+								let err =
+									unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+								assert_eq!(err, 0);
 							}
+							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
+								.unwrap();
+							let binary = binary.into_raw_fd();
+							let mut binary_desired_fd =
+								BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
+							let arg = arg.into_raw_fd();
+							move_fds(
+								&mut [
+									(arg, ARG_FD),
+									(process_listener, LISTENER_FD),
+									(binary, binary_desired_fd),
+								],
+								Some(fcntl::FdFlag::empty()),
+								true,
+							);
+							for (i, addr) in bind.iter().enumerate() {
+								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
+								let fd = socket::socket(
+									socket::AddressFamily::Inet,
+									socket::SockType::Stream,
+									socket::SockFlag::empty(),
+									socket::SockProtocol::Tcp,
+								)
+								.unwrap();
+								if fd != socket {
+									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
+										.unwrap();
+									unistd::close(fd).unwrap();
+								}
+								socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
+									.unwrap();
+								socket::bind(
+									socket,
+									&socket::SockAddr::Inet(socket::InetAddr::from_std(&addr)),
+								)
+								.unwrap();
+							}
+							if true {
+								// unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
+								use more_asserts::*;
+								use nix::libc;
+								#[inline]
+								pub fn execve(
+									path: &CString, args: &[CString],
+									mut args_p: Vec<*const libc::c_char>, env: &[CString],
+									mut env_p: Vec<*const libc::c_char>,
+								) -> nix::Result<()> {
+									fn to_exec_array(
+										args: &[CString], args_p: &mut Vec<*const libc::c_char>,
+									) {
+										for arg in args.iter().map(|s| s.as_ptr()) {
+											args_p.push(arg);
+										}
+										args_p.push(std::ptr::null());
+									}
+									assert_eq!(args_p.len(), 0);
+									assert_eq!(env_p.len(), 0);
+									assert_le!(args.len() + 1, args_p.capacity());
+									assert_le!(env.len() + 1, env_p.capacity());
+									to_exec_array(args, &mut args_p);
+									to_exec_array(env, &mut env_p);
+
+									let _ = unsafe {
+										libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr())
+									};
+
+									Err(nix::Error::Sys(nix::errno::Errno::last()))
+								}
+								execve(&args[0], &args, args_p, &vars, vars_p)
+									.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
+							} else {
+								if valgrind::is().unwrap_or(false) {
+									let binary_desired_fd_ = valgrind::start_fd() - 1;
+									assert!(binary_desired_fd_ > binary_desired_fd);
+									copy_fd(
+										binary_desired_fd,
+										binary_desired_fd_,
+										Some(fcntl::FdFlag::empty()),
+										true,
+									)
+									.unwrap();
+									unistd::close(binary_desired_fd).unwrap();
+									binary_desired_fd = binary_desired_fd_;
+								}
+								fexecve(binary_desired_fd, &args, &vars)
+									.expect("Failed to fexecve");
+							}
+							unreachable!()
+						})
+					}
+					unistd::ForkResult::Parent { child, .. } => child,
+				};
+				unistd::close(process_listener).unwrap();
+				let x = pending.write().unwrap().insert(process_id, child);
+				assert!(x.is_none());
+				trace.fabric(FabricOutputEvent::Init {
+					pid: process_id,
+					system_pid: nix::libc::pid_t::from(child).try_into().unwrap(),
+				});
+				if bincode::serialize_into(
+					*stream_write.lock().unwrap(),
+					&Either::Left::<Pid, Pid>(process_id),
+				)
+				.map_err(map_bincode_err)
+				.is_err()
+				{
+					break;
+				}
+				let _ = scope.spawn(move |_scope| {
+					loop {
+						match wait::waitpid(child, None) {
+							Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
+							Ok(wait::WaitStatus::Exited(pid, code)) if code == 0 => {
+								assert_eq!(pid, child);
+								break;
+							}
+							Ok(wait::WaitStatus::Signaled(pid, signal, _))
+								if signal == signal::Signal::SIGKILL =>
+							{
+								assert_eq!(pid, child);
+								break;
+							}
+							wait_status => panic!("{:?}", wait_status),
 						}
-						let x = pending.write().unwrap().remove(&process_id).unwrap();
-						assert_eq!(x, child);
-						let _unchecked_error = bincode::serialize_into(
-							*stream_write.lock().unwrap(),
-							&Either::Right::<u16, u16>(process_id),
-						)
-						.map_err(map_bincode_err);
+					}
+					let x = pending.write().unwrap().remove(&process_id).unwrap();
+					assert_eq!(x, child);
+					trace.fabric(FabricOutputEvent::Exit {
+						pid: process_id,
+						system_pid: nix::libc::pid_t::from(child).try_into().unwrap(),
 					});
-				}
-				for (&_job, &pid) in pending.read().unwrap().iter() {
-					let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
-				}
-			})
-			.unwrap();
-		}
+					let _unchecked_error = bincode::serialize_into(
+						*stream_write.lock().unwrap(),
+						&Either::Right::<Pid, Pid>(process_id),
+					)
+					.map_err(map_bincode_err);
+				});
+			}
+			for (&_job, &pid) in pending.read().unwrap().iter() {
+				let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
+			}
+		})
+		.unwrap();
 		assert_eq!(pending_inner.len(), 0);
 	}
 }

@@ -547,15 +547,15 @@ impl<W: io::Write> Trace<W> {
 			verbose,
 		}
 	}
-	fn json<T: Serialize>(&self, event: T) {
-		let mut stdout = self.stdout.lock().unwrap();
-		serde_json::to_writer(&mut *stdout, &event).unwrap();
-		stdout.write_all(b"\n").unwrap()
+	fn json<T: Serialize>(&self, _event: T) {
+		// let mut stdout = self.stdout.lock().unwrap();
+		// serde_json::to_writer(&mut *stdout, &event).unwrap();
+		// stdout.write_all(b"\n").unwrap()
 	}
-	fn human<T: Debug>(&self, event: T) {
-		// TODO: Display
-		let mut stdout = self.stdout.lock().unwrap();
-		stdout.write_fmt(format_args!("{:?}", event)).unwrap()
+	fn human<T: Debug>(&self, _event: T) {
+		// // TODO: Display
+		// let mut stdout = self.stdout.lock().unwrap();
+		// stdout.write_fmt(format_args!("{:?}", event)).unwrap()
 	}
 	pub fn fabric(&self, event: FabricOutputEvent) {
 		match (self.format, self.verbose) {
