@@ -4,7 +4,7 @@ use either::Either;
 use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read, Write}, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
@@ -95,20 +95,8 @@ pub fn run(
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(|_spawn| {
 							for request in receiver {
-								let mut stream_write = stream_write.write();
-								bincode::serialize_into(&mut stream_write, &request.resources)
+								bincode::serialize_into(&mut stream_write.write(), &request)
 									.unwrap();
-								bincode::serialize_into(&mut stream_write, &request.bind).unwrap(); // TODO: do all ports before everything else
-								bincode::serialize_into(&mut stream_write, &request.args).unwrap();
-								bincode::serialize_into(&mut stream_write, &request.vars).unwrap();
-								bincode::serialize_into(&mut stream_write, &request.arg).unwrap();
-								bincode::serialize_into(
-									&mut stream_write,
-									&(request.binary.len() as u64),
-								)
-								.unwrap();
-								stream_write.write_all(&request.binary).unwrap();
-								drop(stream_write);
 							}
 						});
 						while let Ok(done) =
