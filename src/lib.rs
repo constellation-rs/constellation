@@ -45,7 +45,7 @@ use nix::{
 	}, unistd
 };
 use palaver::{
-	env, file::{copy_sendfile, fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
+	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -55,7 +55,7 @@ use std::{
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 /// The Never type
@@ -662,7 +662,11 @@ fn spawn_deployed(
 	let stream = unsafe { net::TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
-	let mut stream_write_ = stream_write.write();
+	let mut arg: Vec<u8> = Vec::new();
+	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
+	bincode::serialize_into(&mut arg, &bridge_pid).unwrap();
+	bincode::serialize_into(&mut arg, &pid()).unwrap();
+	bincode::serialize_into(&mut arg, &f).unwrap();
 	let binary = if !valgrind::is().unwrap_or(false) {
 		env::exe().unwrap()
 	} else {
@@ -677,29 +681,17 @@ fn spawn_deployed(
 			)
 		}
 	};
-	let len: u64 = binary.metadata().unwrap().len();
-	bincode::serialize_into(&mut stream_write_, &resources).unwrap();
-	bincode::serialize_into::<_, Vec<SocketAddr>>(&mut stream_write_, &vec![]).unwrap();
-	bincode::serialize_into::<_, Vec<OsString>>(
-		&mut stream_write_,
-		&env::args_os().expect("Couldn't get argv"),
-	)
-	.unwrap();
-	bincode::serialize_into::<_, Vec<(OsString, OsString)>>(
-		&mut stream_write_,
-		&env::vars_os().expect("Couldn't get envp"),
-	)
-	.unwrap();
-	let mut arg_: Vec<u8> = Vec::new();
-	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
-	bincode::serialize_into(&mut arg_, &bridge_pid).unwrap();
-	bincode::serialize_into(&mut arg_, &pid()).unwrap();
-	bincode::serialize_into(&mut arg_, &f).unwrap();
-	bincode::serialize_into(&mut stream_write_, &arg_).unwrap();
-	bincode::serialize_into(&mut stream_write_, &len).unwrap();
-	drop(stream_write_);
-	// copy(&mut &binary, &mut stream_write_, len as usize).unwrap();
-	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
+	let request = FabricRequest {
+		resources,
+		bind: vec![],
+		args: env::args_os().expect("Couldn't get argv"),
+		vars: env::vars_os().expect("Couldn't get envp"),
+		arg,
+		binary,
+	};
+	bincode_serialize_into(&mut stream_write.write(), &request)
+		.map_err(map_bincode_err)
+		.unwrap();
 	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap();
