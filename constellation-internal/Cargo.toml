@@ -13,6 +13,9 @@ homepage = "https://github.com/alecmocatta/constellation"
 documentation = "https://docs.rs/constellation-rs"
 edition = "2018"
 
+[features]
+no_alloc = ["alloc_counter"]
+
 [dependencies]
 aes_frast = "0.1"
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
