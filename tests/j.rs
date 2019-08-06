@@ -44,10 +44,8 @@
 
 #![allow(clippy::unused_unit)] // for FnOnce!
 
-extern crate constellation;
-#[macro_use]
-extern crate serde_closure;
 use constellation::*;
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {

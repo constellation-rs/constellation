@@ -10,13 +10,13 @@ const STDOUT: os::unix::io::RawFd = 1;
 const STDERR: os::unix::io::RawFd = 2;
 
 #[derive(Debug)]
-struct Writer {
+struct Writer<A: Write, B: Write> {
 	// TODO: handle buffering better: write returns a referencing struct that buffers and flushes on drop
 	fd: os::unix::io::RawFd,
-	stdout: io::Stdout,
-	stderr: io::Stderr,
+	stdout: A,
+	stderr: B,
 }
-impl Writer {
+impl<A: Write, B: Write> Writer<A, B> {
 	fn write_fmt(&mut self, fd: os::unix::io::RawFd, args: fmt::Arguments) {
 		if self.fd == STDOUT && fd != STDOUT {
 			self.stdout.flush().unwrap();
@@ -61,21 +61,21 @@ impl Writer {
 }
 
 #[derive(Debug)]
-pub struct Formatter {
+pub struct Formatter<A: Write, B: Write> {
 	// TODO: if we get half a multi-byte character/combined thing, then something else, then rest of it, it'll be malformatted. deadline cache?
-	writer: Writer,
+	writer: Writer<A, B>,
 	pid: Pid,
 	nl: Option<os::unix::io::RawFd>,
 	style_support: StyleSupport,
 }
-impl Formatter {
-	pub fn new(pid: Pid, style_support: StyleSupport) -> Self {
+impl<A: Write, B: Write> Formatter<A, B> {
+	pub fn new(pid: Pid, style_support: StyleSupport, stdout: A, stderr: B) -> Self {
 		eprintln!("{}:", pretty_pid(&pid, true, style_support));
 		Self {
 			writer: Writer {
 				fd: STDERR,
-				stdout: io::stdout(),
-				stderr: io::stderr(),
+				stdout,
+				stderr,
 			},
 			pid,
 			nl: None,
@@ -219,22 +219,20 @@ impl Style {
 		match self.0 {
 			StyleSupport::None => *self,
 			StyleSupport::FourBit => unimplemented!(),
-			StyleSupport::EightBit => Style(
+			StyleSupport::EightBit => Self(
 				self.0,
 				self.1.fg(ansi_term::Colour::Fixed(
 					16 + 36 * (r / 43) + 6 * (g / 43) + (b / 43),
 				)),
 			),
-			StyleSupport::TwentyFourBit => {
-				Style(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b)))
-			}
+			StyleSupport::TwentyFourBit => Self(self.0, self.1.fg(ansi_term::Colour::RGB(r, g, b))),
 		}
 	}
 
 	pub fn bold(&self) -> Self {
 		match self.0 {
 			StyleSupport::None => *self,
-			_ => Style(self.0, self.1.bold()),
+			_ => Self(self.0, self.1.bold()),
 		}
 	}
 
@@ -263,7 +261,7 @@ pub(crate) fn pretty_pid(
 	assert_eq!(&pid.0, &decrypted_data);
 
 	let x = bytes.to_hex().take(7).collect::<String>();
-	let mut rng = rand::XorShiftRng::from_seed([
+	let mut rng = rand::rngs::SmallRng::from_seed([
 		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
 		bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
 	]);

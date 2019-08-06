@@ -114,12 +114,8 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-#[macro_use]
-extern crate serde_closure;
-extern crate serde;
 use constellation::*;
+use serde_closure::FnOnce;
 use std::{env, thread, time};
 
 fn sub2<

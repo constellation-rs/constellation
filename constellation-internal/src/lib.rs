@@ -1,4 +1,3 @@
-#![feature(try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -17,33 +16,34 @@
 	clippy::boxed_local,
 	clippy::needless_pass_by_value,
 	clippy::large_enum_variant,
-	clippy::if_not_else
+	clippy::if_not_else,
+	clippy::inline_always,
+	clippy::all,
+	warnings
 )]
-
-#[macro_use]
-extern crate serde_derive;
-extern crate aes_frast;
-extern crate ansi_term;
-extern crate bincode;
-extern crate cargo_metadata as cargo_metadata_;
-#[cfg(unix)]
-extern crate nix;
-extern crate rand;
-extern crate serde_json;
-#[cfg(windows)]
-extern crate winapi;
 
 mod ext;
 mod format;
+pub mod msg;
 
 #[cfg(unix)]
-use nix::sys::signal;
-use std::{convert::TryInto, env, ffi::OsString, fmt, io, net, ops};
+use nix::{fcntl, sys::signal, unistd};
+use palaver::file::{copy, memfd_create};
+use serde::{Deserialize, Serialize};
+use std::{
+	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read}, net, ops, os::unix::{
+		ffi::OsStringExt, io::{AsRawFd, FromRawFd}
+	}, sync::{Arc, Mutex}
+};
 
 #[cfg(target_family = "unix")]
-type Fd = std::os::unix::io::RawFd;
+pub type Fd = std::os::unix::io::RawFd;
 #[cfg(target_family = "windows")]
-type Fd = std::os::windows::io::RawHandle;
+pub type Fd = std::os::windows::io::RawHandle;
+
+#[cfg(feature = "alloc_counter")]
+#[global_allocator]
+static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
 pub use ext::*;
 pub use format::*;
@@ -64,7 +64,7 @@ impl Pid {
 		match ip {
 			net::IpAddr::V4(ip) => {
 				let ip = ip.octets();
-				Pid([
+				Self([
 					ip[0],
 					ip[1],
 					ip[2],
@@ -102,12 +102,12 @@ impl Pid {
 			.into_iter()
 	}
 }
-impl fmt::Display for Pid {
+impl Display for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{}", self.format().take(7).collect::<String>())
 	}
 }
-impl fmt::Debug for Pid {
+impl Debug for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_tuple("Pid")
 			.field(&self.format().collect::<String>())
@@ -185,54 +185,67 @@ impl Envs {
 	}
 
 	pub fn from(env: &[(OsString, OsString)]) -> Self {
-		let deploy = env.iter().find(|x| &x.0 == "CONSTELLATION").map(|x| {
-			x.1.clone()
-				.into_string()
-				.ok()
-				.and_then(|x| match &*x.to_ascii_lowercase() {
-					"fabric" => Some(Deploy::Fabric),
-					_ => None,
-				})
-		}); // TODO: use serde?
-		let version = env
-			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_VERSION")
-			.map(|x| {
-				x.1.clone().into_string().ok().and_then(|x| match &*x {
+		let deploy =
+			env.iter().find_map(|x| {
+				if x.0 == "CONSTELLATION" {
+					Some(x.1.clone().into_string().ok().and_then(
+						|x| match &*x.to_ascii_lowercase() {
+							"fabric" => Some(Deploy::Fabric),
+							_ => None,
+						},
+					))
+				} else {
+					None
+				}
+			}); // TODO: use serde?
+		let version = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_VERSION" {
+				Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
 					"0" => Some(false),
 					"1" => Some(true),
 					_ => None,
-				})
-			});
-		let recce = env.iter().find(|x| &x.0 == "CONSTELLATION_RECCE").map(|x| {
-			x.1.clone().into_string().ok().and_then(|x| match &*x {
-				"0" => Some(false),
-				"1" => Some(true),
-				_ => None,
-			})
+				}))
+			} else {
+				None
+			}
 		});
-		let format = env
-			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_FORMAT")
-			.map(|x| {
-				x.1.clone()
-					.into_string()
-					.ok()
-					.and_then(|x| match &*x.to_ascii_lowercase() {
-						"human" => Some(Format::Human),
-						"json" => Some(Format::Json),
-						_ => None,
-					})
+		let recce = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_RECCE" {
+				Some(x.1.clone().into_string().ok().and_then(|x| match &*x {
+					"0" => Some(false),
+					"1" => Some(true),
+					_ => None,
+				}))
+			} else {
+				None
+			}
+		});
+		let format =
+			env.iter().find_map(|x| {
+				if x.0 == "CONSTELLATION_FORMAT" {
+					Some(x.1.clone().into_string().ok().and_then(
+						|x| match &*x.to_ascii_lowercase() {
+							"human" => Some(Format::Human),
+							"json" => Some(Format::Json),
+							_ => None,
+						},
+					))
+				} else {
+					None
+				}
 			}); // TODO: use serde?
-		let resources = env
-			.iter()
-			.find(|x| &x.0 == "CONSTELLATION_RESOURCES")
-			.map(|x| {
-				x.1.clone()
-					.into_string()
-					.ok()
-					.and_then(|x| serde_json::from_str(&x).ok())
-			});
+		let resources = env.iter().find_map(|x| {
+			if x.0 == "CONSTELLATION_RESOURCES" {
+				Some(
+					x.1.clone()
+						.into_string()
+						.ok()
+						.and_then(|x| serde_json::from_str(&x).ok()),
+				)
+			} else {
+				None
+			}
+		});
 		Self {
 			deploy,
 			version,
@@ -264,8 +277,8 @@ pub enum Format {
 pub struct Resources {
 	/// Memory requirement in bytes
 	pub mem: u64,
-	/// CPU requirement as a fraction of one logical core. Any positive value is valid.
-	pub cpu: f32,
+	/// CPU requirement as a fraction of one logical core multiplied by 2^16.
+	pub cpu: u32,
 }
 impl Default for Resources {
 	fn default() -> Self {
@@ -275,8 +288,18 @@ impl Default for Resources {
 /// The [Resources] returned by [`Resources::default()`](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
 pub const RESOURCES_DEFAULT: Resources = Resources {
 	mem: 1024 * 1024 * 1024,
-	cpu: 0.05,
+	cpu: 65536 / 16,
 };
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(/*tag = "event", */rename_all = "lowercase")]
+pub enum FabricOutputEvent {
+	Init { pid: Pid, system_pid: u64 },
+	Exit { pid: Pid, system_pid: u64 },
+	// Spawn(Pid, Pid),
+	// Output(Pid, Fd, Vec<u8>),
+	// Exit(Pid, ExitStatus),
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(/*tag = "event", */rename_all = "lowercase")]
@@ -404,11 +427,7 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGALRM => Signal::SIGALRM,
 			signal::Signal::SIGTERM => Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			signal::Signal::SIGSTKFLT => Signal::SIGSTKFLT,
@@ -425,24 +444,12 @@ impl From<signal::Signal> for Signal {
 			signal::Signal::SIGPROF => Signal::SIGPROF,
 			signal::Signal::SIGWINCH => Signal::SIGWINCH,
 			signal::Signal::SIGIO => Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			signal::Signal::SIGPWR => Signal::SIGPWR,
 			signal::Signal::SIGSYS => Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGEMT => Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			signal::Signal::SIGINFO => Signal::SIGINFO,
 		}
 	}
@@ -466,11 +473,7 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGALRM => signal::Signal::SIGALRM,
 			Signal::SIGTERM => signal::Signal::SIGTERM,
 			#[cfg(all(
-				any(
-					target_os = "linux",
-					target_os = "android",
-					target_os = "emscripten"
-				),
+				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
 			Signal::SIGSTKFLT => signal::Signal::SIGSTKFLT,
@@ -487,24 +490,12 @@ impl From<Signal> for signal::Signal {
 			Signal::SIGPROF => signal::Signal::SIGPROF,
 			Signal::SIGWINCH => signal::Signal::SIGWINCH,
 			Signal::SIGIO => signal::Signal::SIGIO,
-			#[cfg(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			))]
+			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
 			Signal::SIGPWR => signal::Signal::SIGPWR,
 			Signal::SIGSYS => signal::Signal::SIGSYS,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGEMT => signal::Signal::SIGEMT,
-			#[cfg(not(any(
-				target_os = "linux",
-				target_os = "android",
-				target_os = "emscripten"
-			)))]
+			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
 			Signal::SIGINFO => signal::Signal::SIGINFO,
 			_ => unimplemented!(),
 		}
@@ -541,6 +532,69 @@ pub enum ProcessInputEvent {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[allow(missing_debug_implementations)]
+#[derive(Clone)]
+pub struct Trace<W: io::Write> {
+	stdout: Arc<Mutex<W>>,
+	format: Format,
+	verbose: bool,
+}
+impl<W: io::Write> Trace<W> {
+	pub fn new(stdout: W, format: Format, verbose: bool) -> Self {
+		Self {
+			stdout: Arc::new(Mutex::new(stdout)),
+			format,
+			verbose,
+		}
+	}
+	fn json<T: Serialize>(&self, _event: T) {
+		// let mut stdout = self.stdout.lock().unwrap();
+		// serde_json::to_writer(&mut *stdout, &event).unwrap();
+		// stdout.write_all(b"\n").unwrap()
+	}
+	fn human<T: Debug>(&self, _event: T) {
+		// // TODO: Display
+		// let mut stdout = self.stdout.lock().unwrap();
+		// stdout.write_fmt(format_args!("{:?}", event)).unwrap()
+	}
+	pub fn fabric(&self, event: FabricOutputEvent) {
+		match (self.format, self.verbose) {
+			(Format::Json, true) => self.json(event),
+			(Format::Human, true) => self.human(event),
+			_ => (),
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn file_from_reader<R: Read>(
+	reader: &mut R, len: u64, name: &OsString, cloexec: bool,
+) -> Result<File, io::Error> {
+	let mut file = unsafe {
+		File::from_raw_fd(
+			memfd_create(
+				&CString::new(OsStringExt::into_vec(name.clone())).unwrap(),
+				cloexec,
+			)
+			.expect("Failed to memfd_create"),
+		)
+	};
+	assert_eq!(
+		fcntl::FdFlag::from_bits(fcntl::fcntl(file.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap())
+			.unwrap()
+			.contains(fcntl::FdFlag::FD_CLOEXEC),
+		cloexec
+	);
+	unistd::ftruncate(file.as_raw_fd(), len.try_into().unwrap()).unwrap();
+	copy(reader, &mut file, len)?;
+	let x = unistd::lseek(file.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
+	assert_eq!(x, 0);
+	Ok(file)
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub fn map_bincode_err(err: bincode::Error) -> io::Error {
 	match *err {
 		bincode::ErrorKind::Io(err) => err,
@@ -550,8 +604,25 @@ pub fn map_bincode_err(err: bincode::Error) -> io::Error {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub fn forbid_alloc<F, R>(f: F) -> R
+where
+	F: FnOnce() -> R,
+{
+	#[cfg(feature = "alloc_counter")]
+	{
+		alloc_counter::forbid_alloc(f)
+	}
+	#[cfg(not(feature = "alloc_counter"))]
+	{
+		f()
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub mod cargo_metadata {
-	use cargo_metadata_::Target;
+	use cargo_metadata::Target;
+	use serde::Deserialize;
 	use std::path::PathBuf;
 
 	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs

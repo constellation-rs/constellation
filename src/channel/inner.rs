@@ -1,4 +1,8 @@
+#![allow(clippy::large_enum_variant)]
+
 use super::*;
+use serde::{de::DeserializeOwned, Serialize};
+use std::net::SocketAddr;
 use tcp_typed::Notifier;
 
 #[derive(Debug)]
@@ -14,7 +18,7 @@ pub enum Inner {
 }
 impl Inner {
 	pub fn connect(
-		local: net::SocketAddr, remote: net::SocketAddr, incoming: Option<Connection>,
+		local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
 		notifier: &impl Notifier,
 	) -> Self {
 		InnerConnecting::new(local, remote, incoming, notifier).into()
@@ -26,16 +30,13 @@ impl Inner {
 			Inner::ConnectingLocalClosed(connecting_local_closed) => {
 				connecting_local_closed.poll(notifier).into()
 			}
-			Inner::Connected(connecting) => connecting.poll(notifier).into(),
+			Inner::Connected(connected) => connected.poll(notifier).into(),
 			Inner::RemoteClosed(remote_closed) => remote_closed.poll(notifier).into(),
 			Inner::LocalClosed(local_closed) => local_closed.poll(notifier).into(),
 			Inner::Closing(closing) => closing.poll(notifier).into(),
 			Inner::Closed => Inner::Closed,
 			Inner::Killed => Inner::Killed,
 		};
-		if let &mut Inner::RemoteClosed(_) = self {
-			self.close(notifier);
-		}
 	}
 
 	pub fn add_incoming<'a>(
@@ -69,7 +70,7 @@ impl Inner {
 		}
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(
 		&mut self, notifier: &E,
 	) -> Option<bool> {
 		if self.recvable() {
@@ -85,14 +86,27 @@ impl Inner {
 		}
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		match self {
 			&mut Inner::Connected(ref mut connected) => connected.recv(notifier),
 			&mut Inner::LocalClosed(ref mut local_closed) => local_closed.recv(notifier),
 			_ => panic!(),
 		}
+	}
+
+	pub fn drainable(&self) -> bool {
+		match self {
+			&Inner::Connected(_) | &Inner::LocalClosed(_) => true,
+			_ => false,
+		}
+	}
+
+	pub fn drain(&mut self, notifier: &impl Notifier) {
+		*self = match mem::replace(self, Inner::Killed) {
+			Inner::Connected(connected) => connected.drain(notifier).into(),
+			Inner::LocalClosed(local_closed) => local_closed.drain(notifier).into(),
+			_ => panic!(),
+		};
 	}
 
 	pub fn sendable(&self) -> bool {
@@ -114,7 +128,7 @@ impl Inner {
 		}
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, x: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, x: T, notifier: &impl Notifier) {
 		match self {
 			&mut Inner::Connected(ref mut connected) => connected.send(x, notifier),
 			&mut Inner::RemoteClosed(ref mut remote_closed) => remote_closed.send(x, notifier),

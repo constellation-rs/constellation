@@ -22,9 +22,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -38,9 +36,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -54,9 +50,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -70,9 +64,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -86,9 +78,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -102,9 +92,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -118,9 +106,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -134,9 +120,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -150,9 +134,7 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     },
 //=     {
 //=       "output": {
@@ -166,30 +148,21 @@
 //=         ]
 //=       },
 //=       "children": [],
-//=       "exit": {
-//=         "Left": 0
-//=       }
+//=       "exit": "Success"
 //=     }
 //=   ],
-//=   "exit": {
-//=     "Left": 0
-//=   }
+//=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-extern crate futures;
-#[macro_use]
-extern crate serde_closure;
 use constellation::*;
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
 		mem: 20 * 1024 * 1024,
 		..Resources::default()
 	});
-	// https://github.com/rust-lang-nursery/futures-rs/issues/1033
 	let x = futures::executor::block_on(futures::future::join_all((0..10).map(|i| {
 		let pid = spawn(
 			Resources {
@@ -202,38 +175,35 @@ fn main() {
 					Receiver::<Option<String>>::new(parent),
 					Sender::<Option<String>>::new(parent),
 				);
-				let () = futures::executor::block_on(
-					receiver.forward(sender)
-					.then(|res|match res {
-						Ok(sink) => sink.close(),
-						Err(err) => panic!("{:?}", err),
-					})
-					.map(|close|close.unwrap()),
-				);
+				futures::executor::block_on(
+					receiver.forward(sender.sink_map_err(|_|unreachable!()))
+				).unwrap();
 				println!("done {}", i);
-			})
-		).expect("SPAWN FAILED");
+			}),
+		)
+		.expect("SPAWN FAILED");
 		let (sender, receiver) = (
 			Sender::<Option<String>>::new(pid),
 			Receiver::<Option<String>>::new(pid),
 		);
-		futures::stream::iter(vec![
-			String::from("abc"),
-			String::from("def"),
-			String::from("ghi"),
-			String::from("jkl"),
-			String::from("mno"),
-		].into_iter().map(Ok)).forward(sender)
-		.then(|res|match res {
-			Ok(sink) => sink.close(),
-			Err(err) => panic!("{:?}", err),
-		})
-		.map(|close|close.unwrap())
-			.join(
-				receiver
-					.fold(String::new(), |acc, x| futures::future::ready(acc + &x.unwrap())),
+		futures::future::join(
+			futures::stream::iter(
+				vec![
+					String::from("abc"),
+					String::from("def"),
+					String::from("ghi"),
+					String::from("jkl"),
+					String::from("mno"),
+				]
+				.into_iter()
+				.map(Ok),
 			)
-			.map(|(_, res)| res)
+			.forward(sender.sink_map_err(|_| unreachable!())),
+			receiver.fold(String::new(), |acc, x| {
+				futures::future::ready(acc + &x.unwrap())
+			}),
+		)
+		.map(|(_, res)| res)
 	})));
 	println!("{:?}", x);
 }

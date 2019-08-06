@@ -36,11 +36,8 @@
 
 #![allow(clippy::unused_unit)] // for FnOnce!
 
-extern crate constellation;
-extern crate nix;
-#[macro_use]
-extern crate serde_closure;
 use constellation::*;
+use serde_closure::FnOnce;
 use std::{panic, process, thread};
 
 fn main() {

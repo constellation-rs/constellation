@@ -9,8 +9,7 @@
 <p align="center">
     <a href="https://crates.io/crates/constellation-rs"><img src="https://img.shields.io/crates/v/deploy.svg?maxAge=86400" alt="Crates.io" /></a>
     <a href="LICENSE.txt"><img src="https://img.shields.io/crates/l/deploy.svg?maxAge=2592000" alt="Apache-2.0 licensed" /></a>
-    <a href="https://circleci.com/gh/alecmocatta/constellation"><img src="https://circleci.com/gh/alecmocatta/metatype/tree/master.svg?style=shield" alt="Build Status" /></a>
-    <a href="https://travis-ci.com/alecmocatta/constellation"><img src="https://travis-ci.com/alecmocatta/palaver.svg?branch=master" alt="Build Status" /></a>
+    <a href="https://dev.azure.com/alecmocatta/constellation/_build/latest?branchName=master"><img src="https://dev.azure.com/alecmocatta/constellation/_apis/build/status/tests?branchName=master" alt="Build Status" /></a>
 </p>
 
 <p align="center">

@@ -32,15 +32,9 @@
 //! where `10.0.0.1` is the address of the master. See [here](https://github.com/alecmocatta/constellation)
 //! for instructions on setting up the cluster.
 
-#[macro_use]
-extern crate serde_closure;
-extern crate constellation;
-extern crate hex;
-extern crate rand;
-extern crate sha1;
+use std::env;
 
 use constellation::*;
-use std::env;
 
 fn main() {
 	init(Resources::default());
@@ -58,7 +52,7 @@ fn main() {
 					mem: 20 * 1024 * 1024,
 					..Resources::default()
 				},
-				FnOnce!([process_index] move |parent| {
+				serde_closure::FnOnce!([process_index] move |parent| {
 					let receiver = Receiver::<Vec<Pid>>::new(parent);
 					let pids = receiver.recv().unwrap();
 					assert_eq!(pids[process_index], pid());

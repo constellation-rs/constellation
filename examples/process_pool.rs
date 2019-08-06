@@ -29,24 +29,22 @@
 //! where `10.0.0.1` is the address of the master. See [here](https://github.com/alecmocatta/constellation)
 //! for instructions on setting up the cluster.
 
-#![feature(unboxed_closures, fnbox)]
 #![allow(where_clauses_object_safety, clippy::type_complexity)]
 
-#[macro_use]
-extern crate serde_closure;
-extern crate constellation;
-extern crate rand;
-extern crate serde;
-extern crate serde_traitobject as st;
-
-use constellation::*;
 use rand::Rng;
+use serde_traitobject as st;
 use std::{any, collections::VecDeque, env, marker, mem, thread, time};
 
+use constellation::*;
+
+// type Request = st::Box<dyn st::FnOnce() -> Response>; // when #![feature(unboxed_closures)] is stable
+type Request = st::Box<dyn st::FnOnce<(), Output = Response>>;
+type Response = st::Box<dyn st::Any>;
+
 struct Process {
-	sender: Sender<Option<st::Box<st::FnBox() -> st::Box<st::Any>>>>,
-	receiver: Receiver<st::Box<st::Any>>,
-	queue: VecDeque<Queued<st::Box<st::Any>>>,
+	sender: Sender<Option<Request>>,
+	receiver: Receiver<Response>,
+	queue: VecDeque<Queued<Response>>,
 	received: usize,
 	tail: usize,
 }
@@ -86,23 +84,23 @@ impl ProcessPool {
 					resources,
 					// Make this closure serializable by wrapping with serde_closure's
 					// FnOnce!() macro, which requires explicitly listing captured variables.
-					FnOnce!([] move |parent| {
-					// println!("process {}: awaiting work", i);
-
-					// Create a `Sender` half of a channel to our parent
-					let receiver = Receiver::<Option<st::Box<st::FnBox()->st::Box<st::Any>>>>::new(parent);
-
-					// Create a `Sender` half of a channel to our parent
-					let sender = Sender::<st::Box<st::Any>>::new(parent);
-
-					while let Some(work) = receiver.recv().unwrap() {
-						// println!("process {}: got work", i);
-						let ret = work();
-						// println!("process {}: done work", i);
-						sender.send(ret);
+					serde_closure::FnOnce!([] move |parent| {
 						// println!("process {}: awaiting work", i);
-					}
-				}),
+
+						// Create a `Sender` half of a channel to our parent
+						let receiver = Receiver::<Option<Request>>::new(parent);
+
+						// Create a `Sender` half of a channel to our parent
+						let sender = Sender::<Response>::new(parent);
+
+						while let Some(work) = receiver.recv().unwrap() {
+							// println!("process {}: got work", i);
+							let ret = work();
+							// println!("process {}: done work", i);
+							sender.send(ret);
+							// println!("process {}: awaiting work", i);
+						}
+					}),
 				)
 				.expect("Unable to allocate process!");
 
@@ -137,10 +135,10 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		process
 			.sender
-			.send(Some(st::Box::new(FnOnce!([work] move || {
+			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
 				let work: F = work;
-				st::Box::new(work()) as st::Box<st::Any>
-			})) as st::Box<st::FnBox() -> st::Box<st::Any>>));
+				st::Box::new(work()) as Response
+			})) as Request));
 		process.queue.push_back(Queued::Awaiting);
 		JoinHandle(
 			process_index,
@@ -162,7 +160,7 @@ impl ProcessPool {
 			let _ = process.queue.pop_front().unwrap();
 			process.tail += 1;
 		}
-		*Box::<any::Any>::downcast::<T>(boxed.into_any()).unwrap()
+		*Box::<dyn any::Any>::downcast::<T>(boxed.into_any()).unwrap()
 	}
 }
 impl Drop for ProcessPool {
@@ -188,7 +186,7 @@ fn main() {
 
 	let handles = (0..processes * 3)
 		.map(|i| {
-			pool.spawn(FnOnce!([i] move || -> String {
+			pool.spawn(serde_closure::FnOnce!([i] move || -> String {
 				thread::sleep(rand::thread_rng().gen_range(time::Duration::new(0,0),time::Duration::new(5,0)));
 				format!("warm greetings from job {}", i)
 			}))

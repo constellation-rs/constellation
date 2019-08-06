@@ -2,7 +2,7 @@
 
 pub mod serialize_as_regex_string {
 	use regex;
-	use serde::Serializer;
+	use serde::{Serialize, Serializer};
 
 	#[derive(PartialEq, Eq, Hash, Serialize, Debug)]
 	pub struct SerializeAsRegexString(#[serde(with = "self")] pub Vec<u8>);
@@ -19,11 +19,11 @@ pub mod serde_regex {
 	// https://github.com/tailhook/serde-regex
 	use regex::bytes::{Regex, RegexBuilder};
 	use serde::{
-		de::{Error, Visitor}, Deserializer, Serializer
+		de::{Error, Visitor}, Deserialize, Deserializer, Serialize, Serializer
 	};
 	use std::{fmt, hash};
 
-	#[derive(Serialize, Deserialize, Debug)]
+	#[derive(Clone, Serialize, Deserialize, Debug)]
 	pub struct SerdeRegex(#[serde(with = "self")] Regex);
 	impl SerdeRegex {
 		pub fn is_match(&self, text: &[u8]) -> bool {
@@ -89,7 +89,7 @@ pub mod string {
 	impl Chars {
 		pub fn new(s: String) -> Self {
 			let x = unsafe { mem::transmute::<&str, &str>(&*s) }.chars();
-			Chars(s, x)
+			Self(s, x)
 		}
 	}
 	impl Iterator for Chars {
@@ -143,12 +143,10 @@ pub mod hashmap {
 
 pub mod serde_multiset {
 	use multiset;
-	use serde::{
-		de, ser::{self, SerializeSeq}
-	};
+	use serde::{de, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
 	use std::{fmt, hash, marker};
 
-	pub fn serialize<T: PartialEq + Eq + hash::Hash + ser::Serialize, S: ser::Serializer>(
+	pub fn serialize<T: PartialEq + Eq + hash::Hash + Serialize, S: Serializer>(
 		self_: &multiset::HashMultiSet<T>, serializer: S,
 	) -> Result<S::Ok, S::Error> {
 		let mut seq = serializer.serialize_seq(Some(self_.len()))?;
@@ -159,17 +157,15 @@ pub mod serde_multiset {
 	}
 	pub fn deserialize<
 		'de,
-		T: PartialEq + Eq + hash::Hash + de::Deserialize<'de>,
-		D: de::Deserializer<'de>,
+		T: PartialEq + Eq + hash::Hash + Deserialize<'de>,
+		D: Deserializer<'de>,
 	>(
 		deserializer: D,
 	) -> Result<multiset::HashMultiSet<T>, D::Error> {
-		struct Visitor<'de, T: PartialEq + Eq + hash::Hash + de::Deserialize<'de>>(
+		struct Visitor<'de, T: PartialEq + Eq + hash::Hash + Deserialize<'de>>(
 			marker::PhantomData<(&'de (), fn() -> T)>,
 		);
-		impl<'de, T: PartialEq + Eq + hash::Hash + de::Deserialize<'de>> de::Visitor<'de>
-			for Visitor<'de, T>
-		{
+		impl<'de, T: PartialEq + Eq + hash::Hash + Deserialize<'de>> de::Visitor<'de> for Visitor<'de, T> {
 			type Value = multiset::HashMultiSet<T>;
 
 			fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -191,7 +187,7 @@ pub mod serde_multiset {
 }
 
 pub mod binary_string {
-	use serde::{Deserialize, Deserializer, Serializer};
+	use serde::{Deserialize, Deserializer, Serialize, Serializer};
 	use std::{
 		char, convert::TryInto, fmt::{self, Write}
 	};

@@ -1,11 +1,14 @@
+#![allow(clippy::large_enum_variant)]
+
 use super::*;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	collections::hash_map::DefaultHasher, hash::{Hash, Hasher}
+	collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr
 };
 use tcp_typed::Notifier;
 
 /// Used to determine which side should be connecter/client and which connectee/server/listener.
-fn ord(a: &net::SocketAddr, b: &net::SocketAddr) -> bool {
+fn ord(a: &SocketAddr, b: &SocketAddr) -> bool {
 	let a = (a.ip(), a.port());
 	let b = (b.ip(), b.port());
 	assert_ne!(a, b);
@@ -36,7 +39,7 @@ pub enum InnerConnecting {
 }
 impl InnerConnecting {
 	pub fn new(
-		local: net::SocketAddr, remote: net::SocketAddr, incoming: Option<Connection>,
+		local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
 		notifier: &impl Notifier,
 	) -> InnerConnectingPoll {
 		if ord(&local, &remote) {
@@ -262,7 +265,12 @@ impl InnerConnected {
 			self.connection.poll(notifier);
 		}
 		if !self.connection.recvable() && self.recv_deserializer.empty().is_none() {
-			return match InnerRemoteClosed::new(self.connection, self.send_serializer, notifier) {
+			return match InnerRemoteClosed::new(
+				self.connection,
+				self.send_serializer,
+				false,
+				notifier,
+			) {
 				InnerRemoteClosedPoll::RemoteClosed(remote_closed) => {
 					InnerConnectedPoll::RemoteClosed(remote_closed)
 				}
@@ -279,14 +287,12 @@ impl InnerConnected {
 		self.send_serializer.push_avail()
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
 		self.send_serializer.push().unwrap()(t);
 		notifier.queue();
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
-		&mut self, notifier: &E,
-	) -> bool {
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(&mut self, notifier: &E) -> bool {
 		if !self.recv_deserializer_given {
 			self.recv_deserializer_given = true;
 			notifier.queue(); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
@@ -294,13 +300,18 @@ impl InnerConnected {
 		self.recv_deserializer.pull::<T>().is_some()
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		self.recv_deserializer_given = false;
 		let ret = self.recv_deserializer.pull::<T>().unwrap()();
 		notifier.queue();
 		ret
+	}
+
+	pub fn drain(mut self, notifier: &impl Notifier) -> InnerRemoteClosedPoll {
+		if let Some(empty) = self.recv_deserializer.empty() {
+			empty();
+		}
+		InnerRemoteClosed::new(self.connection, self.send_serializer, true, notifier)
 	}
 
 	pub fn close(self, notifier: &impl Notifier) -> InnerLocalClosedPoll {
@@ -323,20 +334,40 @@ pub enum InnerRemoteClosedPoll {
 pub struct InnerRemoteClosed {
 	connection: Connection,
 	send_serializer: serde_pipe::Serializer,
+	drain: bool,
 }
 impl InnerRemoteClosed {
 	fn new(
-		connection: Connection, send_serializer: serde_pipe::Serializer, notifier: &impl Notifier,
+		connection: Connection, send_serializer: serde_pipe::Serializer, drain: bool,
+		notifier: &impl Notifier,
 	) -> InnerRemoteClosedPoll {
 		Self {
 			connection,
 			send_serializer,
+			drain,
 		}
 		.poll(notifier)
 	}
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerRemoteClosedPoll {
-		assert!(!self.connection.recvable());
+		if self.drain && !self.connection.recvable() {
+			self.drain = false;
+		}
+		if self.drain {
+			let mut progress = false;
+			while self.connection.recv_avail().unwrap() > 0 {
+				let _ = self.connection.recv(notifier).unwrap()();
+				progress = true;
+			}
+			if progress {
+				self.connection.poll(notifier);
+			}
+			if !self.connection.recvable() {
+				self.drain = false;
+			}
+		} else {
+			assert!(!self.connection.recvable());
+		}
 		let mut progress = true;
 		loop {
 			if self.connection.sendable() {
@@ -362,13 +393,13 @@ impl InnerRemoteClosed {
 		self.send_serializer.push_avail()
 	}
 
-	pub fn send<T: serde::ser::Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
+	pub fn send<T: Serialize + 'static>(&mut self, t: T, notifier: &impl Notifier) {
 		self.send_serializer.push().unwrap()(t);
 		notifier.queue();
 	}
 
 	pub fn close(self, notifier: &impl Notifier) -> InnerClosingPoll {
-		InnerClosing::new(self.connection, self.send_serializer, notifier)
+		InnerClosing::new(self.connection, self.send_serializer, false, notifier)
 	}
 }
 
@@ -437,7 +468,7 @@ impl InnerLocalClosed {
 		if !self.connection.recvable() && self.recv_deserializer.empty().is_none() {
 			// self.recv_deserializer.pull_avail() {
 			// assert!(!self.recv_deserializer_given);
-			return match InnerClosing::new(self.connection, self.send_serializer, notifier) {
+			return match InnerClosing::new(self.connection, self.send_serializer, false, notifier) {
 				InnerClosingPoll::Closing(closing) => InnerLocalClosedPoll::Closing(closing),
 				InnerClosingPoll::Closed => InnerLocalClosedPoll::Closed,
 				InnerClosingPoll::Killed => InnerLocalClosedPoll::Killed,
@@ -449,9 +480,7 @@ impl InnerLocalClosed {
 		InnerLocalClosedPoll::LocalClosed(self)
 	}
 
-	pub fn recv_avail<T: serde::de::DeserializeOwned + 'static, E: Notifier>(
-		&mut self, notifier: &E,
-	) -> bool {
+	pub fn recv_avail<T: DeserializeOwned + 'static, E: Notifier>(&mut self, notifier: &E) -> bool {
 		if !self.recv_deserializer_given {
 			self.recv_deserializer_given = true;
 			notifier.queue(); // TODO: we only actually need to do this if self.poll() is gonna return Either::Right
@@ -459,13 +488,18 @@ impl InnerLocalClosed {
 		self.recv_deserializer.pull::<T>().is_some()
 	}
 
-	pub fn recv<T: serde::de::DeserializeOwned + 'static>(
-		&mut self, notifier: &impl Notifier,
-	) -> T {
+	pub fn recv<T: DeserializeOwned + 'static>(&mut self, notifier: &impl Notifier) -> T {
 		self.recv_deserializer_given = false;
 		let ret = self.recv_deserializer.pull::<T>().unwrap()();
 		notifier.queue();
 		ret
+	}
+
+	pub fn drain(mut self, notifier: &impl Notifier) -> InnerClosingPoll {
+		if let Some(empty) = self.recv_deserializer.empty() {
+			empty();
+		}
+		InnerClosing::new(self.connection, self.send_serializer, true, notifier)
 	}
 }
 
@@ -479,20 +513,40 @@ pub enum InnerClosingPoll {
 pub struct InnerClosing {
 	connection: Connection,
 	send_serializer: serde_pipe::Serializer,
+	drain: bool,
 }
 impl InnerClosing {
 	fn new(
-		connection: Connection, send_serializer: serde_pipe::Serializer, notifier: &impl Notifier,
+		connection: Connection, send_serializer: serde_pipe::Serializer, drain: bool,
+		notifier: &impl Notifier,
 	) -> InnerClosingPoll {
 		Self {
 			connection,
 			send_serializer,
+			drain,
 		}
 		.poll(notifier)
 	}
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerClosingPoll {
-		assert!(!self.connection.recvable());
+		if self.drain && !self.connection.recvable() {
+			self.drain = false;
+		}
+		if self.drain {
+			let mut progress = false;
+			while self.connection.recv_avail().unwrap() > 0 {
+				let _ = self.connection.recv(notifier).unwrap()();
+				progress = true;
+			}
+			if progress {
+				self.connection.poll(notifier);
+			}
+			if !self.connection.recvable() {
+				self.drain = false;
+			}
+		} else {
+			assert!(!self.connection.recvable());
+		}
 		let mut progress = true;
 		loop {
 			if self.connection.sendable() {

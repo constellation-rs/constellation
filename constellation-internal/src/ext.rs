@@ -140,6 +140,8 @@ pub use self::rand_stream::Rand;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
+	use std::convert::TryInto;
+
 	let mut index = 0;
 	if index == input.len() {
 		return Err(());
@@ -152,27 +154,27 @@ pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
 	if index == input.len() {
 		return Ok(a);
 	}
-	let b: u64 = if input[index..=index].chars().nth(0).ok_or(())? == '.' {
+	let (b, b1): (u64, u32) = if input[index..=index].chars().nth(0).ok_or(())? == '.' {
 		index += 1;
-		let _zeros = input[index..].chars().position(|c| c != '0').unwrap_or(0);
 		let index1 = index;
-		index = index + input[index..]
-			.chars()
-			.position(|c| !c.is_ascii_digit())
-			.unwrap_or(input.len() - index);
+		index = index
+			+ input[index..]
+				.chars()
+				.position(|c| !c.is_ascii_digit())
+				.unwrap_or(input.len() - index);
 		if index != index1 {
-			input[index1..index].parse().unwrap()
+			(
+				input[index1..index].parse().unwrap(),
+				(index - index1).try_into().unwrap(),
+			)
 		} else {
-			0
+			(0, 0)
 		}
 	} else {
-		0
+		(0, 0)
 	};
-	if index == input.len() {
-		return Ok(a);
-	}
 	let c: u64 = match &input[index..] {
-		"B" => 1,
+		"" | "B" => 1,
 		"KiB" => 1024,
 		"MiB" => 1024_u64.pow(2),
 		"GiB" => 1024_u64.pow(3),
@@ -181,8 +183,49 @@ pub fn parse_binary_size(input: &str) -> Result<u64, ()> {
 		"EiB" => 1024_u64.pow(6),
 		_ => return Err(()),
 	};
-	if b > 0 {
-		unimplemented!();
+	Ok(a * c + b * c / 10_u64.pow(b1))
+}
+
+#[test]
+fn parse_binary_size_test() {
+	assert_eq!(parse_binary_size(""), Err(()));
+	assert_eq!(
+		parse_binary_size("1.500000001GiB"),
+		Ok(1024_u64.pow(3) * 3 / 2 + 1)
+	);
+	assert_eq!(
+		parse_binary_size("1.9999999999GiB"),
+		Ok(2 * 1024_u64.pow(3) - 1)
+	);
+	assert_eq!(
+		parse_binary_size("1.999999999GiB"),
+		Ok(2 * 1024_u64.pow(3) - 2)
+	);
+	assert_eq!(parse_binary_size("1.000000000GiB"), Ok(1024_u64.pow(3)));
+	assert_eq!(parse_binary_size("1.0000000001GiB"), Ok(1024_u64.pow(3)));
+	assert_eq!(parse_binary_size("1.000000001GiB"), Ok(1024_u64.pow(3) + 1));
+	for i in 0..100000 {
+		assert_eq!(parse_binary_size(&i.to_string()), Ok(i));
 	}
-	Ok(a * c)
+	for i in 0..100000 {
+		assert_eq!(parse_binary_size(&format!("{}B", i)), Ok(i));
+	}
+	for i in 0..100000 {
+		assert_eq!(
+			parse_binary_size(&format!("{}TiB", i)),
+			Ok(i * 1024_u64.pow(4))
+		);
+	}
+	for i in 0..1000 {
+		assert_eq!(
+			parse_binary_size(&format!("1.{:03}KiB", i)),
+			Ok(1024_u64.pow(1) + i * 1024_u64.pow(1) / 1000)
+		);
+	}
+	for i in 0..1000 {
+		assert_eq!(
+			parse_binary_size(&format!("1.{:03}GiB", i)),
+			Ok(1024_u64.pow(3) + i * 1024_u64.pow(3) / 1000)
+		);
+	}
 }

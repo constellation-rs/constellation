@@ -15,7 +15,6 @@
 //!
 //! Note: --format can also be given as an env var, such as `CONSTELLATION_FORMAT=json`
 
-#![feature(nll, allocator_api)]
 #![warn(
 	missing_copy_implementations,
 	missing_debug_implementations,
@@ -28,29 +27,16 @@
 	clippy::pedantic
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 
-extern crate bincode;
-extern crate crossbeam;
-// extern crate serde;
-extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-extern crate atty;
-extern crate constellation_internal;
-extern crate docopt;
-extern crate either;
-extern crate palaver;
-
-use constellation_internal::{
-	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, Resources, StyleSupport
-};
 use either::Either;
-use palaver::copy_sendfile;
+use palaver::file::copy_sendfile;
+use serde::Deserialize;
 use std::{
 	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
 };
 
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
+use constellation_internal::{
+	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, Resources, StyleSupport
+};
 
 const USAGE: &str = "
 deploy
@@ -81,9 +67,10 @@ fn main() {
 	let args: Args = docopt::Docopt::new(USAGE)
 		.and_then(|d| d.deserialize())
 		.unwrap_or_else(|e| e.exit());
-	let _version = args.flag_version || envs
-		.version
-		.map_or(false, |x| x.expect("CONSTELLATION_VERSION must be 0 or 1"));
+	let version = args.flag_version
+		|| envs
+			.version
+			.map_or(false, |x| x.expect("CONSTELLATION_VERSION must be 0 or 1"));
 	let format = args
 		.flag_format
 		.or_else(|| {
@@ -91,6 +78,10 @@ fn main() {
 				.map(|x| x.expect("CONSTELLATION_FORMAT must be json or human"))
 		})
 		.unwrap_or(Format::Human);
+	if version {
+		println!("constellation-deploy {}", env!("CARGO_PKG_VERSION"));
+		process::exit(0);
+	}
 	let bridge_address: net::SocketAddr = args.arg_host.parse().unwrap();
 	let path = args.arg_binary;
 	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(path.clone()))
@@ -122,7 +113,7 @@ fn main() {
 		panic!("Deploy failed due to not being able to allocate process to any of the nodes")
 	}); // TODO get resources from bridge
 	crossbeam::scope(|scope| {
-		let _ = scope.spawn(|| {
+		let _ = scope.spawn(|_scope| {
 			let mut stdin = io::stdin();
 			loop {
 				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
@@ -141,6 +132,7 @@ fn main() {
 		let mut ref_count = 1;
 		let mut pids = HashSet::new();
 		let _ = pids.insert(pid);
+		let (stdout, stderr) = (io::stdout(), io::stderr());
 		let mut formatter = if let Format::Human = format {
 			Either::Left(Formatter::new(
 				pid,
@@ -149,9 +141,11 @@ fn main() {
 				} else {
 					StyleSupport::None
 				},
+				stdout.lock(),
+				stderr.lock(),
 			))
 		} else {
-			Either::Right(io::stdout())
+			Either::Right(stdout.lock())
 		};
 		loop {
 			let event: DeployOutputEvent = bincode::deserialize_from(&mut stream_read)
@@ -188,5 +182,6 @@ fn main() {
 			}
 		}
 		process::exit(exit_code.into());
-	});
+	})
+	.unwrap();
 }

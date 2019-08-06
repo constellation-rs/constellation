@@ -19,9 +19,6 @@
 //=   }
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-extern crate nix;
 use constellation::*;
 use std::{panic, process, thread};
 

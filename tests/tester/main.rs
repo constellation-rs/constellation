@@ -3,7 +3,6 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
-#![feature(allocator_api, try_from)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -22,23 +21,14 @@
 	clippy::derive_hash_xor_eq
 )]
 
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate constellation_internal;
-// extern crate either;
-extern crate escargot;
-extern crate itertools;
-extern crate multiset;
-extern crate regex;
-extern crate serde_json;
-
 mod ext;
 
-use constellation_internal::ExitStatus;
+use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, os, path::{Path, PathBuf}, process, str, thread, time
+	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, net, os, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
 };
+
+use constellation_internal::ExitStatus;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
 const FABRIC: &str = "src/bin/constellation/main.rs";
@@ -49,8 +39,7 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
+const FORWARD_STDERR: bool = true;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
@@ -77,7 +66,7 @@ impl hash::Hash for Output {
 	}
 }
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 struct OutputTest {
 	output: HashMap<os::unix::io::RawFd, (ext::serde_regex::SerdeRegex, bool)>,
 	#[serde(with = "ext::serde_multiset")]
@@ -130,9 +119,10 @@ impl OutputTest {
 }
 
 fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::Error>> {
-	if !output.stderr.is_empty() {
+	if !FORWARD_STDERR {
+		println!("stderr: {:?}", std::str::from_utf8(&output.stderr).unwrap());
+	} else if !output.stderr.is_empty() {
 		return Err(None);
-		// println!("{}", std::str::from_utf8(&output.stderr).unwrap()); // Useful if FORWARD_STDERR is disabled
 	}
 	let mut log = HashMap::new();
 	let mut top = None;
@@ -178,6 +168,22 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 	}
 	let top = top.unwrap();
 	Ok(treeize(log.remove(&top).unwrap(), &mut log))
+}
+
+fn remove_stderr(mut output_test: OutputTest) -> OutputTest {
+	let _stderr = output_test.output.remove(&2).unwrap();
+	let mut children = output_test.children;
+	let mut new_children = multiset::HashMultiSet::new();
+	while !children.is_empty() {
+		let key = children.distinct_elements().next().unwrap();
+		let count = children.count_of(key);
+		assert_ne!(count, 0);
+		let key = key.clone();
+		children.remove_all(&key);
+		new_children.insert_times(remove_stderr(key), count);
+	}
+	output_test.children = new_children;
+	output_test
 }
 
 fn treeize(
@@ -280,15 +286,22 @@ fn main() {
 		&products[Path::new(BRIDGE)],
 	);
 
-	if std::net::TcpStream::connect(FABRIC_ADDR).is_ok() {
+	if net::TcpStream::connect(FABRIC_ADDR).is_ok() {
 		panic!("Service already running on FABRIC_ADDR {}", FABRIC_ADDR);
 	}
-	if std::net::TcpStream::connect(BRIDGE_ADDR).is_ok() {
+	if net::TcpStream::connect(BRIDGE_ADDR).is_ok() {
 		panic!("Service already running on BRIDGE_ADDR {}", BRIDGE_ADDR);
 	}
 	let mut fabric = process::Command::new(fabric)
 		.args(&[
+			"--format",
+			"json",
+			"-v",
 			"master",
+			&net::SocketAddr::from_str(FABRIC_ADDR)
+				.unwrap()
+				.ip()
+				.to_string(),
 			FABRIC_ADDR,
 			"4GiB",
 			"4",
@@ -296,12 +309,48 @@ fn main() {
 			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::null())
-		.stderr(process::Stdio::null())
+		.stdout(process::Stdio::piped())
+		.stderr(process::Stdio::piped())
 		.spawn()
 		.unwrap();
+	let mut fabric_stdout = fabric.stdout.take().unwrap();
+	let fabric_stdout = thread::spawn(move || {
+		let mut none = true;
+		loop {
+			use std::io::Read;
+			let mut stdout = vec![0; 1024];
+			// println!("awaiting stdout");
+			let n = fabric_stdout.read(&mut stdout).unwrap();
+			// println!("got stdout {}", n);
+			if n == 0 {
+				break;
+			}
+			none = false;
+			stdout.truncate(n);
+			println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
+		}
+		none
+	});
+	let mut fabric_stderr = fabric.stderr.take().unwrap();
+	let fabric_stderr = thread::spawn(move || {
+		let mut none = true;
+		loop {
+			use std::io::Read;
+			let mut stderr = vec![0; 1024];
+			// println!("awaiting stderr");
+			let n = fabric_stderr.read(&mut stderr).unwrap();
+			// println!("got stderr {}", n);
+			if n == 0 {
+				break;
+			}
+			none = false;
+			stderr.truncate(n);
+			println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
+		}
+		none
+	});
 	let start_ = time::Instant::now();
-	while std::net::TcpStream::connect(FABRIC_ADDR).is_err() {
+	while net::TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(2, 0) {
 			panic!("Fabric not up within 2s");
@@ -309,7 +358,7 @@ fn main() {
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 	let start_ = time::Instant::now();
-	while std::net::TcpStream::connect(BRIDGE_ADDR).is_err() {
+	while net::TcpStream::connect(BRIDGE_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(10, 0) {
 			panic!("Bridge not up within 10s");
@@ -325,21 +374,29 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
+		// if src != Path::new("tests/s.rs") {
+		// 	continue;
+		// }
+		// if src != Path::new("tests/x.rs") {
+		// 	continue;
+		// }
 		println!("{}", src.display());
-		let file: Result<OutputTest, _> = serde_json::from_str(
+		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&io::BufReader::new(fs::File::open(src).unwrap())
 				.lines()
-				.map(|x| x.unwrap())
+				.map(Result::unwrap)
 				.take_while(|x| x.get(0..3) == Some("//="))
 				.flat_map(|x| ext::string::Chars::new(x).skip(3))
 				.collect::<String>(),
 		);
+		if !FORWARD_STDERR {
+			file = file.map(remove_stderr);
+		}
 		let mut x = |command: &mut process::Command| {
 			let result = command.output().unwrap();
 			let output = parse_output(&result);
 			if output.is_err()
-				|| file.is_err()
-				|| !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
+				|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
 			{
 				println!("Error in {:?}", src);
 				match file {
@@ -377,7 +434,12 @@ fn main() {
 		}
 	}
 
+	println!("killing");
 	fabric.kill().unwrap();
+	let _stderr_empty = fabric_stderr.join().unwrap();
+	// assert!(stderr_empty);
+	let _stdout_empty = fabric_stdout.join().unwrap();
+	// assert!(stdout_empty);
 
 	println!(
 		"{}/{} succeeded in {:?}",

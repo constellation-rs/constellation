@@ -5,7 +5,7 @@
 //=       true
 //=     ],
 //=     "1": [
-//=       "Resources \\{ mem: 20971520, cpu: 0\\.05 \\}\n",
+//=       "Resources \\{ mem: 20971520, cpu: 4096 \\}\n",
 //=       true
 //=     ]
 //=   },
@@ -17,7 +17,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971520, cpu: 0\\.001 \\}\n",
+//=           "hi Resources \\{ mem: 20971520, cpu: 65 \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -27,7 +27,7 @@
 //=     {
 //=       "output": {
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971521, cpu: 0\\.001 \\}\n",
+//=           "hi Resources \\{ mem: 20971521, cpu: 65 \\}\n",
 //=           true
 //=         ],
 //=         "2": [
@@ -45,7 +45,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971522, cpu: 0\\.001 \\}\n",
+//=           "hi Resources \\{ mem: 20971522, cpu: 65 \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -59,7 +59,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971523, cpu: 0\\.001 \\}\n",
+//=           "hi Resources \\{ mem: 20971523, cpu: 65 \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -70,11 +70,8 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-extern crate constellation;
-#[macro_use]
-extern crate serde_closure;
 use constellation::*;
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
@@ -86,7 +83,7 @@ fn main() {
 		let _pid = spawn(
 			Resources {
 				mem: 20 * 1024 * 1024 + i,
-				cpu: 0.001,
+				cpu: 65536 / 1000,
 			},
 			FnOnce!([i] move |_parent| {
 				assert_eq!(resources().mem, 20 * 1024 * 1024 + i);

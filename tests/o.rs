@@ -42,11 +42,8 @@
 //=   "exit": "Success"
 //= }
 
-#![deny(warnings, deprecated)]
-#[macro_use]
-extern crate serde_closure;
-extern crate constellation;
 use constellation::*;
+use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
