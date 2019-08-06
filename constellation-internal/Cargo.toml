@@ -14,17 +14,17 @@ documentation = "https://docs.rs/constellation-rs"
 edition = "2018"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_bytes = "0.11"
 aes_frast = "0.1"
-either = { version = "1.5", features = ["serde"] }
-ansi_term = "0.12"
-rand = { version = "0.7", features = ["small_rng"] }
-bincode = "1.0"
-palaver = "0.2"
-cargo_metadata = { version = "0.8", default-features = false }
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
+ansi_term = "0.12"
+bincode = "1.0"
+cargo_metadata = { version = "0.8", default-features = false }
+either = { version = "1.5", features = ["serde"] }
+palaver = "0.2"
+rand = { version = "0.7", features = ["small_rng"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.14"

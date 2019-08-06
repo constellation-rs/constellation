@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "constellation-rs"
 version = "0.1.4"
@@ -15,12 +17,6 @@ readme = "README.md"
 edition = "2018"
 autotests = true
 
-[workspace]
-members = [
-	"./",
-	"constellation-internal",
-]
-
 [lib]
 name = "constellation"
 
@@ -34,29 +30,28 @@ no_alloc = ["constellation-internal/alloc_counter"]
 nightly = ["palaver/nightly", "relative/nightly"]
 
 [dependencies]
+constellation-internal = { path = "constellation-internal", version = "=0.1.2" }
+atty = "0.2"
+backtrace = "0.3"
 bincode = "1.0"
 crossbeam = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-lazy_static = "1.0"
-either = "1.5"
-rand = "0.7"
-atty = "0.2"
 docopt = "1.0"
-log = "0.4"
-# env_logger = "0.6"
-simple-logging = "2.0"
+either = "1.5"
 futures-preview = "0.3.0-alpha.17"
+lazy_static = "1.0"
+log = "0.4"
 more-asserts = "0.2"
-backtrace = "0.3"
-constellation-internal = {path = "constellation-internal", version = "=0.1.2"}
-serde_pipe = "0.1"
-serde_closure = "0.1"
-tcp_typed = "0.1"
-relative = "0.1"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 palaver = { version = "0.2" }
+rand = "0.7"
+relative = "0.1"
 runtime = "0.3.0-alpha.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_closure = "0.1"
+serde_json = "1.0"
+serde_pipe = "0.1"
+simple-logging = "2.0"
+tcp_typed = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.14"
@@ -64,20 +59,21 @@ nix = "0.14"
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
 
-[patch.crates-io]
-# palaver = { path = "../palaver" }
-# uuid = { path = "../uuid" }
-# serde_pipe = { path = "../serde_pipe" }
-bincode = { git = "https://github.com/alecmocatta/bincode" } #{ path = "../bincode" }
-
 [dev-dependencies]
+escargot = "0.5"
+hex = "0.3"
 itertools = "0.8"
 multiset = "0.0"
 regex = "1.0"
+serde_traitobject = "0.1"
 sha1 = "0.6"
-hex = "0.3"
-escargot = "0.5"
-serde_traitobject = { version = "0.1" } #, path = "../serde_traitobject"}
+
+[patch.crates-io]
+bincode = { git = "https://github.com/alecmocatta/bincode" }
+# palaver = { path = "../palaver" }
+# serde_pipe = { path = "../serde_pipe" }
+# serde_traitobject = { path = "../serde_traitobject"}
+# uuid = { path = "../uuid" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
