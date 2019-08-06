@@ -204,13 +204,13 @@ fn parse_binary_size_test() {
 	assert_eq!(parse_binary_size("1.000000000GiB"), Ok(1024_u64.pow(3)));
 	assert_eq!(parse_binary_size("1.0000000001GiB"), Ok(1024_u64.pow(3)));
 	assert_eq!(parse_binary_size("1.000000001GiB"), Ok(1024_u64.pow(3) + 1));
-	for i in 0..100000 {
+	for i in 0..100_000 {
 		assert_eq!(parse_binary_size(&i.to_string()), Ok(i));
 	}
-	for i in 0..100000 {
+	for i in 0..100_000 {
 		assert_eq!(parse_binary_size(&format!("{}B", i)), Ok(i));
 	}
-	for i in 0..100000 {
+	for i in 0..100_000 {
 		assert_eq!(
 			parse_binary_size(&format!("{}TiB", i)),
 			Ok(i * 1024_u64.pow(4))
