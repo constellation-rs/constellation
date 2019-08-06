@@ -1,13 +1,14 @@
 use bincode;
 use crossbeam;
 use either::Either;
-use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
-use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
+use constellation_internal::{
+	map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources
+};
 
 #[derive(Debug)]
 pub struct Node {
@@ -35,31 +36,6 @@ impl Node {
 struct SchedulerArg {
 	ip: IpAddr,
 	scheduler: Pid,
-}
-
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<SocketAddr>,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		Vec<u8>,
-		Vec<u8>,
-	),
-	io::Error,
-> {
-	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let bind = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = Vec::with_capacity(len.try_into().unwrap());
-	copy(stream, &mut binary, len)?;
-	assert_eq!(binary.len(), usize::try_from(len).unwrap());
-	Ok((process, bind, args, vars, binary, arg))
 }
 
 pub fn run(
@@ -162,25 +138,12 @@ pub fn run(
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
-						while let Ok((resources, bind, args, vars, binary, arg)) =
-							parse_request(&mut stream_read)
+						while let Ok(request) =
+							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							// println!("parsed");
 							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-							sender
-								.send(Either::Left((
-									FabricRequest {
-										resources,
-										bind,
-										args,
-										vars,
-										arg,
-										binary,
-									},
-									sender_,
-									None,
-								)))
-								.unwrap();
+							sender.send(Either::Left((request, sender_, None))).unwrap();
 							let pid: Option<Pid> = receiver.recv().unwrap();
 							// let mut stream_write = stream_write.write();
 							if bincode::serialize_into(&mut stream_write, &pid).is_err() {
