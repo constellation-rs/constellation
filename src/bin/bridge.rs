@@ -25,7 +25,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use log::trace;
-use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
+use palaver::file::{fexecve, move_fds, seal_fd};
 use std::{
 	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
@@ -33,7 +33,7 @@ use std::{
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, msg::FabricRequest, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -443,16 +443,7 @@ fn main() {
 			BufferedStream::new(&scheduler),
 		);
 
-		let len: u64 = request.binary.metadata().unwrap().len();
-		assert_ne!(len, 0);
-		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
-		drop(scheduler_write_);
-		copy_sendfile(&request.binary, &**scheduler_write.get_ref(), len).unwrap();
+		bincode_serialize_into(&mut scheduler_write.write(), &request).unwrap();
 
 		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)
