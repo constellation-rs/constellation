@@ -99,13 +99,11 @@ fn main() {
 	bincode::serialize_into(&mut stream_write_, &None::<Resources>).unwrap();
 	bincode::serialize_into(&mut stream_write_, &args).unwrap();
 	bincode::serialize_into(&mut stream_write_, &vars).unwrap();
+	let arg: Vec<u8> = Vec::new();
+	bincode::serialize_into(&mut stream_write_, &arg).unwrap();
 	bincode::serialize_into(&mut stream_write_, &len).unwrap();
 	drop(stream_write_);
 	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
-	let mut stream_write_ = stream_write.write();
-	let arg: Vec<u8> = Vec::new();
-	bincode::serialize_into(&mut stream_write_, &arg).unwrap();
-	drop(stream_write_);
 	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap();

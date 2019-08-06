@@ -52,11 +52,11 @@ fn parse_request<R: Read>(
 	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let mut binary = Vec::with_capacity(len.try_into().unwrap());
 	copy(stream, &mut binary, len)?;
 	assert_eq!(binary.len(), usize::try_from(len).unwrap());
-	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	Ok((process, args, vars, binary, arg))
 }
 

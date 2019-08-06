@@ -77,10 +77,10 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	file::{copy, copy_fd, fexecve, memfd_create, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
+	file::{copy_fd, fexecve, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, io::{self, Read, Write}, iter, net::{self, IpAddr, SocketAddr}, os::unix::io::{AsRawFd, FromRawFd}, path::PathBuf, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, io::{self, Read}, iter, net::{self, IpAddr, SocketAddr}, os::unix::io::AsRawFd, path::PathBuf, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -88,7 +88,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Resources, Trace
+	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Resources, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -137,39 +137,10 @@ fn parse_request<R: Read>(
 	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(OsString, OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut arg = unsafe {
-		File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				false,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
-	arg.write_all(&spawn_arg).unwrap();
-	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = unsafe {
-		File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				true,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	assert!(fcntl::FdFlag::from_bits(
-		fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
-	)
-	.unwrap()
-	.contains(fcntl::FdFlag::FD_CLOEXEC));
-	unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
-	copy(stream, &mut binary, len)?;
-	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
+	let arg_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let arg = file_from_reader(&mut stream, arg_len, &args[0], false)?;
+	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
 	seal_fd(binary.as_raw_fd());
 	Ok((resources, ports, binary, args, vars, arg))
 }

@@ -112,6 +112,7 @@ mod fabric_request {
 			state.serialize_element(&self.value.bind)?;
 			state.serialize_element(&self.value.args)?;
 			state.serialize_element(&self.value.vars)?;
+			let _ = &self.writer;
 			unimplemented!();
 			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.arg))?;
 			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.binary))?;

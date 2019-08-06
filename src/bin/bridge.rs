@@ -66,12 +66,12 @@ fn parse_request<R: Read>(
 	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(OsString, OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	// let mut binary = Vec::with_capacity(len as usize);
-	// copy(stream, &mut binary, len as usize)?; assert_eq!(binary.len(), len as usize);
-	let binary = file_from_reader(&mut stream, len, &args[0], true)?;
-	seal_fd(binary.as_raw_fd());
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	// let mut binary = Vec::with_capacity(binary_len as usize);
+	// copy(stream, &mut binary, binary_len as usize)?; assert_eq!(binary.len(), binary_len as usize);
+	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
+	seal_fd(binary.as_raw_fd());
 	Ok((process, args, vars, binary, arg))
 }
 
@@ -83,27 +83,6 @@ fn monitor_process(
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	// let _ = thread::Builder::new()
-	// 	.name(String::from("monitor_process"))
-	// 	.spawn(move || {
-	// 		while let Some(event) = futures::executor::block_on(receiver_.next()) {
-	// 			let event = match event {
-	// 				InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-	// 				InputEventInt::Kill => ProcessInputEvent::Kill,
-	// 			};
-	// 			sender.send(event);
-	// 			//  {
-	// 			// 	Ok(()) => (),
-	// 			// 	Err(constellation::ChannelError::Exited) => break, // TODO,
-	// 			// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
-	// 			// }
-	// 			// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
-	// 			// 	break; // TODO: remove
-	// 			// }
-	// 		}
-	// 		// for _event in receiver_ {}
-	// 	})
-	// 	.unwrap();
 	loop {
 		let mut event = None;
 		let x = match futures::executor::block_on(futures::future::select(
@@ -113,12 +92,6 @@ fn monitor_process(
 			futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
 			futures::future::Either::Right(((), _)) => futures::future::Either::Right(()),
 		};
-		// let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
-		// if event.is_err() {
-		// 	trace!("BRIDGE: {:?} died {:?}", pid, event.err().unwrap());
-		// 	sender_.send(OutputEventInt::Exit(pid, 101)).unwrap();
-		// 	break;
-		// }
 		match x {
 			futures::future::Either::Left(event) => {
 				sender.send(match event.unwrap() {
@@ -476,12 +449,10 @@ fn main() {
 		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
+		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
 		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
 		drop(scheduler_write_);
 		copy_sendfile(&request.binary, &**scheduler_write.get_ref(), len).unwrap();
-		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
-		drop(scheduler_write_);
 
 		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)
