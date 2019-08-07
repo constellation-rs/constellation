@@ -26,8 +26,9 @@ mod ext;
 use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fs::File, hash, io::{BufRead, BufReader}, iter, net::{SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
+	collections::HashMap, env, fs::File, hash, io::{self, BufRead, BufReader, Write}, iter, net::{SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time::{self, Duration}
 };
+use systemstat::{saturating_sub_bytes, Platform, System};
 
 use constellation_internal::{ExitStatus, Fd};
 use ext::serialize_as_regex_string::SerializeAsRegexString;
@@ -411,11 +412,7 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
-		println!(
-			"  {} processes, {} threads",
-			palaver::process::count(),
-			palaver::process::count_threads()
-		);
+		dump_system_load(io::stdout()).unwrap();
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -424,11 +421,7 @@ fn main() {
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
 		}
-		println!(
-			"  {} processes, {} threads",
-			palaver::process::count(),
-			palaver::process::count_threads()
-		);
+		dump_system_load(io::stdout()).unwrap();
 	}
 
 	println!("killing");
@@ -447,4 +440,49 @@ fn main() {
 	if failed > 0 {
 		process::exit(1);
 	}
+}
+
+fn dump_system_load<W: Write>(mut writer: W) -> Result<(), io::Error> {
+	let sys = System::new();
+	match sys.memory() {
+		Ok(mem) => writeln!(
+			writer,
+			"Memory: {} used / {} ({} bytes) total ({:?})",
+			saturating_sub_bytes(mem.total, mem.free),
+			mem.total,
+			mem.total.as_u64(),
+			mem.platform_memory
+		)?,
+		Err(x) => writeln!(writer, "Memory: error: {}", x)?,
+	}
+	match sys.load_average() {
+		Ok(loadavg) => writeln!(
+			writer,
+			"Load average: {} {} {}",
+			loadavg.one, loadavg.five, loadavg.fifteen
+		)?,
+		Err(x) => writeln!(writer, "Load average: error: {}", x)?,
+	}
+	match sys.cpu_load_aggregate() {
+		Ok(cpu) => {
+			thread::sleep(Duration::from_millis(500)); // TODO: make sleep opt-in
+			let cpu = cpu.done().unwrap();
+			writeln!(
+				writer,
+				"CPU load: {}% user, {}% nice, {}% system, {}% intr, {}% idle",
+				cpu.user * 100.0,
+				cpu.nice * 100.0,
+				cpu.system * 100.0,
+				cpu.interrupt * 100.0,
+				cpu.idle * 100.0
+			)?
+		}
+		Err(x) => writeln!(writer, "CPU load: error: {}", x)?,
+	}
+	writeln!(
+		writer,
+		"Processes: {}, threads: {}",
+		palaver::process::count(),
+		palaver::process::count_threads()
+	)
 }
