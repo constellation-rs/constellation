@@ -1,3 +1,4 @@
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.0")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,

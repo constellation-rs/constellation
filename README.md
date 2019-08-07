@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.rs/constellation-rs/0.1.4">Docs</a>
+    <a href="https://docs.rs/constellation-rs/0.1.0">Docs</a>
 </p>
 
 Constellation is a framework for Rust (nightly) that aides in the writing, debugging and deployment of distributed programs. It draws heavily from [Erlang/OTP](https://en.wikipedia.org/wiki/Erlang_(programming_language)), [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface), and [CSP](https://en.wikipedia.org/wiki/Communicating_sequential_processes); and leverages the Rust ecosystem where it can including [serde](https://serde.rs/) + [bincode](https://github.com/TyOverby/bincode) for network serialization, [futures-rs](https://github.com/rust-lang-nursery/futures-rs) for integration with [tokio](https://tokio.rs/), and the semantics of [crossbeam](https://github.com/crossbeam-rs/crossbeam-channel)'s channels and `select()` for channels over TCP.
@@ -27,10 +27,10 @@ For leveraging Constellation directly, read on.
 
 ## Constellation framework
 
-* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.4/constellation/fn.init.html) at the beginning of your program.
-* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.4/constellation/fn.spawn.html) new processes, which run `closure`.
-* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.4/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.4/constellation/struct.Receiver.html#method.new).
-* Channels can be used with the blocking [`sender.send()`](https://docs.rs/constellation-rs/0.1.4/constellation/struct.Sender.html#method.send) and [`receiver.recv()`](https://docs.rs/constellation-rs/0.1.4/constellation/struct.Receiver.html#method.recv), with the more powerful [`select()`](https://docs.rs/constellation-rs/0.1.4/constellation/fn.select.html), with Rust's [futures-rs](https://github.com/rust-lang-nursery/futures-rs) combinators and with [async/await syntax](https://github.com/rust-lang/rfcs/blob/master/text/2394-async_await.md).
+* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.0/constellation/fn.init.html) at the beginning of your program.
+* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.0/constellation/fn.spawn.html) new processes, which run `closure`.
+* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.0/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.0/constellation/struct.Receiver.html#method.new).
+* Channels can be used with the blocking [`sender.send()`](https://docs.rs/constellation-rs/0.1.0/constellation/struct.Sender.html#method.send) and [`receiver.recv()`](https://docs.rs/constellation-rs/0.1.0/constellation/struct.Receiver.html#method.recv), with the more powerful [`select()`](https://docs.rs/constellation-rs/0.1.0/constellation/fn.select.html), with Rust's [futures-rs](https://github.com/rust-lang-nursery/futures-rs) combinators and with [async/await syntax](https://github.com/rust-lang/rfcs/blob/master/text/2394-async_await.md).
 
 Here's an example program leveraging [fork-join parallelism](https://en.wikipedia.org/wiki/Fork–join_model) to distribute the task of finding "low" SHA1 hashes:
 
@@ -273,7 +273,7 @@ Please file an issue if you experience any other requirements.
 
 ## API
 
-[see Rust doc](https://docs.rs/constellation-rs/0.1.4)
+[see Rust doc](https://docs.rs/constellation-rs/0.1.0)
 
 ## Testing
 

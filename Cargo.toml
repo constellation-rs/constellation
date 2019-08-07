@@ -2,7 +2,7 @@
 
 [package]
 name = "constellation-rs"
-version = "0.1.4"
+version = "0.1.0"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -12,7 +12,7 @@ The `constellation` framework to aide writing and debugging of distributed progr
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation"
+documentation = "https://docs.rs/constellation-rs/0.1.0"
 readme = "README.md"
 edition = "2018"
 autotests = true
@@ -45,7 +45,6 @@ once_cell = { version = "0.2", default-features = false }
 palaver = { version = "0.2" }
 rand = "0.7"
 relative = "0.1"
-# runtime = "0.3.0-alpha.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.1"
 serde_json = "1.0"
@@ -71,11 +70,7 @@ systemstat = "0.1"
 
 [patch.crates-io]
 bincode = { git = "https://github.com/alecmocatta/bincode" }
-palaver = { git = "https://github.com/alecmocatta/palaver" }
 systemstat = { git = "https://github.com/myfreeweb/systemstat" }
-# serde_pipe = { path = "../serde_pipe" }
-# serde_traitobject = { path = "../serde_traitobject"}
-# uuid = { path = "../uuid" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
