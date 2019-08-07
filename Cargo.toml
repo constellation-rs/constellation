@@ -45,7 +45,7 @@ notifier = { version = "0.1", features = ["tcp_typed"] }
 palaver = { version = "0.2" }
 rand = "0.7"
 relative = "0.1"
-runtime = "0.3.0-alpha.6"
+# runtime = "0.3.0-alpha.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.1"
 serde_json = "1.0"
