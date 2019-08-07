@@ -411,6 +411,11 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
+		println!(
+			"  {} processes, {} threads",
+			palaver::process::count(),
+			palaver::process::count_threads()
+		);
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -419,7 +424,11 @@ fn main() {
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
 		}
-		println!("{} processes", palaver::process::count());
+		println!(
+			"  {} processes, {} threads",
+			palaver::process::count(),
+			palaver::process::count_threads()
+		);
 	}
 
 	println!("killing");
