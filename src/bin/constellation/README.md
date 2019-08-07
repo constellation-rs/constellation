@@ -1,6 +1,6 @@
 # fabric
 
-This is part of the [`deploy`](https://github.com/alecmocatta/deploy) project.
+This is part of the [`constellation`](https://github.com/alecmocatta/constellation) project.
 
 
 ## `fabric`

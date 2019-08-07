@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-    <a href="https://crates.io/crates/constellation-rs"><img src="https://img.shields.io/crates/v/deploy.svg?maxAge=86400" alt="Crates.io" /></a>
-    <a href="LICENSE.txt"><img src="https://img.shields.io/crates/l/deploy.svg?maxAge=2592000" alt="Apache-2.0 licensed" /></a>
+    <a href="https://crates.io/crates/constellation-rs"><img src="https://img.shields.io/crates/v/constellation-rs.svg?maxAge=86400" alt="Crates.io" /></a>
+    <a href="LICENSE.txt"><img src="https://img.shields.io/crates/l/constellation-rs.svg?maxAge=2592000" alt="Apache-2.0 licensed" /></a>
     <a href="https://dev.azure.com/alecmocatta/constellation/_build/latest?branchName=master"><img src="https://dev.azure.com/alecmocatta/constellation/_apis/build/status/tests?branchName=master" alt="Build Status" /></a>
 </p>
 
