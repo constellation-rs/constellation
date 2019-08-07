@@ -39,7 +39,7 @@ use constellation_internal::{
 };
 
 const SCHEDULER_FD: Fd = 4;
-const RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
+const _RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
@@ -245,13 +245,13 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 		})
 	};
 	nix::unistd::close(writer).unwrap();
-	let _ = thread::Builder::new()
-		.name(String::from(""))
-		.spawn(move || {
-			thread::sleep(RECCE_TIMEOUT);
-			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-		})
-		.unwrap();
+	// let _ = thread::Builder::new()
+	// 	.name(String::from(""))
+	// 	.spawn(move || {
+	// 		thread::sleep(RECCE_TIMEOUT);
+	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+	// 	})
+	// 	.unwrap();
 	loop {
 		match nix::sys::wait::waitpid(child, None) {
 			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
