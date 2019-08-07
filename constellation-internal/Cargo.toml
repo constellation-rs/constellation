@@ -1,6 +1,6 @@
 [package]
 name = "constellation-internal"
-version = "0.1.2"
+version = "0.1.0"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous"]
@@ -10,21 +10,24 @@ Common components for the `constellation` framework.
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation-rs"
+documentation = "https://docs.rs/constellation-internal/0.1.0"
 edition = "2018"
 
+[features]
+no_alloc = ["alloc_counter"]
+
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_bytes = "0.11"
 aes_frast = "0.1"
-either = { version = "1.5", features = ["serde"] }
-ansi_term = "0.12"
-rand = { version = "0.7", features = ["small_rng"] }
-bincode = "1.0"
-palaver = "0.2"
-cargo_metadata = { version = "0.8", default-features = false }
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
+ansi_term = "0.12"
+bincode = "1.0"
+cargo_metadata = { version = "0.8", default-features = false }
+either = { version = "1.5", features = ["serde"] }
+palaver = "0.2"
+rand = { version = "0.7", features = ["small_rng"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.14"

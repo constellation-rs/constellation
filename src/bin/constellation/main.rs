@@ -77,10 +77,10 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	file::{copy, copy_fd, fexecve, memfd_create, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
+	file::{copy_fd, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, io::{self, Read, Write}, iter, net::{self, IpAddr, SocketAddr}, os::unix::io::{AsRawFd, FromRawFd}, path::PathBuf, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, net::{IpAddr, SocketAddr, TcpListener}, path::PathBuf, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -88,7 +88,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Resources, Trace
+	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -119,61 +119,6 @@ const LISTENER_FD: Fd = 3;
 const ARG_FD: Fd = 4;
 const BOUND_FD_START: Fd = 5;
 
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<SocketAddr>,
-		File,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		File,
-	),
-	io::Error,
-> {
-	let resources = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let ports: Vec<SocketAddr> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars: Vec<(OsString, OsString)> =
-		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let spawn_arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut arg = unsafe {
-		File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				false,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	unistd::ftruncate(arg.as_raw_fd(), spawn_arg.len().try_into().unwrap()).unwrap();
-	arg.write_all(&spawn_arg).unwrap();
-	let x = unistd::lseek(arg.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = unsafe {
-		File::from_raw_fd(
-			memfd_create(
-				&CString::new(OsStringExt::into_vec(args[0].clone())).unwrap(),
-				true,
-			)
-			.expect("Failed to memfd_create"),
-		)
-	};
-	assert!(fcntl::FdFlag::from_bits(
-		fcntl::fcntl(binary.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap()
-	)
-	.unwrap()
-	.contains(fcntl::FdFlag::FD_CLOEXEC));
-	unistd::ftruncate(binary.as_raw_fd(), len.try_into().unwrap()).unwrap();
-	copy(stream, &mut binary, len)?;
-	let x = unistd::lseek(binary.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
-	assert_eq!(x, 0);
-	seal_fd(binary.as_raw_fd());
-	Ok((resources, ports, binary, args, vars, arg))
-}
-
 fn main() {
 	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
@@ -194,7 +139,7 @@ fn main() {
 	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		Role::Master(listen, mut nodes) => {
-			let fabric = net::TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
+			let fabric = TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
 			let master_addr = nodes[0].addr;
 			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
 			let _ = thread::Builder::new()
@@ -230,7 +175,7 @@ fn main() {
 				.unwrap();
 			(listen, fabric)
 		}
-		Role::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
+		Role::Worker(listen) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
 	};
 
 	for stream in listener.incoming() {
@@ -245,14 +190,7 @@ fn main() {
 			while let Ok(request) =
 				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 			{
-				let FabricRequest::<File, File> {
-					resources,
-					bind,
-					args,
-					vars,
-					arg,
-					binary,
-				} = request;
+				let request: FabricRequest<File, File> = request;
 				let process_listener = socket(
 					socket::AddressFamily::Inet,
 					socket::SockType::Stream,
@@ -278,15 +216,19 @@ fn main() {
 				}
 				.port();
 				let process_id = Pid::new(ip, port);
-				let vars = iter::once((
-					CString::new("CONSTELLATION").unwrap(),
-					CString::new("fabric").unwrap(),
-				))
-				.chain(iter::once((
-					CString::new("CONSTELLATION_RESOURCES").unwrap(),
-					CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
-				)))
-				.chain(vars.into_iter().map(|(x, y)| {
+				let vars = [
+					(
+						CString::new("CONSTELLATION").unwrap(),
+						CString::new("fabric").unwrap(),
+					),
+					(
+						CString::new("CONSTELLATION_RESOURCES").unwrap(),
+						CString::new(serde_json::to_string(&request.resources).unwrap()).unwrap(),
+					),
+				]
+				.iter()
+				.cloned()
+				.chain(request.vars.into_iter().map(|(x, y)| {
 					(
 						CString::new(OsStringExt::into_vec(x)).unwrap(),
 						CString::new(OsStringExt::into_vec(y)).unwrap(),
@@ -302,13 +244,20 @@ fn main() {
 				})
 				.collect::<Vec<_>>();
 				// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
-				let args = args
+				let args = request
+					.args
 					.into_iter()
 					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
 					.collect::<Vec<_>>();
 
 				let args_p = Vec::with_capacity(args.len() + 1);
 				let vars_p = Vec::with_capacity(vars.len() + 1);
+
+				let binary = request.binary;
+				let mut binary_desired_fd =
+					BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
+				let arg = request.arg;
+				let bind = request.bind;
 
 				let child = match unistd::fork().expect("Fork failed") {
 					unistd::ForkResult::Child => {
@@ -327,9 +276,7 @@ fn main() {
 							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
-							let binary = binary.into_raw_fd();
-							let mut binary_desired_fd =
-								BOUND_FD_START + Fd::try_from(bind.len()).unwrap();
+							let binary = binary.into_raw_fd(); // These are dropped by parent
 							let arg = arg.into_raw_fd();
 							move_fds(
 								&mut [
@@ -464,6 +411,7 @@ fn main() {
 				});
 			}
 			for (&_job, &pid) in pending.read().unwrap().iter() {
+				// TODO: this is racey
 				let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
 			}
 		})

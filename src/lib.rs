@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.4")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.0")]
 #![cfg_attr(feature = "nightly", feature(read_initializer, never_type))]
 #![warn(
 	missing_copy_implementations,
@@ -29,15 +29,15 @@
 	clippy::if_not_else,
 	clippy::module_name_repetitions,
 	clippy::new_ret_no_self,
-	clippy::type_complexity,
-	clippy::all
+	clippy::type_complexity
 )]
 
 mod channel;
 
 use either::Either;
-use futures::{sink::SinkExt, stream::StreamExt};
-use lazy_static::lazy_static;
+use futures::{
+	sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
+};
 use log::trace;
 use more_asserts::*;
 use nix::{
@@ -45,18 +45,19 @@ use nix::{
 		signal, socket::{self, sockopt}, stat, wait
 	}, unistd
 };
+use once_cell::sync::{Lazy, OnceCell};
 use palaver::{
-	env, file::{copy_sendfile, fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
+	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, io::{self, Read, Write}, iter, marker, mem, net::{self, SocketAddr}, ops, os::unix::{
+	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{self, mpsc}, thread
+	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, task::{Context, Poll}, thread
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 /// The Never type
@@ -80,19 +81,17 @@ const MONITOR_FD: Fd = 5;
 
 #[derive(Clone, Deserialize, Debug)]
 struct SchedulerArg {
-	ip: net::IpAddr,
+	ip: IpAddr,
 	scheduler: Pid,
 }
 
-lazy_static! {
-	static ref BRIDGE: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
-	static ref PID: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
-	static ref SCHEDULER: sync::Mutex<()> = sync::Mutex::new(());
-	static ref DEPLOYED: sync::RwLock<Option<bool>> = sync::RwLock::new(None);
-	static ref REACTOR: sync::RwLock<Option<channel::Reactor>> = sync::RwLock::new(None);
-	static ref RESOURCES: sync::RwLock<Option<Resources>> = sync::RwLock::new(None);
-	static ref HANDLE: sync::RwLock<Option<channel::Handle>> = sync::RwLock::new(None);
-}
+static PID: OnceCell<Pid> = OnceCell::new();
+static BRIDGE: OnceCell<Pid> = OnceCell::new();
+static DEPLOYED: OnceCell<bool> = OnceCell::new();
+static RESOURCES: OnceCell<Resources> = OnceCell::new();
+static SCHEDULER: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static REACTOR: Lazy<RwLock<Option<channel::Reactor>>> = Lazy::new(|| RwLock::new(None));
+static HANDLE: Lazy<RwLock<Option<channel::Handle>>> = Lazy::new(|| RwLock::new(None));
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -154,7 +153,7 @@ impl<T: Serialize> Sender<T> {
 	/// This needs to be passed to [`select()`](select) to be executed.
 	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(
 		&'a self, send: F,
-	) -> impl Selectable + std::future::Future<Output = ()> + 'a
+	) -> impl Selectable + Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -223,12 +222,10 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
+impl<T: 'static + Serialize> Sink<T> for Sender<Option<T>> {
 	type Error = Never;
 
-	fn poll_ready(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
+	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -244,15 +241,11 @@ impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
 			.futures_start_send(item, context.as_ref().unwrap())
 	}
 
-	fn poll_flush(
-		self: Pin<&mut Self>, _cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
-		futures::task::Poll::Ready(Ok(()))
+	fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
 	}
 
-	fn poll_close(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -261,10 +254,10 @@ impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
 	}
 }
 
-impl<'a, T: Serialize + 'static, F: FnOnce() -> T> std::future::Future for channel::Send<'a, T, F> {
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Future for channel::Send<'a, T, F> {
 	type Output = ();
 
-	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let context = REACTOR.read().unwrap();
 		self.futures_poll(cx, context.as_ref().unwrap())
 	}
@@ -331,7 +324,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// This needs to be passed to [`select()`](select) to be executed.
 	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
 		&'a self, recv: F,
-	) -> impl Selectable + std::future::Future<Output = ()> + 'a
+	) -> impl Selectable + Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -411,12 +404,10 @@ impl<T: DeserializeOwned> fmt::Debug for Receiver<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
+impl<T: 'static + DeserializeOwned> Stream for Receiver<Option<T>> {
 	type Item = Result<T, ChannelError>;
 
-	fn poll_next(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Option<Self::Item>> {
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -425,12 +416,12 @@ impl<T: 'static + DeserializeOwned> futures::stream::Stream for Receiver<Option<
 	}
 }
 
-impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> std::future::Future
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Future
 	for channel::Recv<'a, T, F>
 {
 	type Output = ();
 
-	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let context = REACTOR.read().unwrap();
 		self.futures_poll(cx, context.as_ref().unwrap())
 	}
@@ -464,14 +455,14 @@ pub fn run<'a>(mut select: Vec<Box<dyn Selectable + 'a>>) {
 /// Get the [Pid] of the current process
 #[inline(always)]
 pub fn pid() -> Pid {
-	PID.read().unwrap().unwrap_or_else(|| {
+	*PID.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	})
 }
 
 /// Get the memory and CPU requirements configured at initialisation of the current process
 pub fn resources() -> Resources {
-	RESOURCES.read().unwrap().unwrap_or_else(|| {
+	*RESOURCES.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	})
 }
@@ -507,7 +498,7 @@ fn spawn_native(
 	let (process_listener, process_id) = native_process_listener();
 
 	let mut spawn_arg: Vec<u8> = Vec::new();
-	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
+	let bridge_pid: Pid = *BRIDGE.get().unwrap();
 	bincode::serialize_into(&mut spawn_arg, &bridge_pid).unwrap();
 	bincode::serialize_into(&mut spawn_arg, &our_pid).unwrap();
 	bincode::serialize_into(&mut spawn_arg, &f).unwrap();
@@ -646,8 +637,8 @@ fn spawn_native(
 	};
 	unistd::close(process_listener).unwrap();
 	drop(arg);
-	let new_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), process_id);
-	// BRIDGE.read().unwrap().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
+	let new_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), process_id);
+	// *BRIDGE.get().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
 	{
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
 		bincode::serialize_into(&mut &file, &ProcessOutputEvent::Spawn(new_pid)).unwrap();
@@ -660,10 +651,14 @@ fn spawn_deployed(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
 ) -> Result<Pid, ()> {
 	trace!("spawn_deployed");
-	let stream = unsafe { net::TcpStream::from_raw_fd(SCHEDULER_FD) };
+	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
-	let mut stream_write_ = stream_write.write();
+	let mut arg: Vec<u8> = Vec::new();
+	let bridge_pid: Pid = *BRIDGE.get().unwrap();
+	bincode::serialize_into(&mut arg, &bridge_pid).unwrap();
+	bincode::serialize_into(&mut arg, &pid()).unwrap();
+	bincode::serialize_into(&mut arg, &f).unwrap();
 	let binary = if !valgrind::is().unwrap_or(false) {
 		env::exe().unwrap()
 	} else {
@@ -678,30 +673,17 @@ fn spawn_deployed(
 			)
 		}
 	};
-	let len: u64 = binary.metadata().unwrap().len();
-	bincode::serialize_into(&mut stream_write_, &resources).unwrap();
-	bincode::serialize_into::<_, Vec<OsString>>(
-		&mut stream_write_,
-		&env::args_os().expect("Couldn't get argv"),
-	)
-	.unwrap();
-	bincode::serialize_into::<_, Vec<(OsString, OsString)>>(
-		&mut stream_write_,
-		&env::vars_os().expect("Couldn't get envp"),
-	)
-	.unwrap();
-	bincode::serialize_into(&mut stream_write_, &len).unwrap();
-	drop(stream_write_);
-	// copy(&mut &binary, &mut stream_write_, len as usize).unwrap();
-	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
-	let mut stream_write_ = stream_write.write();
-	let mut arg_: Vec<u8> = Vec::new();
-	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
-	bincode::serialize_into(&mut arg_, &bridge_pid).unwrap();
-	bincode::serialize_into(&mut arg_, &pid()).unwrap();
-	bincode::serialize_into(&mut arg_, &f).unwrap();
-	bincode::serialize_into(&mut stream_write_, &arg_).unwrap();
-	drop(stream_write_);
+	let request = FabricRequest {
+		resources,
+		bind: vec![],
+		args: env::args_os().expect("Couldn't get argv"),
+		vars: env::vars_os().expect("Couldn't get envp"),
+		arg,
+		binary,
+	};
+	bincode_serialize_into(&mut stream_write.write(), &request)
+		.map_err(map_bincode_err)
+		.unwrap();
 	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap();
@@ -727,7 +709,7 @@ pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, ()> {
 	let _scheduler = SCHEDULER.lock().unwrap();
-	let deployed = DEPLOYED.read().unwrap().unwrap_or_else(|| {
+	let deployed = *DEPLOYED.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	});
 	let arg: Vec<u8> = bincode::serialize(&start).unwrap();
@@ -754,7 +736,7 @@ extern "C" fn at_exit() {
 }
 
 #[doc(hidden)]
-pub fn bridge_init() -> net::TcpListener {
+pub fn bridge_init() -> TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
 	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
@@ -772,20 +754,20 @@ pub fn bridge_init() -> net::TcpListener {
 	}
 	// init();
 	socket::listen(BOUND_FD, 100).unwrap();
-	let listener = unsafe { net::TcpListener::from_raw_fd(BOUND_FD) };
+	let listener = unsafe { TcpListener::from_raw_fd(BOUND_FD) };
 	{
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
 		drop(arg);
 		let port = {
-			let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+			let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 			let local_addr = listener.local_addr().unwrap();
 			let _ = listener.into_raw_fd();
 			local_addr.port()
 		};
 		let our_pid = Pid::new(sched_arg.ip, port);
-		*PID.write().unwrap() = Some(our_pid);
-		let scheduler = net::TcpStream::connect(sched_arg.scheduler.addr())
+		PID.set(our_pid).unwrap();
+		let scheduler = TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
 		if scheduler != SCHEDULER_FD {
@@ -828,8 +810,8 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		)
 		.unwrap();
 
-		let bridge_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id);
-		*PID.write().unwrap() = Some(bridge_pid);
+		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
+		PID.set(bridge_pid).unwrap();
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD);
 		*REACTOR.try_write().unwrap() = Some(reactor);
@@ -933,7 +915,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		process::exit(exit_code.into());
 	}
 	unistd::close(bridge_process_listener).unwrap();
-	Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id)
+	Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id)
 }
 
 fn native_process_listener() -> (Fd, u16) {
@@ -948,7 +930,7 @@ fn native_process_listener() -> (Fd, u16) {
 	socket::bind(
 		process_listener,
 		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
-			net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+			IpAddr::V4(Ipv4Addr::LOCALHOST),
 			0,
 		))),
 	)
@@ -960,7 +942,7 @@ fn native_process_listener() -> (Fd, u16) {
 		} else {
 			panic!()
 		};
-	assert_eq!(process_id.ip(), net::IpAddr::V4(net::Ipv4Addr::LOCALHOST));
+	assert_eq!(process_id.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
 
 	(process_listener, process_id.port())
 }
@@ -1126,6 +1108,7 @@ fn monitor_process(
 									}
 								}
 								ProcessInputEvent::Kill => {
+									// TODO: this is racey
 									signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(
 										|e| assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH)),
 									);
@@ -1294,7 +1277,7 @@ pub fn init(resources: Resources) {
 					vec![],
 					None,
 					None,
-					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+					IpAddr::V4(Ipv4Addr::LOCALHOST),
 				)
 			} else {
 				let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
@@ -1309,7 +1292,7 @@ pub fn init(resources: Resources) {
 					prog_arg,
 					Some(bridge),
 					None,
-					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+					IpAddr::V4(Ipv4Addr::LOCALHOST),
 				)
 			}
 		} else {
@@ -1353,19 +1336,18 @@ pub fn init(resources: Resources) {
 			.unwrap();
 		}
 		let our_pid = Pid::new(ip, our_process_id);
-		*PID.write().unwrap() = Some(our_pid);
 		native_bridge(format, our_pid)
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
 
 	let port = {
-		let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 		let local_addr = listener.local_addr().unwrap();
 		let _ = listener.into_raw_fd();
 		local_addr.port()
 	};
 	let our_pid = Pid::new(ip, port);
-	*PID.write().unwrap() = Some(our_pid);
+	PID.set(our_pid).unwrap();
 
 	trace!(
 		"PROCESS {}:{}: start setup; pid: {}",
@@ -1374,9 +1356,9 @@ pub fn init(resources: Resources) {
 		pid()
 	);
 
-	*DEPLOYED.write().unwrap() = Some(deployed);
-	*RESOURCES.write().unwrap() = Some(resources);
-	*BRIDGE.write().unwrap() = Some(bridge);
+	DEPLOYED.set(deployed).unwrap();
+	RESOURCES.set(resources).unwrap();
+	BRIDGE.set(bridge).unwrap();
 
 	let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
 	if fd != SCHEDULER_FD {
@@ -1419,7 +1401,7 @@ pub fn init(resources: Resources) {
 	.unwrap();
 
 	if deployed {
-		let scheduler = net::TcpStream::connect(scheduler.unwrap().addr())
+		let scheduler = TcpStream::connect(scheduler.unwrap().addr())
 			.unwrap()
 			.into_raw_fd();
 		assert_ne!(scheduler, SCHEDULER_FD);

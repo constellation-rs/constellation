@@ -17,17 +17,20 @@ where
 pub use fabric_request::{bincode_deserialize_from, bincode_serialize_into, FileOrVec};
 
 mod fabric_request {
+	#![allow(missing_debug_implementations)]
+
 	use super::FabricRequest;
 	use crate::file_from_reader;
-	use palaver::file::seal_fd;
+	use palaver::file::{copy, seal_fd};
 	use serde::{
-		de::{self, DeserializeSeed, Error, SeqAccess, Visitor}, ser::SerializeTuple, Deserialize, Deserializer, Serialize, Serializer
+		de::{self, DeserializeSeed, SeqAccess, Visitor}, ser::{self, SerializeTuple}, Deserialize, Deserializer, Serialize, Serializer
 	};
 	use std::{
 		cell::UnsafeCell, ffi::OsString, fmt, fs::File, io::{self, Read, Write}, marker::PhantomData, os::unix::io::AsRawFd
 	};
 
 	pub trait FileOrVec {
+		// type Serializer: Serialize + ?Sized;
 		fn next_element_seed<'de, S, R>(
 			self_: &mut S, file_seed: FileSeed<R>,
 		) -> Result<Option<Self>, S::Error>
@@ -35,8 +38,12 @@ mod fabric_request {
 			S: SeqAccess<'de>,
 			R: Read,
 			Self: Sized;
+		fn as_serializer<'a, W: Write>(
+			&'a self, writer: &'a UnsafeCell<W>,
+		) -> PoorGat<FileSerializer<'a, W>, &'a serde_bytes::Bytes>;
 	}
 	impl FileOrVec for File {
+		// type Serializer<'a, W> = FileSerializer<'a, W>; // TODO: When GAT arrives
 		fn next_element_seed<'de, S, R>(
 			self_: &mut S, file_seed: FileSeed<R>,
 		) -> Result<Option<Self>, S::Error>
@@ -47,8 +54,14 @@ mod fabric_request {
 		{
 			self_.next_element_seed(file_seed)
 		}
+		fn as_serializer<'a, W: Write>(
+			&'a self, writer: &'a UnsafeCell<W>,
+		) -> PoorGat<FileSerializer<'a, W>, &'a serde_bytes::Bytes> {
+			PoorGat::File(FileSerializer(self, writer))
+		}
 	}
 	impl FileOrVec for Vec<u8> {
+		// type Serializer = serde_bytes::Bytes;
 		fn next_element_seed<'de, S, R>(
 			self_: &mut S, _file_seed: FileSeed<R>,
 		) -> Result<Option<Self>, S::Error>
@@ -60,6 +73,39 @@ mod fabric_request {
 			self_
 				.next_element::<serde_bytes::ByteBuf>()
 				.map(|x| x.map(serde_bytes::ByteBuf::into_vec))
+		}
+		fn as_serializer<'a, W: Write>(
+			&'a self, _writer: &'a UnsafeCell<W>,
+		) -> PoorGat<FileSerializer<'a, W>, &'a serde_bytes::Bytes> {
+			PoorGat::Vec(serde_bytes::Bytes::new(self))
+		}
+	}
+	pub enum PoorGat<A, B> {
+		File(A),
+		Vec(B),
+	}
+	pub struct FileSerializer<'a, W: Write>(&'a File, &'a UnsafeCell<W>);
+	impl<'a, W: Write> Serialize for FileSerializer<'a, W> {
+		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+			let len: u64 = self.0.metadata().unwrap().len();
+			let ok = len.serialize(serializer)?;
+			copy(&mut &*self.0, unsafe { &mut *self.1.get() }, len).map_err(ser::Error::custom)?;
+			// copy_sendfile(&*self.0, unsafe { &mut *self.1.get() }, len).map_err(ser::Error::custom)?; // TODO
+			Ok(ok)
+		}
+	}
+	impl<'a, W: Write> Serialize for PoorGat<FileSerializer<'a, W>, &'a serde_bytes::Bytes> {
+		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+			match self {
+				PoorGat::Vec(left) => left.serialize(serializer),
+				PoorGat::File(right) => right.serialize(serializer),
+			}
 		}
 	}
 
@@ -84,7 +130,7 @@ mod fabric_request {
 		A: FileOrVec,
 		B: FileOrVec,
 	{
-		writer: W,
+		writer: UnsafeCell<W>,
 		value: &'a FabricRequest<A, B>,
 	}
 	impl<'a, W, A, B> FabricRequestSerializer<'a, W, A, B>
@@ -94,7 +140,10 @@ mod fabric_request {
 		B: FileOrVec,
 	{
 		fn new(writer: W, value: &'a FabricRequest<A, B>) -> Self {
-			FabricRequestSerializer { writer, value }
+			FabricRequestSerializer {
+				writer: UnsafeCell::new(writer),
+				value,
+			}
 		}
 	}
 	impl<'a, W, A, B> Serialize for FabricRequestSerializer<'a, W, A, B>
@@ -112,10 +161,9 @@ mod fabric_request {
 			state.serialize_element(&self.value.bind)?;
 			state.serialize_element(&self.value.args)?;
 			state.serialize_element(&self.value.vars)?;
-			unimplemented!();
-			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.arg))?;
-			// state.serialize_element(&serde_bytes::Bytes::new(&self.value.binary))?;
-			// state.end()
+			state.serialize_element(&self.value.arg.as_serializer(&self.writer))?;
+			state.serialize_element(&self.value.binary.as_serializer(&self.writer))?;
+			state.end()
 		}
 	}
 
@@ -270,7 +318,7 @@ mod fabric_request {
 		{
 			let len: u64 = Deserialize::deserialize(deserializer)?;
 			let file = file_from_reader(&mut self.reader, len, self.name, self.cloexec)
-				.map_err(Error::custom)?; // TODO we could use specialization to create a proper bincode/whatever io error kind
+				.map_err(de::Error::custom)?; // TODO we could use specialization to create a proper bincode/whatever io error kind
 			if self.seal {
 				seal_fd(file.as_raw_fd());
 			}

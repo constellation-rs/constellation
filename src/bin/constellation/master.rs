@@ -1,13 +1,14 @@
 use bincode;
 use crossbeam;
 use either::Either;
-use palaver::file::copy;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, convert::{TryFrom, TryInto}, env, ffi::OsString, fs, io::{self, Read}, net::{self, IpAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
-use constellation_internal::{map_bincode_err, msg::FabricRequest, BufferedStream, Pid, Resources};
+use constellation_internal::{
+	map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources
+};
 
 #[derive(Debug)]
 pub struct Node {
@@ -37,32 +38,9 @@ struct SchedulerArg {
 	scheduler: Pid,
 }
 
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		Vec<u8>,
-		Vec<u8>,
-	),
-	io::Error,
-> {
-	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let mut binary = Vec::with_capacity(len.try_into().unwrap());
-	copy(stream, &mut binary, len)?;
-	assert_eq!(binary.len(), usize::try_from(len).unwrap());
-	let arg = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	Ok((process, args, vars, binary, arg))
-}
-
 pub fn run(
-	bind_addr: net::SocketAddr, master_pid: Pid,
-	nodes: HashMap<net::SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<net::SocketAddr>)>)>,
+	bind_addr: SocketAddr, master_pid: Pid,
+	nodes: HashMap<SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<SocketAddr>)>)>,
 ) {
 	let (sender, receiver) = sync_channel::<
 		Either<
@@ -84,7 +62,7 @@ pub fn run(
 			let check_port = check_addresses.insert(addr);
 			assert!(check_port);
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = net::TcpStream::connect(&addr).unwrap();
+			let stream = TcpStream::connect(&addr).unwrap();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(move || {
@@ -149,7 +127,7 @@ pub fn run(
 		})
 		.collect::<Vec<_>>();
 
-	let listener = net::TcpListener::bind(bind_addr).unwrap();
+	let listener = TcpListener::bind(bind_addr).unwrap();
 	let _ = thread::Builder::new()
 		.spawn(move || {
 			for stream in listener.incoming() {
@@ -160,25 +138,12 @@ pub fn run(
 					.spawn(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
-						while let Ok((resources, args, vars, binary, arg)) =
-							parse_request(&mut stream_read)
+						while let Ok(request) =
+							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							// println!("parsed");
 							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-							sender
-								.send(Either::Left((
-									FabricRequest {
-										resources,
-										bind: vec![],
-										args,
-										vars,
-										arg,
-										binary,
-									},
-									sender_,
-									None,
-								)))
-								.unwrap();
+							sender.send(Either::Left((request, sender_, None))).unwrap();
 							let pid: Option<Pid> = receiver.recv().unwrap();
 							// let mut stream_write = stream_write.write();
 							if bincode::serialize_into(&mut stream_write, &pid).is_err() {

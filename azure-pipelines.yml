@@ -14,7 +14,7 @@ resources:
 jobs:
 - template: rust.yml@templates
   parameters:
-    # endpoint: alecmocatta
+    endpoint: alecmocatta
     default:
       rust_toolchain: nightly
       rust_lint_toolchain: nightly-2019-07-31
@@ -23,8 +23,8 @@ jobs:
       rust_target_check: ''
       rust_target_build: ''
       rust_target_run: ''
-      rust_test_flags: '--test tester -- 200 --no-default-features --features "$FEATURES" $ALL_FEATURES'
-      rust_test_release_flags: '--test tester -- 200 --no-default-features --features "$FEATURES" $ALL_FEATURES --release'
+      rust_test_flags: '--test tester -- 100 --no-default-features --features "$FEATURES" $ALL_FEATURES'
+      rust_test_release_flags: '--test tester -- 100 --no-default-features --features "$FEATURES" $ALL_FEATURES --release'
     matrix:
       # windows:
       #   imageName: 'vs2017-win2016'

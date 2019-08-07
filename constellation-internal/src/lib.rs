@@ -1,3 +1,4 @@
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.0")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -17,9 +18,7 @@
 	clippy::needless_pass_by_value,
 	clippy::large_enum_variant,
 	clippy::if_not_else,
-	clippy::inline_always,
-	clippy::all,
-	warnings
+	clippy::inline_always
 )]
 
 mod ext;
@@ -41,7 +40,7 @@ pub type Fd = std::os::unix::io::RawFd;
 #[cfg(target_family = "windows")]
 pub type Fd = std::os::windows::io::RawHandle;
 
-#[cfg(feature = "alloc_counter")]
+#[cfg(feature = "no_alloc")]
 #[global_allocator]
 static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
@@ -547,15 +546,15 @@ impl<W: io::Write> Trace<W> {
 			verbose,
 		}
 	}
-	fn json<T: Serialize>(&self, _event: T) {
-		// let mut stdout = self.stdout.lock().unwrap();
-		// serde_json::to_writer(&mut *stdout, &event).unwrap();
-		// stdout.write_all(b"\n").unwrap()
+	fn json<T: Serialize>(&self, event: T) {
+		let mut stdout = self.stdout.lock().unwrap();
+		serde_json::to_writer(&mut *stdout, &event).unwrap();
+		stdout.write_all(b"\n").unwrap()
 	}
-	fn human<T: Debug>(&self, _event: T) {
-		// // TODO: Display
-		// let mut stdout = self.stdout.lock().unwrap();
-		// stdout.write_fmt(format_args!("{:?}", event)).unwrap()
+	fn human<T: Debug>(&self, event: T) {
+		// TODO: Display
+		let mut stdout = self.stdout.lock().unwrap();
+		stdout.write_fmt(format_args!("{:?}", event)).unwrap()
 	}
 	pub fn fabric(&self, event: FabricOutputEvent) {
 		match (self.format, self.verbose) {
@@ -608,11 +607,11 @@ pub fn forbid_alloc<F, R>(f: F) -> R
 where
 	F: FnOnce() -> R,
 {
-	#[cfg(feature = "alloc_counter")]
+	#[cfg(feature = "no_alloc")]
 	{
 		alloc_counter::forbid_alloc(f)
 	}
-	#[cfg(not(feature = "alloc_counter"))]
+	#[cfg(not(feature = "no_alloc"))]
 	{
 		f()
 	}

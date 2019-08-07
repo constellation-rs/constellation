@@ -25,18 +25,21 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use log::trace;
-use palaver::file::{copy_sendfile, fexecve, move_fds, seal_fd};
+use palaver::file::{fexecve, move_fds, seal_fd};
 use std::{
 	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, sync::{self, mpsc}, thread, time
+	}, sync::{
+		atomic::{self, AtomicUsize}, mpsc, Mutex
+	}, thread, time::Duration
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, msg::FabricRequest, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
+const _RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
@@ -66,16 +69,14 @@ fn parse_request<R: Read>(
 	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let vars: Vec<(OsString, OsString)> =
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	// let mut binary = Vec::with_capacity(len as usize);
-	// copy(stream, &mut binary, len as usize)?; assert_eq!(binary.len(), len as usize);
-	let binary = file_from_reader(&mut stream, len, &args[0], true)?;
-	seal_fd(binary.as_raw_fd());
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
+	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
+	seal_fd(binary.as_raw_fd());
 	Ok((process, args, vars, binary, arg))
 }
 
-static PROCESS_COUNT: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
+static PROCESS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn monitor_process(
 	pid: Pid, sender_: mpsc::SyncSender<OutputEventInt>,
@@ -83,27 +84,6 @@ fn monitor_process(
 ) {
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
-	// let _ = thread::Builder::new()
-	// 	.name(String::from("monitor_process"))
-	// 	.spawn(move || {
-	// 		while let Some(event) = futures::executor::block_on(receiver_.next()) {
-	// 			let event = match event {
-	// 				InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-	// 				InputEventInt::Kill => ProcessInputEvent::Kill,
-	// 			};
-	// 			sender.send(event);
-	// 			//  {
-	// 			// 	Ok(()) => (),
-	// 			// 	Err(constellation::ChannelError::Exited) => break, // TODO,
-	// 			// 	Err(e) => panic!("BRIDGE send fail: {:?}", e),
-	// 			// }
-	// 			// if let Err(_) = bincode::serialize_into(&mut sender, &event) {
-	// 			// 	break; // TODO: remove
-	// 			// }
-	// 		}
-	// 		// for _event in receiver_ {}
-	// 	})
-	// 	.unwrap();
 	loop {
 		let mut event = None;
 		let x = match futures::executor::block_on(futures::future::select(
@@ -113,12 +93,6 @@ fn monitor_process(
 			futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
 			futures::future::Either::Right(((), _)) => futures::future::Either::Right(()),
 		};
-		// let event: ProcessOutputEvent = receiver.recv().expect("BRIDGE recv fail");
-		// if event.is_err() {
-		// 	trace!("BRIDGE: {:?} died {:?}", pid, event.err().unwrap());
-		// 	sender_.send(OutputEventInt::Exit(pid, 101)).unwrap();
-		// 	break;
-		// }
 		match x {
 			futures::future::Either::Left(event) => {
 				sender.send(match event.unwrap() {
@@ -271,13 +245,14 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 		})
 	};
 	nix::unistd::close(writer).unwrap();
-	let _ = thread::Builder::new()
-		.name(String::from(""))
-		.spawn(move || {
-			thread::sleep(time::Duration::new(1, 0));
-			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-		})
-		.unwrap();
+	// let _ = thread::Builder::new()
+	// 	.name(String::from(""))
+	// 	.spawn(move || {
+	// 		thread::sleep(RECCE_TIMEOUT);
+	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+	// 	})
+	// 	.unwrap();
+	// TODO: do this without waitpid/kill race
 	loop {
 		match nix::sys::wait::waitpid(child, None) {
 			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
@@ -334,27 +309,30 @@ fn manage_connection(
 	}
 	let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
 	let (resources, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
-	// let request = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
+	// let request: FabricRequest::<Vec<u8>,File> = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
 	assert_eq!(arg.len(), 0);
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
-	let (sender_, receiver) = mpsc::sync_channel::<_>(0);
-	sender
-		.send((
-			FabricRequest {
-				resources: resources.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
-				bind: vec![],
-				args,
-				vars,
-				arg,
-				binary,
-			},
-			sender_,
-		))
-		.unwrap();
-	let pid: Option<Pid> = receiver.recv().unwrap();
+	let resources = resources.or_else(|| recce(&binary, &args, &vars).ok());
+	let pid: Option<Pid> = resources.and_then(|resources| {
+		let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+		sender
+			.send((
+				FabricRequest {
+					resources,
+					bind: vec![],
+					args,
+					vars,
+					arg,
+					binary,
+				},
+				sender_,
+			))
+			.unwrap();
+		receiver.recv().unwrap()
+	});
 	bincode::serialize_into(&mut stream_write, &pid).map_err(drop)?;
 	if let Some(pid) = pid {
-		let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
 		let (sender, receiver) = mpsc::sync_channel::<_>(0);
 		let (sender1, receiver1) = futures::channel::mpsc::channel::<_>(0);
@@ -362,7 +340,7 @@ fn manage_connection(
 			.name(String::from("c"))
 			.spawn(move || monitor_process(pid, sender, receiver1))
 			.unwrap();
-		let hashmap = &sync::Mutex::new(HashMap::new());
+		let hashmap = &Mutex::new(HashMap::new());
 		let _ = hashmap.lock().unwrap().insert(pid, sender1);
 		crossbeam::scope(|scope| {
 			let _ = scope.spawn(move |_scope| {
@@ -408,7 +386,7 @@ fn manage_connection(
 			for event in receiver.iter() {
 				let event = match event {
 					OutputEventInt::Spawn(pid, new_pid, sender) => {
-						let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+						let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 						trace!("BRIDGE: SPAWN ({})", x);
 						let x = hashmap.lock().unwrap().insert(new_pid, sender);
 						assert!(x.is_none());
@@ -418,7 +396,7 @@ fn manage_connection(
 						DeployOutputEvent::Output(pid, fd, output)
 					}
 					OutputEventInt::Exit(pid, exit_code) => {
-						let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
+						let x = PROCESS_COUNT.fetch_sub(1, atomic::Ordering::Relaxed);
 						assert_ne!(x, 0);
 						trace!("BRIDGE: KILL ({})", x);
 						let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
@@ -470,18 +448,7 @@ fn main() {
 			BufferedStream::new(&scheduler),
 		);
 
-		let len: u64 = request.binary.metadata().unwrap().len();
-		assert_ne!(len, 0);
-		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &request.resources).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.args).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &request.vars).unwrap();
-		bincode::serialize_into(&mut scheduler_write_, &len).unwrap();
-		drop(scheduler_write_);
-		copy_sendfile(&request.binary, &**scheduler_write.get_ref(), len).unwrap();
-		let mut scheduler_write_ = scheduler_write.write();
-		bincode::serialize_into(&mut scheduler_write_, &request.arg).unwrap();
-		drop(scheduler_write_);
+		bincode_serialize_into(&mut scheduler_write.write(), &request).unwrap();
 
 		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)

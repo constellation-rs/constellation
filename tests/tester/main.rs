@@ -23,12 +23,15 @@
 
 mod ext;
 
+use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fs, hash, io::{self, BufRead}, iter, net, os, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time
+	collections::HashMap, env, fs::File, hash, io::{self, BufRead, BufReader, Write}, iter, net::{SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time::{self, Duration}
 };
+use systemstat::{saturating_sub_bytes, Platform, System};
 
-use constellation_internal::ExitStatus;
+use constellation_internal::{ExitStatus, Fd};
+use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
 const FABRIC: &str = "src/bin/constellation/main.rs";
@@ -43,12 +46,9 @@ const FORWARD_STDERR: bool = true;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
-	output: HashMap<
-		os::unix::io::RawFd,
-		(ext::serialize_as_regex_string::SerializeAsRegexString, bool),
-	>,
+	output: HashMap<Fd, (SerializeAsRegexString, bool)>,
 	#[serde(with = "ext::serde_multiset")]
-	children: multiset::HashMultiSet<Output>,
+	children: HashMultiSet<Output>,
 	exit: ExitStatus,
 }
 impl hash::Hash for Output {
@@ -68,9 +68,9 @@ impl hash::Hash for Output {
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 struct OutputTest {
-	output: HashMap<os::unix::io::RawFd, (ext::serde_regex::SerdeRegex, bool)>,
+	output: HashMap<Fd, (ext::serde_regex::SerdeRegex, bool)>,
 	#[serde(with = "ext::serde_multiset")]
-	children: multiset::HashMultiSet<OutputTest>,
+	children: HashMultiSet<OutputTest>,
 	exit: ExitStatus,
 }
 impl hash::Hash for OutputTest {
@@ -173,7 +173,7 @@ fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::E
 fn remove_stderr(mut output_test: OutputTest) -> OutputTest {
 	let _stderr = output_test.output.remove(&2).unwrap();
 	let mut children = output_test.children;
-	let mut new_children = multiset::HashMultiSet::new();
+	let mut new_children = HashMultiSet::new();
 	while !children.is_empty() {
 		let key = children.distinct_elements().next().unwrap();
 		let count = children.count_of(key);
@@ -188,14 +188,14 @@ fn remove_stderr(mut output_test: OutputTest) -> OutputTest {
 
 fn treeize(
 	output: (
-		HashMap<os::unix::io::RawFd, (Vec<u8>, bool)>,
+		HashMap<Fd, (Vec<u8>, bool)>,
 		Vec<constellation_internal::Pid>,
 		Option<ExitStatus>,
 	),
 	nodes: &mut HashMap<
 		constellation_internal::Pid,
 		(
-			HashMap<os::unix::io::RawFd, (Vec<u8>, bool)>,
+			HashMap<Fd, (Vec<u8>, bool)>,
 			Vec<constellation_internal::Pid>,
 			Option<ExitStatus>,
 		),
@@ -205,16 +205,7 @@ fn treeize(
 		output: output
 			.0
 			.into_iter()
-			// .chain(iter::once((2,(vec![],true)))) // Useful if FORWARD_STDERR is disabled
-			.map(|(k, (v, v1))| {
-				(
-					k,
-					(
-						ext::serialize_as_regex_string::SerializeAsRegexString(v),
-						v1,
-					),
-				)
-			})
+			.map(|(k, (v, v1))| (k, (SerializeAsRegexString(v), v1)))
 			.collect(),
 		children: output
 			.1
@@ -286,10 +277,10 @@ fn main() {
 		&products[Path::new(BRIDGE)],
 	);
 
-	if net::TcpStream::connect(FABRIC_ADDR).is_ok() {
+	if TcpStream::connect(FABRIC_ADDR).is_ok() {
 		panic!("Service already running on FABRIC_ADDR {}", FABRIC_ADDR);
 	}
-	if net::TcpStream::connect(BRIDGE_ADDR).is_ok() {
+	if TcpStream::connect(BRIDGE_ADDR).is_ok() {
 		panic!("Service already running on BRIDGE_ADDR {}", BRIDGE_ADDR);
 	}
 	let mut fabric = process::Command::new(fabric)
@@ -298,10 +289,7 @@ fn main() {
 			"json",
 			"-v",
 			"master",
-			&net::SocketAddr::from_str(FABRIC_ADDR)
-				.unwrap()
-				.ip()
-				.to_string(),
+			&SocketAddr::from_str(FABRIC_ADDR).unwrap().ip().to_string(),
 			FABRIC_ADDR,
 			"4GiB",
 			"4",
@@ -350,7 +338,7 @@ fn main() {
 		none
 	});
 	let start_ = time::Instant::now();
-	while net::TcpStream::connect(FABRIC_ADDR).is_err() {
+	while TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(2, 0) {
 			panic!("Fabric not up within 2s");
@@ -358,7 +346,7 @@ fn main() {
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
 	let start_ = time::Instant::now();
-	while net::TcpStream::connect(BRIDGE_ADDR).is_err() {
+	while TcpStream::connect(BRIDGE_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
 		if start_.elapsed() > time::Duration::new(10, 0) {
 			panic!("Bridge not up within 10s");
@@ -382,7 +370,7 @@ fn main() {
 		// }
 		println!("{}", src.display());
 		let mut file: Result<OutputTest, _> = serde_json::from_str(
-			&io::BufReader::new(fs::File::open(src).unwrap())
+			&BufReader::new(File::open(src).unwrap())
 				.lines()
 				.map(Result::unwrap)
 				.take_while(|x| x.get(0..3) == Some("//="))
@@ -424,6 +412,7 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
+		dump_system_load(io::stdout()).unwrap();
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -432,6 +421,7 @@ fn main() {
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
 		}
+		dump_system_load(io::stdout()).unwrap();
 	}
 
 	println!("killing");
@@ -450,4 +440,49 @@ fn main() {
 	if failed > 0 {
 		process::exit(1);
 	}
+}
+
+fn dump_system_load<W: Write>(mut writer: W) -> Result<(), io::Error> {
+	let sys = System::new();
+	match sys.memory() {
+		Ok(mem) => writeln!(
+			writer,
+			"Memory: {} used / {} ({} bytes) total ({:?})",
+			saturating_sub_bytes(mem.total, mem.free),
+			mem.total,
+			mem.total.as_u64(),
+			mem.platform_memory
+		)?,
+		Err(x) => writeln!(writer, "Memory: error: {}", x)?,
+	}
+	match sys.load_average() {
+		Ok(loadavg) => writeln!(
+			writer,
+			"Load average: {} {} {}",
+			loadavg.one, loadavg.five, loadavg.fifteen
+		)?,
+		Err(x) => writeln!(writer, "Load average: error: {}", x)?,
+	}
+	match sys.cpu_load_aggregate() {
+		Ok(cpu) => {
+			thread::sleep(Duration::from_millis(500)); // TODO: make sleep opt-in
+			let cpu = cpu.done().unwrap();
+			writeln!(
+				writer,
+				"CPU load: {}% user, {}% nice, {}% system, {}% intr, {}% idle",
+				cpu.user * 100.0,
+				cpu.nice * 100.0,
+				cpu.system * 100.0,
+				cpu.interrupt * 100.0,
+				cpu.idle * 100.0
+			)?
+		}
+		Err(x) => writeln!(writer, "CPU load: error: {}", x)?,
+	}
+	writeln!(
+		writer,
+		"Processes: {}, threads: {}",
+		palaver::process::count(),
+		palaver::process::count_threads()
+	)
 }
