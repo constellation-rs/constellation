@@ -31,7 +31,7 @@ use std::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{
 		atomic::{self, AtomicUsize}, mpsc, Mutex
-	}, thread, time
+	}, thread, time::Duration
 };
 
 use constellation_internal::{
@@ -39,6 +39,7 @@ use constellation_internal::{
 };
 
 const SCHEDULER_FD: Fd = 4;
+const RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
@@ -247,7 +248,7 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 	let _ = thread::Builder::new()
 		.name(String::from(""))
 		.spawn(move || {
-			thread::sleep(time::Duration::new(1, 0));
+			thread::sleep(RECCE_TIMEOUT);
 			let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
 		})
 		.unwrap();
@@ -310,21 +311,24 @@ fn manage_connection(
 	// let request: FabricRequest::<Vec<u8>,File> = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
 	assert_eq!(arg.len(), 0);
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
-	let (sender_, receiver) = mpsc::sync_channel::<_>(0);
-	sender
-		.send((
-			FabricRequest {
-				resources: resources.unwrap_or_else(|| recce(&binary, &args, &vars).unwrap()),
-				bind: vec![],
-				args,
-				vars,
-				arg,
-				binary,
-			},
-			sender_,
-		))
-		.unwrap();
-	let pid: Option<Pid> = receiver.recv().unwrap();
+	let resources = resources.or_else(|| recce(&binary, &args, &vars).ok());
+	let pid: Option<Pid> = resources.and_then(|resources| {
+		let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+		sender
+			.send((
+				FabricRequest {
+					resources,
+					bind: vec![],
+					args,
+					vars,
+					arg,
+					binary,
+				},
+				sender_,
+			))
+			.unwrap();
+		receiver.recv().unwrap()
+	});
 	bincode::serialize_into(&mut stream_write, &pid).map_err(drop)?;
 	if let Some(pid) = pid {
 		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);

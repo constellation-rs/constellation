@@ -108,7 +108,7 @@ fn main() {
 		.map_err(map_bincode_err)
 		.unwrap();
 	let pid = pid.unwrap_or_else(|| {
-		panic!("Deploy failed due to not being able to allocate process to any of the nodes")
+		panic!("Deploy failed due to not being able to allocate process to any of the nodes or constellation::init() not being called immediately inside main()")
 	}); // TODO get resources from bridge
 	crossbeam::scope(|scope| {
 		let _ = scope.spawn(|_scope| {
