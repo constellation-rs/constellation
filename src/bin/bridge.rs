@@ -29,7 +29,9 @@ use palaver::file::{fexecve, move_fds, seal_fd};
 use std::{
 	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, sync::{self, mpsc}, thread, time
+	}, sync::{
+		atomic::{self, AtomicUsize}, mpsc, Mutex
+	}, thread, time
 };
 
 use constellation_internal::{
@@ -68,14 +70,12 @@ fn parse_request<R: Read>(
 		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
 	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	// let mut binary = Vec::with_capacity(binary_len as usize);
-	// copy(stream, &mut binary, binary_len as usize)?; assert_eq!(binary.len(), binary_len as usize);
 	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
 	seal_fd(binary.as_raw_fd());
 	Ok((process, args, vars, binary, arg))
 }
 
-static PROCESS_COUNT: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
+static PROCESS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn monitor_process(
 	pid: Pid, sender_: mpsc::SyncSender<OutputEventInt>,
@@ -307,7 +307,7 @@ fn manage_connection(
 	}
 	let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
 	let (resources, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
-	// let request = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
+	// let request: FabricRequest::<Vec<u8>,File> = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
 	assert_eq!(arg.len(), 0);
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
 	let (sender_, receiver) = mpsc::sync_channel::<_>(0);
@@ -327,7 +327,7 @@ fn manage_connection(
 	let pid: Option<Pid> = receiver.recv().unwrap();
 	bincode::serialize_into(&mut stream_write, &pid).map_err(drop)?;
 	if let Some(pid) = pid {
-		let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
 		let (sender, receiver) = mpsc::sync_channel::<_>(0);
 		let (sender1, receiver1) = futures::channel::mpsc::channel::<_>(0);
@@ -335,7 +335,7 @@ fn manage_connection(
 			.name(String::from("c"))
 			.spawn(move || monitor_process(pid, sender, receiver1))
 			.unwrap();
-		let hashmap = &sync::Mutex::new(HashMap::new());
+		let hashmap = &Mutex::new(HashMap::new());
 		let _ = hashmap.lock().unwrap().insert(pid, sender1);
 		crossbeam::scope(|scope| {
 			let _ = scope.spawn(move |_scope| {
@@ -381,7 +381,7 @@ fn manage_connection(
 			for event in receiver.iter() {
 				let event = match event {
 					OutputEventInt::Spawn(pid, new_pid, sender) => {
-						let x = PROCESS_COUNT.fetch_add(1, sync::atomic::Ordering::Relaxed);
+						let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 						trace!("BRIDGE: SPAWN ({})", x);
 						let x = hashmap.lock().unwrap().insert(new_pid, sender);
 						assert!(x.is_none());
@@ -391,7 +391,7 @@ fn manage_connection(
 						DeployOutputEvent::Output(pid, fd, output)
 					}
 					OutputEventInt::Exit(pid, exit_code) => {
-						let x = PROCESS_COUNT.fetch_sub(1, sync::atomic::Ordering::Relaxed);
+						let x = PROCESS_COUNT.fetch_sub(1, atomic::Ordering::Relaxed);
 						assert_ne!(x, 0);
 						trace!("BRIDGE: KILL ({})", x);
 						let _ = hashmap.lock().unwrap().remove(&pid).unwrap();

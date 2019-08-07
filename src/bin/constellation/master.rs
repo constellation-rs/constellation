@@ -3,7 +3,7 @@ use crossbeam;
 use either::Either;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{self, IpAddr, SocketAddr}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, path, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{
@@ -62,7 +62,7 @@ pub fn run(
 			let check_port = check_addresses.insert(addr);
 			assert!(check_port);
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = net::TcpStream::connect(&addr).unwrap();
+			let stream = TcpStream::connect(&addr).unwrap();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(move || {
@@ -127,7 +127,7 @@ pub fn run(
 		})
 		.collect::<Vec<_>>();
 
-	let listener = net::TcpListener::bind(bind_addr).unwrap();
+	let listener = TcpListener::bind(bind_addr).unwrap();
 	let _ = thread::Builder::new()
 		.spawn(move || {
 			for stream in listener.incoming() {

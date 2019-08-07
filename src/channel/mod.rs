@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{self, mpsc, Arc, RwLock}, task, thread, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task, thread, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
@@ -126,7 +126,7 @@ impl Reactor {
 					&context.local,
 				);
 				let mut done: Option<
-					sync::RwLockWriteGuard<HashMap<SocketAddr, Arc<RwLock<Option<Channel>>>>>,
+					RwLockWriteGuard<HashMap<SocketAddr, Arc<RwLock<Option<Channel>>>>>,
 				> = None;
 				while done.is_none()
 					|| done.as_ref().unwrap().iter().any(|(_, ref inner)| {

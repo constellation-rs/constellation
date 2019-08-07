@@ -80,7 +80,7 @@ use palaver::{
 	file::{copy_fd, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, iter, net::{self, IpAddr, SocketAddr}, path::PathBuf, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, iter, net::{IpAddr, SocketAddr, TcpListener}, path::PathBuf, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -139,7 +139,7 @@ fn main() {
 	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		Role::Master(listen, mut nodes) => {
-			let fabric = net::TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
+			let fabric = TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
 			let master_addr = nodes[0].addr;
 			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
 			let _ = thread::Builder::new()
@@ -175,7 +175,7 @@ fn main() {
 				.unwrap();
 			(listen, fabric)
 		}
-		Role::Worker(listen) => (listen.ip(), net::TcpListener::bind(&listen).unwrap()),
+		Role::Worker(listen) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
 	};
 
 	for stream in listener.incoming() {

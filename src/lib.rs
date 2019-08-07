@@ -49,9 +49,9 @@ use palaver::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, io::{self, Read, Write}, iter, marker, mem, net::{self, SocketAddr}, ops, os::unix::{
+	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{self, mpsc}, thread
+	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, thread
 };
 
 use constellation_internal::{
@@ -79,18 +79,18 @@ const MONITOR_FD: Fd = 5;
 
 #[derive(Clone, Deserialize, Debug)]
 struct SchedulerArg {
-	ip: net::IpAddr,
+	ip: IpAddr,
 	scheduler: Pid,
 }
 
 lazy_static! {
-	static ref BRIDGE: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
-	static ref PID: sync::RwLock<Option<Pid>> = sync::RwLock::new(None);
-	static ref SCHEDULER: sync::Mutex<()> = sync::Mutex::new(());
-	static ref DEPLOYED: sync::RwLock<Option<bool>> = sync::RwLock::new(None);
-	static ref REACTOR: sync::RwLock<Option<channel::Reactor>> = sync::RwLock::new(None);
-	static ref RESOURCES: sync::RwLock<Option<Resources>> = sync::RwLock::new(None);
-	static ref HANDLE: sync::RwLock<Option<channel::Handle>> = sync::RwLock::new(None);
+	static ref BRIDGE: RwLock<Option<Pid>> = RwLock::new(None);
+	static ref PID: RwLock<Option<Pid>> = RwLock::new(None);
+	static ref SCHEDULER: Mutex<()> = Mutex::new(());
+	static ref DEPLOYED: RwLock<Option<bool>> = RwLock::new(None);
+	static ref REACTOR: RwLock<Option<channel::Reactor>> = RwLock::new(None);
+	static ref RESOURCES: RwLock<Option<Resources>> = RwLock::new(None);
+	static ref HANDLE: RwLock<Option<channel::Handle>> = RwLock::new(None);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -645,7 +645,7 @@ fn spawn_native(
 	};
 	unistd::close(process_listener).unwrap();
 	drop(arg);
-	let new_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), process_id);
+	let new_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), process_id);
 	// BRIDGE.read().unwrap().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
 	{
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
@@ -659,7 +659,7 @@ fn spawn_deployed(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
 ) -> Result<Pid, ()> {
 	trace!("spawn_deployed");
-	let stream = unsafe { net::TcpStream::from_raw_fd(SCHEDULER_FD) };
+	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
 	let mut arg: Vec<u8> = Vec::new();
@@ -744,7 +744,7 @@ extern "C" fn at_exit() {
 }
 
 #[doc(hidden)]
-pub fn bridge_init() -> net::TcpListener {
+pub fn bridge_init() -> TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
 	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
@@ -762,20 +762,20 @@ pub fn bridge_init() -> net::TcpListener {
 	}
 	// init();
 	socket::listen(BOUND_FD, 100).unwrap();
-	let listener = unsafe { net::TcpListener::from_raw_fd(BOUND_FD) };
+	let listener = unsafe { TcpListener::from_raw_fd(BOUND_FD) };
 	{
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
 		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
 		drop(arg);
 		let port = {
-			let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+			let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 			let local_addr = listener.local_addr().unwrap();
 			let _ = listener.into_raw_fd();
 			local_addr.port()
 		};
 		let our_pid = Pid::new(sched_arg.ip, port);
 		*PID.write().unwrap() = Some(our_pid);
-		let scheduler = net::TcpStream::connect(sched_arg.scheduler.addr())
+		let scheduler = TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
 		if scheduler != SCHEDULER_FD {
@@ -818,7 +818,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		)
 		.unwrap();
 
-		let bridge_pid = Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id);
+		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
 		*PID.write().unwrap() = Some(bridge_pid);
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD);
@@ -923,7 +923,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		process::exit(exit_code.into());
 	}
 	unistd::close(bridge_process_listener).unwrap();
-	Pid::new(net::IpAddr::V4(net::Ipv4Addr::LOCALHOST), bridge_process_id)
+	Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id)
 }
 
 fn native_process_listener() -> (Fd, u16) {
@@ -938,7 +938,7 @@ fn native_process_listener() -> (Fd, u16) {
 	socket::bind(
 		process_listener,
 		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
-			net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+			IpAddr::V4(Ipv4Addr::LOCALHOST),
 			0,
 		))),
 	)
@@ -950,7 +950,7 @@ fn native_process_listener() -> (Fd, u16) {
 		} else {
 			panic!()
 		};
-	assert_eq!(process_id.ip(), net::IpAddr::V4(net::Ipv4Addr::LOCALHOST));
+	assert_eq!(process_id.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
 
 	(process_listener, process_id.port())
 }
@@ -1284,7 +1284,7 @@ pub fn init(resources: Resources) {
 					vec![],
 					None,
 					None,
-					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+					IpAddr::V4(Ipv4Addr::LOCALHOST),
 				)
 			} else {
 				let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
@@ -1299,7 +1299,7 @@ pub fn init(resources: Resources) {
 					prog_arg,
 					Some(bridge),
 					None,
-					net::IpAddr::V4(net::Ipv4Addr::LOCALHOST),
+					IpAddr::V4(Ipv4Addr::LOCALHOST),
 				)
 			}
 		} else {
@@ -1349,7 +1349,7 @@ pub fn init(resources: Resources) {
 	});
 
 	let port = {
-		let listener = unsafe { net::TcpListener::from_raw_fd(LISTENER_FD) };
+		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 		let local_addr = listener.local_addr().unwrap();
 		let _ = listener.into_raw_fd();
 		local_addr.port()
@@ -1409,7 +1409,7 @@ pub fn init(resources: Resources) {
 	.unwrap();
 
 	if deployed {
-		let scheduler = net::TcpStream::connect(scheduler.unwrap().addr())
+		let scheduler = TcpStream::connect(scheduler.unwrap().addr())
 			.unwrap()
 			.into_raw_fd();
 		assert_ne!(scheduler, SCHEDULER_FD);

@@ -26,7 +26,7 @@ maintenance = { status = "actively-developed" }
 
 [features]
 fringe = ["serde_pipe/fringe"]
-no_alloc = ["constellation-internal/alloc_counter"]
+no_alloc = ["constellation-internal/no_alloc"]
 nightly = ["palaver/nightly", "relative/nightly"]
 
 [dependencies]

@@ -39,7 +39,7 @@ pub type Fd = std::os::unix::io::RawFd;
 #[cfg(target_family = "windows")]
 pub type Fd = std::os::windows::io::RawHandle;
 
-#[cfg(feature = "alloc_counter")]
+#[cfg(feature = "no_alloc")]
 #[global_allocator]
 static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
@@ -606,11 +606,11 @@ pub fn forbid_alloc<F, R>(f: F) -> R
 where
 	F: FnOnce() -> R,
 {
-	#[cfg(feature = "alloc_counter")]
+	#[cfg(feature = "no_alloc")]
 	{
 		alloc_counter::forbid_alloc(f)
 	}
-	#[cfg(not(feature = "alloc_counter"))]
+	#[cfg(not(feature = "no_alloc"))]
 	{
 		f()
 	}
