@@ -1108,6 +1108,7 @@ fn monitor_process(
 									}
 								}
 								ProcessInputEvent::Kill => {
+									// TODO: this is racey
 									signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(
 										|e| assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH)),
 									);

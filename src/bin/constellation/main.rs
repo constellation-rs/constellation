@@ -409,6 +409,7 @@ fn main() {
 				});
 			}
 			for (&_job, &pid) in pending.read().unwrap().iter() {
+				// TODO: this is racey
 				let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
 			}
 		})

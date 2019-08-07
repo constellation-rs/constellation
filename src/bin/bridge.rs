@@ -252,6 +252,7 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
 	// 	})
 	// 	.unwrap();
+	// TODO: do this without waitpid/kill race
 	loop {
 		match nix::sys::wait::waitpid(child, None) {
 			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
