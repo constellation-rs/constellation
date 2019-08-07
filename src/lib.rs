@@ -38,7 +38,6 @@ use either::Either;
 use futures::{
 	sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
 };
-use lazy_static::lazy_static;
 use log::trace;
 use more_asserts::*;
 use nix::{
@@ -46,6 +45,7 @@ use nix::{
 		signal, socket::{self, sockopt}, stat, wait
 	}, unistd
 };
+use once_cell::sync::{Lazy, OnceCell};
 use palaver::{
 	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
@@ -85,15 +85,13 @@ struct SchedulerArg {
 	scheduler: Pid,
 }
 
-lazy_static! {
-	static ref BRIDGE: RwLock<Option<Pid>> = RwLock::new(None);
-	static ref PID: RwLock<Option<Pid>> = RwLock::new(None);
-	static ref SCHEDULER: Mutex<()> = Mutex::new(());
-	static ref DEPLOYED: RwLock<Option<bool>> = RwLock::new(None);
-	static ref REACTOR: RwLock<Option<channel::Reactor>> = RwLock::new(None);
-	static ref RESOURCES: RwLock<Option<Resources>> = RwLock::new(None);
-	static ref HANDLE: RwLock<Option<channel::Handle>> = RwLock::new(None);
-}
+static PID: OnceCell<Pid> = OnceCell::new();
+static BRIDGE: OnceCell<Pid> = OnceCell::new();
+static DEPLOYED: OnceCell<bool> = OnceCell::new();
+static RESOURCES: OnceCell<Resources> = OnceCell::new();
+static SCHEDULER: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static REACTOR: Lazy<RwLock<Option<channel::Reactor>>> = Lazy::new(|| RwLock::new(None));
+static HANDLE: Lazy<RwLock<Option<channel::Handle>>> = Lazy::new(|| RwLock::new(None));
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -457,14 +455,14 @@ pub fn run<'a>(mut select: Vec<Box<dyn Selectable + 'a>>) {
 /// Get the [Pid] of the current process
 #[inline(always)]
 pub fn pid() -> Pid {
-	PID.read().unwrap().unwrap_or_else(|| {
+	*PID.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	})
 }
 
 /// Get the memory and CPU requirements configured at initialisation of the current process
 pub fn resources() -> Resources {
-	RESOURCES.read().unwrap().unwrap_or_else(|| {
+	*RESOURCES.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	})
 }
@@ -500,7 +498,7 @@ fn spawn_native(
 	let (process_listener, process_id) = native_process_listener();
 
 	let mut spawn_arg: Vec<u8> = Vec::new();
-	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
+	let bridge_pid: Pid = *BRIDGE.get().unwrap();
 	bincode::serialize_into(&mut spawn_arg, &bridge_pid).unwrap();
 	bincode::serialize_into(&mut spawn_arg, &our_pid).unwrap();
 	bincode::serialize_into(&mut spawn_arg, &f).unwrap();
@@ -640,7 +638,7 @@ fn spawn_native(
 	unistd::close(process_listener).unwrap();
 	drop(arg);
 	let new_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), process_id);
-	// BRIDGE.read().unwrap().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
+	// *BRIDGE.get().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
 	{
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
 		bincode::serialize_into(&mut &file, &ProcessOutputEvent::Spawn(new_pid)).unwrap();
@@ -657,7 +655,7 @@ fn spawn_deployed(
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
 	let mut arg: Vec<u8> = Vec::new();
-	let bridge_pid: Pid = BRIDGE.read().unwrap().unwrap();
+	let bridge_pid: Pid = *BRIDGE.get().unwrap();
 	bincode::serialize_into(&mut arg, &bridge_pid).unwrap();
 	bincode::serialize_into(&mut arg, &pid()).unwrap();
 	bincode::serialize_into(&mut arg, &f).unwrap();
@@ -711,7 +709,7 @@ pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, ()> {
 	let _scheduler = SCHEDULER.lock().unwrap();
-	let deployed = DEPLOYED.read().unwrap().unwrap_or_else(|| {
+	let deployed = *DEPLOYED.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
 	});
 	let arg: Vec<u8> = bincode::serialize(&start).unwrap();
@@ -768,7 +766,7 @@ pub fn bridge_init() -> TcpListener {
 			local_addr.port()
 		};
 		let our_pid = Pid::new(sched_arg.ip, port);
-		*PID.write().unwrap() = Some(our_pid);
+		PID.set(our_pid).unwrap();
 		let scheduler = TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
@@ -813,7 +811,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		.unwrap();
 
 		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
-		*PID.write().unwrap() = Some(bridge_pid);
+		PID.set(bridge_pid).unwrap();
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD);
 		*REACTOR.try_write().unwrap() = Some(reactor);
@@ -1337,7 +1335,6 @@ pub fn init(resources: Resources) {
 			.unwrap();
 		}
 		let our_pid = Pid::new(ip, our_process_id);
-		*PID.write().unwrap() = Some(our_pid);
 		native_bridge(format, our_pid)
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
@@ -1349,7 +1346,7 @@ pub fn init(resources: Resources) {
 		local_addr.port()
 	};
 	let our_pid = Pid::new(ip, port);
-	*PID.write().unwrap() = Some(our_pid);
+	PID.set(our_pid).unwrap();
 
 	trace!(
 		"PROCESS {}:{}: start setup; pid: {}",
@@ -1358,9 +1355,9 @@ pub fn init(resources: Resources) {
 		pid()
 	);
 
-	*DEPLOYED.write().unwrap() = Some(deployed);
-	*RESOURCES.write().unwrap() = Some(resources);
-	*BRIDGE.write().unwrap() = Some(bridge);
+	DEPLOYED.set(deployed).unwrap();
+	RESOURCES.set(resources).unwrap();
+	BRIDGE.set(bridge).unwrap();
 
 	let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
 	if fd != SCHEDULER_FD {
