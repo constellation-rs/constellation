@@ -253,10 +253,10 @@ fn main() {
 				let args_p = Vec::with_capacity(args.len() + 1);
 				let vars_p = Vec::with_capacity(vars.len() + 1);
 
-				let binary = request.binary.into_raw_fd();
+				let binary = request.binary;
 				let mut binary_desired_fd =
 					BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
-				let arg = request.arg.into_raw_fd();
+				let arg = request.arg;
 				let bind = request.bind;
 
 				let child = match unistd::fork().expect("Fork failed") {
@@ -276,6 +276,8 @@ fn main() {
 							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
+							let binary = binary.into_raw_fd(); // These are dropped by parent
+							let arg = arg.into_raw_fd();
 							move_fds(
 								&mut [
 									(arg, ARG_FD),
