@@ -70,7 +70,7 @@ sha1 = "0.6"
 
 [patch.crates-io]
 bincode = { git = "https://github.com/alecmocatta/bincode" }
-# palaver = { path = "../palaver" }
+palaver = { git = "https://github.com/alecmocatta/palaver", branch = "process-count" }
 # serde_pipe = { path = "../serde_pipe" }
 # serde_traitobject = { path = "../serde_traitobject"}
 # uuid = { path = "../uuid" }
