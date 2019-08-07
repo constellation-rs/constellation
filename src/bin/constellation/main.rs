@@ -77,10 +77,10 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	file::{copy_fd, fexecve, move_fds, seal_fd}, socket::{socket, SockFlag}, valgrind
+	file::{copy_fd, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, ffi::OsString, io::{self, Read}, iter, net::{self, IpAddr, SocketAddr}, os::unix::io::AsRawFd, path::PathBuf, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, iter, net::{self, IpAddr, SocketAddr}, path::PathBuf, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -88,7 +88,7 @@ use std::{
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Resources, Trace
+	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -118,32 +118,6 @@ struct Run {
 const LISTENER_FD: Fd = 3;
 const ARG_FD: Fd = 4;
 const BOUND_FD_START: Fd = 5;
-
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Resources,
-		Vec<SocketAddr>,
-		File,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		File,
-	),
-	io::Error,
-> {
-	let resources = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let ports: Vec<SocketAddr> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars: Vec<(OsString, OsString)> =
-		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let arg_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let arg = file_from_reader(&mut stream, arg_len, &args[0], false)?;
-	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
-	seal_fd(binary.as_raw_fd());
-	Ok((resources, ports, binary, args, vars, arg))
-}
 
 fn main() {
 	std::env::set_var("RUST_BACKTRACE", "full");
