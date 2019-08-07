@@ -71,7 +71,7 @@ systemstat = "0.1"
 
 [patch.crates-io]
 bincode = { git = "https://github.com/alecmocatta/bincode" }
-palaver = { git = "https://github.com/alecmocatta/palaver", branch = "process-count" }
+palaver = { git = "https://github.com/alecmocatta/palaver" }
 systemstat = { git = "https://github.com/myfreeweb/systemstat" }
 # serde_pipe = { path = "../serde_pipe" }
 # serde_traitobject = { path = "../serde_traitobject"}
