@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task, thread, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread::{self, Thread, ThreadId}, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
@@ -113,7 +113,7 @@ impl Reactor {
 				.add_trigger()
 		};
 		let mut triggeree = Some(triggeree);
-		let tcp_thread = std::thread::Builder::new()
+		let tcp_thread = thread::Builder::new()
 			.name(String::from("tcp-thread"))
 			.spawn(move || {
 				let context = context();
@@ -420,10 +420,10 @@ pub struct Channel {
 	inner: Inner,
 	senders_count: usize,
 	receivers_count: usize,
-	senders: HashMap<thread::ThreadId, thread::Thread>, // TODO: linked list
-	senders_futures: Vec<task::Waker>,
-	receivers: HashMap<thread::ThreadId, thread::Thread>,
-	receivers_futures: Vec<task::Waker>,
+	senders: HashMap<ThreadId, Thread>, // TODO: linked list
+	senders_futures: Vec<Waker>,
+	receivers: HashMap<ThreadId, Thread>,
+	receivers_futures: Vec<Waker>,
 }
 impl Channel {
 	fn new(inner: Inner) -> Self {
@@ -605,9 +605,7 @@ impl<T: Serialize> Sender<T> {
 	}
 }
 impl<T: Serialize> Sender<Option<T>> {
-	pub fn futures_poll_ready(
-		&self, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<Result<(), Never>>
+	pub fn futures_poll_ready(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
 	where
 		T: 'static,
 	{
@@ -622,9 +620,9 @@ impl<T: Serialize> Sender<Option<T>> {
 			.push(cx.waker().clone());
 		if let Some(_send) = self.async_send(context) {
 			// TODO: remove from senders_futures
-			task::Poll::Ready(Ok(()))
+			Poll::Ready(Ok(()))
 		} else {
-			task::Poll::Pending
+			Poll::Pending
 		}
 	}
 
@@ -638,9 +636,7 @@ impl<T: Serialize> Sender<Option<T>> {
 		Ok(())
 	}
 
-	pub fn futures_poll_close(
-		&self, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<Result<(), Never>>
+	pub fn futures_poll_close(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
 	where
 		T: 'static,
 	{
@@ -656,9 +652,9 @@ impl<T: Serialize> Sender<Option<T>> {
 		if let Some(send) = self.async_send(context) {
 			// TODO: remove from senders_futures
 			send(None);
-			task::Poll::Ready(Ok(()))
+			Poll::Ready(Ok(()))
 		} else {
-			task::Poll::Pending
+			Poll::Pending
 		}
 	}
 }
@@ -677,7 +673,7 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> fmt::Debug for Send<'a, T, F>
 	}
 }
 impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F> {
-	fn subscribe(&self, thread: thread::Thread) {
+	fn subscribe(&self, thread: Thread) {
 		let x = self
 			.0
 			.channel
@@ -703,7 +699,7 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F>
 			})
 	}
 
-	fn unsubscribe(&self, thread: thread::Thread) {
+	fn unsubscribe(&self, thread: Thread) {
 		let _ = self
 			.0
 			.channel
@@ -719,9 +715,7 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F>
 	}
 }
 impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
-	pub fn futures_poll(
-		self: Pin<&mut Self>, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<()> {
+	pub fn futures_poll(self: Pin<&mut Self>, cx: &mut Context, context: &Reactor) -> Poll<()> {
 		self.0
 			.channel
 			.as_ref()
@@ -735,9 +729,9 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
 		if let Some(send) = self.0.async_send(context) {
 			// TODO: remove from senders_futures
 			send(self.as_ref().1.write().unwrap().take().unwrap()());
-			task::Poll::Ready(())
+			Poll::Ready(())
 		} else {
-			task::Poll::Pending
+			Poll::Pending
 		}
 	}
 }
@@ -886,8 +880,8 @@ impl<T: DeserializeOwned> Receiver<T> {
 }
 impl<T: DeserializeOwned> Receiver<Option<T>> {
 	pub fn futures_poll_next(
-		&self, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<Option<Result<T, ChannelError>>>
+		&self, cx: &mut Context, context: &Reactor,
+	) -> Poll<Option<Result<T, ChannelError>>>
 	where
 		T: 'static,
 	{
@@ -902,13 +896,13 @@ impl<T: DeserializeOwned> Receiver<Option<T>> {
 			.push(cx.waker().clone());
 		if let Some(recv) = self.async_recv(context) {
 			// TODO: remove from receivers_futures
-			task::Poll::Ready(match recv() {
+			Poll::Ready(match recv() {
 				Ok(Some(t)) => Some(Ok(t)),
 				Ok(None) => None,
 				Err(err) => Some(Err(err)),
 			})
 		} else {
-			task::Poll::Pending
+			Poll::Pending
 		}
 	}
 }
@@ -931,7 +925,7 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> fmt:
 impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Selectable
 	for Recv<'a, T, F>
 {
-	fn subscribe(&self, thread: thread::Thread) {
+	fn subscribe(&self, thread: Thread) {
 		let x = self
 			.0
 			.channel
@@ -957,7 +951,7 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Sele
 			})
 	}
 
-	fn unsubscribe(&self, thread: thread::Thread) {
+	fn unsubscribe(&self, thread: Thread) {
 		let _ = self
 			.0
 			.channel
@@ -973,9 +967,7 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Sele
 	}
 }
 impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv<'a, T, F> {
-	pub fn futures_poll(
-		self: Pin<&mut Self>, cx: &mut task::Context, context: &Reactor,
-	) -> task::Poll<()>
+	pub fn futures_poll(self: Pin<&mut Self>, cx: &mut Context, context: &Reactor) -> Poll<()>
 	where
 		T: 'static,
 	{
@@ -992,9 +984,9 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv
 		if let Some(recv) = self.0.async_recv(context) {
 			// TODO: remove from receivers_futures
 			self.as_ref().1.write().unwrap().take().unwrap()(recv());
-			task::Poll::Ready(())
+			Poll::Ready(())
 		} else {
-			task::Poll::Pending
+			Poll::Pending
 		}
 	}
 }
@@ -1016,7 +1008,7 @@ impl<T: DeserializeOwned> fmt::Debug for Receiver<T> {
 /// It is inspired by the [`select()`](select) of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
 pub trait Selectable: fmt::Debug {
 	#[doc(hidden)]
-	fn subscribe(&self, thread: thread::Thread);
+	fn subscribe(&self, thread: Thread);
 	#[doc(hidden)]
 	// type State;
 	#[doc(hidden)]
@@ -1024,7 +1016,7 @@ pub trait Selectable: fmt::Debug {
 	// #[doc(hidden)]
 	// fn run(&mut self, state: Self::State); // get rid once impl trait works in trait method return vals
 	#[doc(hidden)]
-	fn unsubscribe(&self, thread: thread::Thread);
+	fn unsubscribe(&self, thread: Thread);
 }
 // struct SelectableRun<'a,T:Selectable+?Sized+'a>(&'a mut T,<T as Selectable>::State);
 // impl<'a,T:Selectable+?Sized+'a> ops::FnOnce<()> for SelectableRun<'a,T> {

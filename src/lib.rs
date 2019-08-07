@@ -35,7 +35,9 @@
 mod channel;
 
 use either::Either;
-use futures::{sink::SinkExt, stream::StreamExt};
+use futures::{
+	sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
+};
 use lazy_static::lazy_static;
 use log::trace;
 use more_asserts::*;
@@ -49,9 +51,9 @@ use palaver::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, thread
+	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, task::{Context, Poll}, thread
 };
 
 use constellation_internal::{
@@ -153,7 +155,7 @@ impl<T: Serialize> Sender<T> {
 	/// This needs to be passed to [`select()`](select) to be executed.
 	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(
 		&'a self, send: F,
-	) -> impl Selectable + std::future::Future<Output = ()> + 'a
+	) -> impl Selectable + Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -222,12 +224,10 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
+impl<T: 'static + Serialize> Sink<T> for Sender<Option<T>> {
 	type Error = Never;
 
-	fn poll_ready(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
+	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -243,15 +243,11 @@ impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
 			.futures_start_send(item, context.as_ref().unwrap())
 	}
 
-	fn poll_flush(
-		self: Pin<&mut Self>, _cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
-		futures::task::Poll::Ready(Ok(()))
+	fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
 	}
 
-	fn poll_close(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Result<(), Self::Error>> {
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -260,10 +256,10 @@ impl<T: 'static + Serialize> futures::sink::Sink<T> for Sender<Option<T>> {
 	}
 }
 
-impl<'a, T: Serialize + 'static, F: FnOnce() -> T> std::future::Future for channel::Send<'a, T, F> {
+impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Future for channel::Send<'a, T, F> {
 	type Output = ();
 
-	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let context = REACTOR.read().unwrap();
 		self.futures_poll(cx, context.as_ref().unwrap())
 	}
@@ -330,7 +326,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// This needs to be passed to [`select()`](select) to be executed.
 	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
 		&'a self, recv: F,
-	) -> impl Selectable + std::future::Future<Output = ()> + 'a
+	) -> impl Selectable + Future<Output = ()> + 'a
 	where
 		T: 'static,
 	{
@@ -410,12 +406,10 @@ impl<T: DeserializeOwned> fmt::Debug for Receiver<T> {
 		self.0.fmt(f)
 	}
 }
-impl<T: 'static + DeserializeOwned> futures::stream::Stream for Receiver<Option<T>> {
+impl<T: 'static + DeserializeOwned> Stream for Receiver<Option<T>> {
 	type Item = Result<T, ChannelError>;
 
-	fn poll_next(
-		self: Pin<&mut Self>, cx: &mut futures::task::Context,
-	) -> futures::task::Poll<Option<Self::Item>> {
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		let context = REACTOR.read().unwrap();
 		self.0
 			.as_ref()
@@ -424,12 +418,12 @@ impl<T: 'static + DeserializeOwned> futures::stream::Stream for Receiver<Option<
 	}
 }
 
-impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> std::future::Future
+impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Future
 	for channel::Recv<'a, T, F>
 {
 	type Output = ();
 
-	fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Self::Output> {
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let context = REACTOR.read().unwrap();
 		self.futures_poll(cx, context.as_ref().unwrap())
 	}
