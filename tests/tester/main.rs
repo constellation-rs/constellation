@@ -42,7 +42,7 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
-const FORWARD_STDERR: bool = false;
+const FORWARD_STDERR: bool = true;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
@@ -218,6 +218,16 @@ fn treeize(
 
 fn main() {
 	let start = time::Instant::now();
+	std::env::set_var("RUST_BACKTRACE", "full");
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
+		eprintln!("{:?}", backtrace::Backtrace::new());
+		std::process::abort();
+	}));
 	let _ = thread::Builder::new()
 		.spawn(move || loop {
 			thread::sleep(time::Duration::new(10, 0));
@@ -368,9 +378,6 @@ fn main() {
 		// if src != Path::new("tests/x.rs") {
 		// 	continue;
 		// }
-		if src != Path::new("tests/c.rs") {
-			continue;
-		}
 		println!("{}", src.display());
 		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&BufReader::new(File::open(src).unwrap())
@@ -408,14 +415,14 @@ fn main() {
 				succeeded += 1;
 			}
 		};
-		// println!("  native");
-		// for i in 0..iterations {
-		// 	println!("    {}", i);
-		// 	x(process::Command::new(bin)
-		// 		.env_remove("CONSTELLATION_VERSION")
-		// 		.env("CONSTELLATION_FORMAT", "json"));
-		// }
-		// dump_system_load(io::stdout()).unwrap();
+		println!("  native");
+		for i in 0..iterations {
+			println!("    {}", i);
+			x(process::Command::new(bin)
+				.env_remove("CONSTELLATION_VERSION")
+				.env("CONSTELLATION_FORMAT", "json"));
+		}
+		dump_system_load(io::stdout()).unwrap();
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -423,10 +430,8 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
-			if i % 20 == 0 {
-				dump_system_load(io::stdout()).unwrap();
-			}
 		}
+		dump_system_load(io::stdout()).unwrap();
 	}
 
 	println!("killing");
