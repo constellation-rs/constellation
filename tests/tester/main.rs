@@ -42,7 +42,7 @@ const SELF: &str = "tests/tester/main.rs";
 const FABRIC_ADDR: &str = "127.0.0.1:12360";
 const BRIDGE_ADDR: &str = "127.0.0.1:12340";
 
-const FORWARD_STDERR: bool = true;
+const FORWARD_STDERR: bool = false;
 
 #[derive(PartialEq, Eq, Serialize, Debug)]
 struct Output {
@@ -368,6 +368,9 @@ fn main() {
 		// if src != Path::new("tests/x.rs") {
 		// 	continue;
 		// }
+		if src != Path::new("tests/c.rs") {
+			continue;
+		}
 		println!("{}", src.display());
 		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&BufReader::new(File::open(src).unwrap())
@@ -405,14 +408,14 @@ fn main() {
 				succeeded += 1;
 			}
 		};
-		println!("  native");
-		for i in 0..iterations {
-			println!("    {}", i);
-			x(process::Command::new(bin)
-				.env_remove("CONSTELLATION_VERSION")
-				.env("CONSTELLATION_FORMAT", "json"));
-		}
-		dump_system_load(io::stdout()).unwrap();
+		// println!("  native");
+		// for i in 0..iterations {
+		// 	println!("    {}", i);
+		// 	x(process::Command::new(bin)
+		// 		.env_remove("CONSTELLATION_VERSION")
+		// 		.env("CONSTELLATION_FORMAT", "json"));
+		// }
+		// dump_system_load(io::stdout()).unwrap();
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -420,12 +423,15 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
+			if i % 20 == 0 {
+				dump_system_load(io::stdout()).unwrap();
+			}
 		}
-		dump_system_load(io::stdout()).unwrap();
 	}
 
 	println!("killing");
 	fabric.kill().unwrap();
+	let _ = fabric.wait().unwrap();
 	let _stderr_empty = fabric_stderr.join().unwrap();
 	// assert!(stderr_empty);
 	let _stdout_empty = fabric_stdout.join().unwrap();

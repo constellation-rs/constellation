@@ -950,7 +950,7 @@ fn native_process_listener() -> (Fd, u16) {
 fn monitor_process(
 	bridge: Pid, deployed: bool,
 ) -> (channel::SocketForwardee, Fd, Fd, Option<Fd>, Fd) {
-	const FORWARD_STDERR: bool = true;
+	const FORWARD_STDERR: bool = false;
 
 	let (socket_forwarder, socket_forwardee) = channel::socket_forwarder();
 

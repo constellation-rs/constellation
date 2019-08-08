@@ -170,7 +170,8 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 	{
 		child
 	} else {
-		forbid_alloc(|| {
+		{
+			let _: fn(fn()) = forbid_alloc;
 			// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
 			// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
 			// Including malloc.
@@ -242,7 +243,7 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 				fexecve(4, &args, &vars).expect("Failed to fexecve ELF");
 			}
 			unreachable!()
-		})
+		}
 	};
 	nix::unistd::close(writer).unwrap();
 	// let _ = thread::Builder::new()
