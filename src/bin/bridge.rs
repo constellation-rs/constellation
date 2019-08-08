@@ -371,7 +371,8 @@ fn manage_connection(
 				}
 				let mut x = hashmap.lock().unwrap();
 				for (_, process) in x.iter_mut() {
-					futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
+					let _unchecked_error =
+						futures::executor::block_on(process.send(InputEventInt::Kill));
 				}
 			});
 			for event in receiver.iter() {
