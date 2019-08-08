@@ -385,24 +385,17 @@ fn manage_connection(
 					}
 					Either::Right(event) => match event {
 						Some(DeployInputEvent::Input(pid, fd, input)) => {
-							let _unchecked_error = futures::executor::block_on(
-								hashmap
-									.lock()
-									.unwrap()
-									.get_mut(&pid)
-									.unwrap()
-									.send(InputEventInt::Input(fd, input)),
-							);
+							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
+								let _unchecked_error = futures::executor::block_on(
+									sender.send(InputEventInt::Input(fd, input)),
+								);
+							}
 						}
 						Some(DeployInputEvent::Kill(Some(pid))) => {
-							let _unchecked_error = futures::executor::block_on(
-								hashmap
-									.lock()
-									.unwrap()
-									.get_mut(&pid)
-									.unwrap()
-									.send(InputEventInt::Kill),
-							);
+							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
+								let _unchecked_error =
+									futures::executor::block_on(sender.send(InputEventInt::Kill));
+							}
 						}
 						Some(DeployInputEvent::Kill(None)) | None => {
 							break;
