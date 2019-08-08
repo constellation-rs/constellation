@@ -23,7 +23,6 @@
 	clippy::pedantic
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 #![allow(
-	clippy::match_ref_pats,
 	clippy::inline_always,
 	clippy::similar_names,
 	clippy::if_not_else,
@@ -907,9 +906,9 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 					DeployOutputEvent::Exit(pid, exit_code_)
 				}
 			};
-			match &mut formatter {
-				&mut Either::Left(ref mut formatter) => formatter.write(&event),
-				&mut Either::Right(ref mut stdout) => {
+			match formatter {
+				Either::Left(ref mut formatter) => formatter.write(&event),
+				Either::Right(ref mut stdout) => {
 					serde_json::to_writer(&mut *stdout, &event).unwrap();
 					stdout.write_all(b"\n").unwrap()
 				}

@@ -137,7 +137,7 @@ impl Reactor {
 					}) {
 					let mut sender = None;
 					let mut catcher = None;
-					if let &Some(ref sockets) = &done {
+					if let Some(ref sockets) = done {
 						struct Ptr<T: ?Sized>(T);
 						unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
 						unsafe impl<T: ?Sized> Sync for Ptr<T> {}
@@ -450,25 +450,23 @@ pub enum ChannelError {
 impl fmt::Display for ChannelError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
-			ChannelError::Error => {
-				write!(f, "Remote process died or channel killed by OS/hardware")
-			} //(ref err) => err.fmt(f),
-			ChannelError::Exited => write!(f, "Remote process already exited"),
+			Self::Error => write!(f, "Remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
+			Self::Exited => write!(f, "Remote process already exited"),
 		}
 	}
 }
 impl error::Error for ChannelError {
 	fn description(&self) -> &str {
 		match *self {
-			ChannelError::Error => "remote process died or channel killed by OS/hardware", //(ref err) => err.description(),
-			ChannelError::Exited => "remote process already exited",
+			Self::Error => "remote process died or channel killed by OS/hardware", //(ref err) => err.description(),
+			Self::Exited => "remote process already exited",
 		}
 	}
 
 	fn cause(&self) -> Option<&dyn error::Error> {
 		match *self {
-			ChannelError::Error /*(ref err) => Some(err),*/ |
-			ChannelError::Exited => None,
+			Self::Error /*(ref err) => Some(err),*/ |
+			Self::Exited => None,
 		}
 	}
 }

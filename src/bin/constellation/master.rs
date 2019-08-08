@@ -162,13 +162,11 @@ pub fn run(
 		match msg {
 			Either::Left((mut request, sender, force)) => {
 				// println!("spawn {:?}", request.resources);
-				let node = if force.is_none() {
+				let node = force.or_else(|| {
 					nodes
 						.iter()
 						.position(|node| node.1.fits(&request.resources))
-				} else {
-					Some(force.unwrap())
-				};
+				});
 				if let Some(node) = node {
 					let node = &mut nodes[node];
 					node.1.alloc(&request.resources);
