@@ -484,5 +484,13 @@ fn dump_system_load<W: Write>(mut writer: W) -> Result<(), io::Error> {
 		"Processes: {}, threads: {}",
 		palaver::process::count(),
 		palaver::process::count_threads()
-	)
+	)?;
+	if let Ok(file_stats) = sys.file_stats() {
+		writeln!(
+			writer,
+			"File descriptors: {} open, {} max",
+			file_stats.open, file_stats.max
+		)?;
+	}
+	Ok(())
 }

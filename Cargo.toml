@@ -70,7 +70,7 @@ systemstat = "0.1"
 
 [patch.crates-io]
 # bincode = { git = "https://github.com/alecmocatta/bincode" }
-systemstat = { git = "https://github.com/myfreeweb/systemstat" }
+systemstat = { git = "https://github.com/alecmocatta/systemstat" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
