@@ -44,15 +44,15 @@ impl InnerConnecting {
 	) -> InnerConnectingPoll {
 		if ord(&local, &remote) {
 			assert!(incoming.is_none());
-			InnerConnecting::Outgoing(Some(Connection::connect(local, remote, notifier)))
+			Self::Outgoing(Some(Connection::connect(local, remote, notifier)))
 		} else {
-			InnerConnecting::Incoming(incoming)
+			Self::Incoming(incoming)
 		}
 		.poll(notifier)
 	}
 
 	pub fn add_incoming(&mut self, incoming: Connection, notifier: &impl Notifier) {
-		if let InnerConnecting::Incoming(ref mut prev_incoming) = self {
+		if let Self::Incoming(ref mut prev_incoming) = self {
 			if let Some(mut prev_incoming) = prev_incoming.take() {
 				prev_incoming.kill(notifier).unwrap()();
 			}
@@ -65,7 +65,7 @@ impl InnerConnecting {
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerConnectingPoll {
 		match self {
-			InnerConnecting::Incoming(ref mut incoming) => {
+			Self::Incoming(ref mut incoming) => {
 				if incoming.is_some() {
 					incoming.as_mut().unwrap().poll(notifier);
 					if !incoming.as_ref().unwrap().connecting() {
@@ -81,7 +81,7 @@ impl InnerConnecting {
 					}
 				}
 			}
-			InnerConnecting::Outgoing(ref mut outgoing) => {
+			Self::Outgoing(ref mut outgoing) => {
 				if outgoing.is_some() {
 					outgoing.as_mut().unwrap().poll(notifier);
 					if !outgoing.as_ref().unwrap().connecting() {
@@ -104,8 +104,8 @@ impl InnerConnecting {
 	pub fn close(self, notifier: &impl Notifier) -> InnerConnectingLocalClosedPoll {
 		InnerConnectingLocalClosed::new(
 			match self {
-				InnerConnecting::Outgoing(outgoing) => Either::Left(outgoing),
-				InnerConnecting::Incoming(incoming) => Either::Left(incoming),
+				Self::Outgoing(outgoing) => Either::Left(outgoing),
+				Self::Incoming(incoming) => Either::Left(incoming),
 			},
 			notifier,
 		)
@@ -130,14 +130,14 @@ impl InnerConnectingLocalClosed {
 		connection: Either<Option<Connection>, Option<Connection>>, notifier: &impl Notifier,
 	) -> InnerConnectingLocalClosedPoll {
 		match connection {
-			Either::Left(outgoing) => InnerConnectingLocalClosed::Outgoing(outgoing),
-			Either::Right(incoming) => InnerConnectingLocalClosed::Incoming(incoming),
+			Either::Left(outgoing) => Self::Outgoing(outgoing),
+			Either::Right(incoming) => Self::Incoming(incoming),
 		}
 		.poll(notifier)
 	}
 
 	pub fn add_incoming(&mut self, incoming: Connection, notifier: &impl Notifier) {
-		if let InnerConnectingLocalClosed::Incoming(ref mut prev_incoming) = self {
+		if let Self::Incoming(ref mut prev_incoming) = self {
 			if let Some(mut prev_incoming) = prev_incoming.take() {
 				prev_incoming.kill(notifier).unwrap()();
 			}
@@ -150,7 +150,7 @@ impl InnerConnectingLocalClosed {
 
 	pub fn poll(mut self, notifier: &impl Notifier) -> InnerConnectingLocalClosedPoll {
 		match self {
-			InnerConnectingLocalClosed::Incoming(ref mut incoming) => {
+			Self::Incoming(ref mut incoming) => {
 				if incoming.is_some() {
 					incoming.as_mut().unwrap().poll(notifier);
 					if incoming.as_ref().unwrap().closable() {
@@ -179,7 +179,7 @@ impl InnerConnectingLocalClosed {
 					return InnerConnectingLocalClosedPoll::Closed;
 				}
 			}
-			InnerConnectingLocalClosed::Outgoing(ref mut outgoing) => {
+			Self::Outgoing(ref mut outgoing) => {
 				if outgoing.is_some() {
 					outgoing.as_mut().unwrap().poll(notifier);
 					if outgoing.as_ref().unwrap().closable() {

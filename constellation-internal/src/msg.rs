@@ -103,8 +103,8 @@ mod fabric_request {
 			S: Serializer,
 		{
 			match self {
-				PoorGat::Vec(left) => left.serialize(serializer),
-				PoorGat::File(right) => right.serialize(serializer),
+				Self::Vec(left) => left.serialize(serializer),
+				Self::File(right) => right.serialize(serializer),
 			}
 		}
 	}

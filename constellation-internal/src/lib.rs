@@ -319,14 +319,14 @@ pub enum ExitStatus {
 }
 impl ExitStatus {
 	pub fn success(&self) -> bool {
-		if let ExitStatus::Success = *self {
+		if let Self::Success = *self {
 			true
 		} else {
 			false
 		}
 	}
 	pub fn error(&self) -> Option<ExitStatusError> {
-		if let ExitStatus::Error(error) = *self {
+		if let Self::Error(error) = *self {
 			Some(error)
 		} else {
 			None
@@ -334,13 +334,13 @@ impl ExitStatus {
 	}
 	pub fn from_unix_status(s: u8) -> Self {
 		if s == 0 {
-			ExitStatus::Success
+			Self::Success
 		} else {
-			ExitStatus::Error(ExitStatusError::Unix(ExitStatusUnix::Status(s)))
+			Self::Error(ExitStatusError::Unix(ExitStatusUnix::Status(s)))
 		}
 	}
 	pub fn from_unix_signal(s: signal::Signal) -> Self {
-		ExitStatus::Error(ExitStatusError::Unix(ExitStatusUnix::Signal(s.into())))
+		Self::Error(ExitStatusError::Unix(ExitStatusUnix::Signal(s.into())))
 	}
 }
 impl ops::Add for ExitStatus {
@@ -348,7 +348,7 @@ impl ops::Add for ExitStatus {
 	fn add(self, other: Self) -> Self {
 		match (self, other) {
 			(a, b) if a == b => a,
-			_ => ExitStatus::Error(ExitStatusError::Indeterminate),
+			_ => Self::Error(ExitStatusError::Indeterminate),
 		}
 	}
 }
@@ -410,97 +410,98 @@ pub enum Signal {
 impl From<signal::Signal> for Signal {
 	fn from(signal: signal::Signal) -> Self {
 		match signal {
-			signal::Signal::SIGHUP => Signal::SIGHUP,
-			signal::Signal::SIGINT => Signal::SIGINT,
-			signal::Signal::SIGQUIT => Signal::SIGQUIT,
-			signal::Signal::SIGILL => Signal::SIGILL,
-			signal::Signal::SIGTRAP => Signal::SIGTRAP,
-			signal::Signal::SIGABRT => Signal::SIGABRT,
-			signal::Signal::SIGBUS => Signal::SIGBUS,
-			signal::Signal::SIGFPE => Signal::SIGFPE,
-			signal::Signal::SIGKILL => Signal::SIGKILL,
-			signal::Signal::SIGUSR1 => Signal::SIGUSR1,
-			signal::Signal::SIGSEGV => Signal::SIGSEGV,
-			signal::Signal::SIGUSR2 => Signal::SIGUSR2,
-			signal::Signal::SIGPIPE => Signal::SIGPIPE,
-			signal::Signal::SIGALRM => Signal::SIGALRM,
-			signal::Signal::SIGTERM => Signal::SIGTERM,
+			signal::Signal::SIGHUP => Self::SIGHUP,
+			signal::Signal::SIGINT => Self::SIGINT,
+			signal::Signal::SIGQUIT => Self::SIGQUIT,
+			signal::Signal::SIGILL => Self::SIGILL,
+			signal::Signal::SIGTRAP => Self::SIGTRAP,
+			signal::Signal::SIGABRT => Self::SIGABRT,
+			signal::Signal::SIGBUS => Self::SIGBUS,
+			signal::Signal::SIGFPE => Self::SIGFPE,
+			signal::Signal::SIGKILL => Self::SIGKILL,
+			signal::Signal::SIGUSR1 => Self::SIGUSR1,
+			signal::Signal::SIGSEGV => Self::SIGSEGV,
+			signal::Signal::SIGUSR2 => Self::SIGUSR2,
+			signal::Signal::SIGPIPE => Self::SIGPIPE,
+			signal::Signal::SIGALRM => Self::SIGALRM,
+			signal::Signal::SIGTERM => Self::SIGTERM,
 			#[cfg(all(
 				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
-			signal::Signal::SIGSTKFLT => Signal::SIGSTKFLT,
-			signal::Signal::SIGCHLD => Signal::SIGCHLD,
-			signal::Signal::SIGCONT => Signal::SIGCONT,
-			signal::Signal::SIGSTOP => Signal::SIGSTOP,
-			signal::Signal::SIGTSTP => Signal::SIGTSTP,
-			signal::Signal::SIGTTIN => Signal::SIGTTIN,
-			signal::Signal::SIGTTOU => Signal::SIGTTOU,
-			signal::Signal::SIGURG => Signal::SIGURG,
-			signal::Signal::SIGXCPU => Signal::SIGXCPU,
-			signal::Signal::SIGXFSZ => Signal::SIGXFSZ,
-			signal::Signal::SIGVTALRM => Signal::SIGVTALRM,
-			signal::Signal::SIGPROF => Signal::SIGPROF,
-			signal::Signal::SIGWINCH => Signal::SIGWINCH,
-			signal::Signal::SIGIO => Signal::SIGIO,
+			signal::Signal::SIGSTKFLT => Self::SIGSTKFLT,
+			signal::Signal::SIGCHLD => Self::SIGCHLD,
+			signal::Signal::SIGCONT => Self::SIGCONT,
+			signal::Signal::SIGSTOP => Self::SIGSTOP,
+			signal::Signal::SIGTSTP => Self::SIGTSTP,
+			signal::Signal::SIGTTIN => Self::SIGTTIN,
+			signal::Signal::SIGTTOU => Self::SIGTTOU,
+			signal::Signal::SIGURG => Self::SIGURG,
+			signal::Signal::SIGXCPU => Self::SIGXCPU,
+			signal::Signal::SIGXFSZ => Self::SIGXFSZ,
+			signal::Signal::SIGVTALRM => Self::SIGVTALRM,
+			signal::Signal::SIGPROF => Self::SIGPROF,
+			signal::Signal::SIGWINCH => Self::SIGWINCH,
+			signal::Signal::SIGIO => Self::SIGIO,
 			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
-			signal::Signal::SIGPWR => Signal::SIGPWR,
-			signal::Signal::SIGSYS => Signal::SIGSYS,
+			signal::Signal::SIGPWR => Self::SIGPWR,
+			signal::Signal::SIGSYS => Self::SIGSYS,
 			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
-			signal::Signal::SIGEMT => Signal::SIGEMT,
+			signal::Signal::SIGEMT => Self::SIGEMT,
 			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
-			signal::Signal::SIGINFO => Signal::SIGINFO,
+			signal::Signal::SIGINFO => Self::SIGINFO,
 		}
 	}
 }
 impl From<Signal> for signal::Signal {
 	fn from(signal: Signal) -> Self {
 		match signal {
-			Signal::SIGHUP => signal::Signal::SIGHUP,
-			Signal::SIGINT => signal::Signal::SIGINT,
-			Signal::SIGQUIT => signal::Signal::SIGQUIT,
-			Signal::SIGILL => signal::Signal::SIGILL,
-			Signal::SIGTRAP => signal::Signal::SIGTRAP,
-			Signal::SIGABRT => signal::Signal::SIGABRT,
-			Signal::SIGBUS => signal::Signal::SIGBUS,
-			Signal::SIGFPE => signal::Signal::SIGFPE,
-			Signal::SIGKILL => signal::Signal::SIGKILL,
-			Signal::SIGUSR1 => signal::Signal::SIGUSR1,
-			Signal::SIGSEGV => signal::Signal::SIGSEGV,
-			Signal::SIGUSR2 => signal::Signal::SIGUSR2,
-			Signal::SIGPIPE => signal::Signal::SIGPIPE,
-			Signal::SIGALRM => signal::Signal::SIGALRM,
-			Signal::SIGTERM => signal::Signal::SIGTERM,
+			Signal::SIGHUP => Self::SIGHUP,
+			Signal::SIGINT => Self::SIGINT,
+			Signal::SIGQUIT => Self::SIGQUIT,
+			Signal::SIGILL => Self::SIGILL,
+			Signal::SIGTRAP => Self::SIGTRAP,
+			Signal::SIGABRT => Self::SIGABRT,
+			Signal::SIGBUS => Self::SIGBUS,
+			Signal::SIGFPE => Self::SIGFPE,
+			Signal::SIGKILL => Self::SIGKILL,
+			Signal::SIGUSR1 => Self::SIGUSR1,
+			Signal::SIGSEGV => Self::SIGSEGV,
+			Signal::SIGUSR2 => Self::SIGUSR2,
+			Signal::SIGPIPE => Self::SIGPIPE,
+			Signal::SIGALRM => Self::SIGALRM,
+			Signal::SIGTERM => Self::SIGTERM,
 			#[cfg(all(
 				any(target_os = "linux", target_os = "android", target_os = "emscripten"),
 				not(any(target_arch = "mips", target_arch = "mips64"))
 			))]
-			Signal::SIGSTKFLT => signal::Signal::SIGSTKFLT,
-			Signal::SIGCHLD => signal::Signal::SIGCHLD,
-			Signal::SIGCONT => signal::Signal::SIGCONT,
-			Signal::SIGSTOP => signal::Signal::SIGSTOP,
-			Signal::SIGTSTP => signal::Signal::SIGTSTP,
-			Signal::SIGTTIN => signal::Signal::SIGTTIN,
-			Signal::SIGTTOU => signal::Signal::SIGTTOU,
-			Signal::SIGURG => signal::Signal::SIGURG,
-			Signal::SIGXCPU => signal::Signal::SIGXCPU,
-			Signal::SIGXFSZ => signal::Signal::SIGXFSZ,
-			Signal::SIGVTALRM => signal::Signal::SIGVTALRM,
-			Signal::SIGPROF => signal::Signal::SIGPROF,
-			Signal::SIGWINCH => signal::Signal::SIGWINCH,
-			Signal::SIGIO => signal::Signal::SIGIO,
+			Signal::SIGSTKFLT => Self::SIGSTKFLT,
+			Signal::SIGCHLD => Self::SIGCHLD,
+			Signal::SIGCONT => Self::SIGCONT,
+			Signal::SIGSTOP => Self::SIGSTOP,
+			Signal::SIGTSTP => Self::SIGTSTP,
+			Signal::SIGTTIN => Self::SIGTTIN,
+			Signal::SIGTTOU => Self::SIGTTOU,
+			Signal::SIGURG => Self::SIGURG,
+			Signal::SIGXCPU => Self::SIGXCPU,
+			Signal::SIGXFSZ => Self::SIGXFSZ,
+			Signal::SIGVTALRM => Self::SIGVTALRM,
+			Signal::SIGPROF => Self::SIGPROF,
+			Signal::SIGWINCH => Self::SIGWINCH,
+			Signal::SIGIO => Self::SIGIO,
 			#[cfg(any(target_os = "linux", target_os = "android", target_os = "emscripten"))]
-			Signal::SIGPWR => signal::Signal::SIGPWR,
-			Signal::SIGSYS => signal::Signal::SIGSYS,
+			Signal::SIGPWR => Self::SIGPWR,
+			Signal::SIGSYS => Self::SIGSYS,
 			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
-			Signal::SIGEMT => signal::Signal::SIGEMT,
+			Signal::SIGEMT => Self::SIGEMT,
 			#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "emscripten")))]
-			Signal::SIGINFO => signal::Signal::SIGINFO,
+			Signal::SIGINFO => Self::SIGINFO,
 			_ => unimplemented!(),
 		}
 	}
 }
 
+#[allow(clippy::use_self)] // TODO: remove; bug in clippy
 impl From<ExitStatus> for i32 {
 	fn from(exit_status: ExitStatus) -> Self {
 		match exit_status {
