@@ -23,6 +23,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 	clippy::shadow_unrelated
 )]
 
+use either::Either;
 use futures::{sink::SinkExt, stream::StreamExt};
 use log::trace;
 use palaver::file::{fexecve, move_fds, seal_fd};
@@ -79,7 +80,7 @@ fn parse_request<R: Read>(
 static PROCESS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn monitor_process(
-	pid: Pid, sender_: mpsc::SyncSender<OutputEventInt>,
+	pid: Pid, sender_: mpsc::SyncSender<Either<OutputEventInt, Option<DeployInputEvent>>>,
 	mut receiver_: futures::channel::mpsc::Receiver<InputEventInt>,
 ) {
 	let receiver = constellation::Receiver::new(pid);
@@ -106,7 +107,7 @@ fn monitor_process(
 					ProcessOutputEvent::Spawn(new_pid) => {
 						let (sender1, receiver1) = futures::channel::mpsc::channel(0);
 						sender_
-							.send(OutputEventInt::Spawn(pid, new_pid, sender1))
+							.send(Either::Left(OutputEventInt::Spawn(pid, new_pid, sender1)))
 							.unwrap();
 						let sender_ = sender_.clone();
 						let _ = thread::Builder::new()
@@ -116,11 +117,13 @@ fn monitor_process(
 					}
 					ProcessOutputEvent::Output(fd, output) => {
 						sender_
-							.send(OutputEventInt::Output(pid, fd, output))
+							.send(Either::Left(OutputEventInt::Output(pid, fd, output)))
 							.unwrap();
 					}
 					ProcessOutputEvent::Exit(exit_code) => {
-						sender_.send(OutputEventInt::Exit(pid, exit_code)).unwrap();
+						sender_
+							.send(Either::Left(OutputEventInt::Exit(pid, exit_code)))
+							.unwrap();
 						break;
 					}
 				}
@@ -315,7 +318,7 @@ fn manage_connection(
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
 	let resources = resources.or_else(|| recce(&binary, &args, &vars).ok());
 	let pid: Option<Pid> = resources.and_then(|resources| {
-		let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+		let (sender_, receiver) = mpsc::sync_channel(0);
 		sender
 			.send((
 				FabricRequest {
@@ -335,8 +338,9 @@ fn manage_connection(
 	if let Some(pid) = pid {
 		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
-		let (sender, receiver) = mpsc::sync_channel::<_>(0);
-		let (sender1, receiver1) = futures::channel::mpsc::channel::<_>(0);
+		let (sender, receiver) = mpsc::sync_channel(0);
+		let sender_clone = sender.clone();
+		let (sender1, receiver1) = futures::channel::mpsc::channel(0);
 		let _ = thread::Builder::new()
 			.name(String::from("c"))
 			.spawn(move || monitor_process(pid, sender, receiver1))
@@ -344,74 +348,73 @@ fn manage_connection(
 		let hashmap = &Mutex::new(HashMap::new());
 		let _ = hashmap.lock().unwrap().insert(pid, sender1);
 		crossbeam::scope(|scope| {
-			let _ = scope.spawn(move |_scope| {
-				loop {
-					let event: Result<DeployInputEvent, _> =
-						bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err);
-					if event.is_err() {
-						break;
+			let _ = scope.spawn(move |_scope| loop {
+				let event: Result<DeployInputEvent, _> =
+					bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err);
+				let is_err = event.is_err();
+				sender_clone.send(Either::Right(event.ok())).unwrap();
+				if is_err {
+					break;
+				}
+			});
+			for event in receiver.iter() {
+				match event {
+					Either::Left(event) => {
+						let event = match event {
+							OutputEventInt::Spawn(pid, new_pid, sender) => {
+								let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
+								trace!("BRIDGE: SPAWN ({})", x);
+								let x = hashmap.lock().unwrap().insert(new_pid, sender);
+								assert!(x.is_none());
+								DeployOutputEvent::Spawn(pid, new_pid)
+							}
+							OutputEventInt::Output(pid, fd, output) => {
+								DeployOutputEvent::Output(pid, fd, output)
+							}
+							OutputEventInt::Exit(pid, exit_code) => {
+								let x = PROCESS_COUNT.fetch_sub(1, atomic::Ordering::Relaxed);
+								assert_ne!(x, 0);
+								trace!("BRIDGE: KILL ({})", x);
+								let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
+								DeployOutputEvent::Exit(pid, exit_code)
+							}
+						};
+						if bincode::serialize_into(&mut stream_write, &event).is_err() {
+							break;
+						}
 					}
-					match event.unwrap() {
-						DeployInputEvent::Input(pid, fd, input) => {
-							futures::executor::block_on(
+					Either::Right(event) => match event {
+						Some(DeployInputEvent::Input(pid, fd, input)) => {
+							let _unchecked_error = futures::executor::block_on(
 								hashmap
 									.lock()
 									.unwrap()
 									.get_mut(&pid)
 									.unwrap()
 									.send(InputEventInt::Input(fd, input)),
-							)
-							.unwrap();
+							);
 						}
-						DeployInputEvent::Kill(Some(pid)) => {
-							futures::executor::block_on(
+						Some(DeployInputEvent::Kill(Some(pid))) => {
+							let _unchecked_error = futures::executor::block_on(
 								hashmap
 									.lock()
 									.unwrap()
 									.get_mut(&pid)
 									.unwrap()
 									.send(InputEventInt::Kill),
-							)
-							.unwrap();
+							);
 						}
-						DeployInputEvent::Kill(None) => {
+						Some(DeployInputEvent::Kill(None)) | None => {
 							break;
 						}
-					}
-				}
-				let mut x = hashmap.lock().unwrap();
-				for (_, process) in x.iter_mut() {
-					futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
-				}
-			});
-			for event in receiver.iter() {
-				let event = match event {
-					OutputEventInt::Spawn(pid, new_pid, sender) => {
-						let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
-						trace!("BRIDGE: SPAWN ({})", x);
-						let x = hashmap.lock().unwrap().insert(new_pid, sender);
-						assert!(x.is_none());
-						DeployOutputEvent::Spawn(pid, new_pid)
-					}
-					OutputEventInt::Output(pid, fd, output) => {
-						DeployOutputEvent::Output(pid, fd, output)
-					}
-					OutputEventInt::Exit(pid, exit_code) => {
-						let x = PROCESS_COUNT.fetch_sub(1, atomic::Ordering::Relaxed);
-						assert_ne!(x, 0);
-						trace!("BRIDGE: KILL ({})", x);
-						let _ = hashmap.lock().unwrap().remove(&pid).unwrap();
-						DeployOutputEvent::Exit(pid, exit_code)
-					}
-				};
-				if bincode::serialize_into(&mut stream_write, &event).is_err() {
-					break;
+					},
 				}
 			}
 			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
 			let mut x = hashmap.lock().unwrap();
 			for (_, mut process) in x.drain() {
-				futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
+				let _unchecked_error =
+					futures::executor::block_on(process.send(InputEventInt::Kill));
 			}
 			for _event in receiver {}
 		})
@@ -427,7 +430,7 @@ fn manage_connection(
 fn main() {
 	let listener = constellation::bridge_init();
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
-	let (sender, receiver) = mpsc::sync_channel::<_>(0);
+	let (sender, receiver) = mpsc::sync_channel(0);
 	let _ = thread::Builder::new()
 		.name(String::from("a"))
 		.spawn(move || {
