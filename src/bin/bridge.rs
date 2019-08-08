@@ -314,7 +314,7 @@ fn manage_connection(
 	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
 	let resources = resources.or_else(|| recce(&binary, &args, &vars).ok());
 	let pid: Option<Pid> = resources.and_then(|resources| {
-		let (sender_, receiver) = mpsc::sync_channel::<_>(0);
+		let (sender_, receiver) = mpsc::sync_channel(0);
 		sender
 			.send((
 				FabricRequest {
@@ -334,8 +334,8 @@ fn manage_connection(
 	if let Some(pid) = pid {
 		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
-		let (sender, receiver) = mpsc::sync_channel::<_>(0);
-		let (sender1, receiver1) = futures::channel::mpsc::channel::<_>(0);
+		let (sender, receiver) = mpsc::sync_channel(0);
+		let (sender1, receiver1) = futures::channel::mpsc::channel(0);
 		let _ = thread::Builder::new()
 			.name(String::from("c"))
 			.spawn(move || monitor_process(pid, sender, receiver1))
@@ -352,26 +352,17 @@ fn manage_connection(
 					}
 					match event.unwrap() {
 						DeployInputEvent::Input(pid, fd, input) => {
-							futures::executor::block_on(
-								hashmap
-									.lock()
-									.unwrap()
-									.get_mut(&pid)
-									.unwrap()
-									.send(InputEventInt::Input(fd, input)),
-							)
-							.unwrap();
+							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
+								let _unchecked_error = futures::executor::block_on(
+									sender.send(InputEventInt::Input(fd, input)),
+								);
+							}
 						}
 						DeployInputEvent::Kill(Some(pid)) => {
-							futures::executor::block_on(
-								hashmap
-									.lock()
-									.unwrap()
-									.get_mut(&pid)
-									.unwrap()
-									.send(InputEventInt::Kill),
-							)
-							.unwrap();
+							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
+								let _unchecked_error =
+									futures::executor::block_on(sender.send(InputEventInt::Kill));
+							}
 						}
 						DeployInputEvent::Kill(None) => {
 							break;
@@ -380,7 +371,8 @@ fn manage_connection(
 				}
 				let mut x = hashmap.lock().unwrap();
 				for (_, process) in x.iter_mut() {
-					futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
+					let _unchecked_error =
+						futures::executor::block_on(process.send(InputEventInt::Kill));
 				}
 			});
 			for event in receiver.iter() {
@@ -410,7 +402,8 @@ fn manage_connection(
 			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
 			let mut x = hashmap.lock().unwrap();
 			for (_, mut process) in x.drain() {
-				futures::executor::block_on(process.send(InputEventInt::Kill)).unwrap();
+				let _unchecked_error =
+					futures::executor::block_on(process.send(InputEventInt::Kill));
 			}
 			for _event in receiver {}
 		})
@@ -426,7 +419,7 @@ fn manage_connection(
 fn main() {
 	let listener = constellation::bridge_init();
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
-	let (sender, receiver) = mpsc::sync_channel::<_>(0);
+	let (sender, receiver) = mpsc::sync_channel(0);
 	let _ = thread::Builder::new()
 		.name(String::from("a"))
 		.spawn(move || {

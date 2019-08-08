@@ -218,6 +218,16 @@ fn treeize(
 
 fn main() {
 	let start = time::Instant::now();
+	std::env::set_var("RUST_BACKTRACE", "full");
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
+		eprintln!("{:?}", backtrace::Backtrace::new());
+		std::process::abort();
+	}));
 	let _ = thread::Builder::new()
 		.spawn(move || loop {
 			thread::sleep(time::Duration::new(10, 0));
@@ -426,6 +436,7 @@ fn main() {
 
 	println!("killing");
 	fabric.kill().unwrap();
+	let _ = fabric.wait().unwrap();
 	let _stderr_empty = fabric_stderr.join().unwrap();
 	// assert!(stderr_empty);
 	let _stdout_empty = fabric_stdout.join().unwrap();
