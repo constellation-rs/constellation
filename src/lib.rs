@@ -739,11 +739,15 @@ extern "C" fn at_exit() {
 pub fn bridge_init() -> TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
 	std::env::set_var("RUST_BACKTRACE", "full");
-	// std::panic::set_hook(Box::new(|info| {
-	// 	eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
-	// 	eprintln!("{:?}", backtrace::Backtrace::new());
-	// 	std::process::abort();
-	// }));
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
+		eprintln!("{:?}", backtrace::Backtrace::new());
+		std::process::abort();
+	}));
 	// simple_logging::log_to_file(
 	// 	format!("logs/{}.log", std::process::id()),
 	// 	log::LevelFilter::Trace,
@@ -1233,7 +1237,11 @@ fn monitor_process(
 pub fn init(resources: Resources) {
 	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
-		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
 		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));

@@ -122,7 +122,11 @@ const BOUND_FD_START: Fd = 5;
 fn main() {
 	std::env::set_var("RUST_BACKTRACE", "full");
 	std::panic::set_hook(Box::new(|info| {
-		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
 		eprintln!("{:?}", backtrace::Backtrace::new());
 		std::process::abort();
 	}));

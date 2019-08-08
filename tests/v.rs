@@ -46,7 +46,11 @@ fn main() {
 		..Resources::default()
 	});
 	panic::set_hook(Box::new(|info| {
-		eprintln!("thread '{}' {}", thread::current().name().unwrap(), info);
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
 		let err = unsafe {
 			nix::libc::setrlimit(
 				nix::libc::RLIMIT_CORE,
