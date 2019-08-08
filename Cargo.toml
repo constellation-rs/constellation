@@ -69,7 +69,7 @@ sha1 = "0.6"
 systemstat = "0.1"
 
 [patch.crates-io]
-bincode = { git = "https://github.com/alecmocatta/bincode" }
+# bincode = { git = "https://github.com/alecmocatta/bincode" }
 systemstat = { git = "https://github.com/myfreeweb/systemstat" }
 
 # Hopefully we won't need to exhaustively list in future:

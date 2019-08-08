@@ -167,55 +167,57 @@ mod fabric_request {
 		}
 	}
 
-	impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
-		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-		where
-			D: Deserializer<'de>,
-		{
-			deserializer.deserialize_tuple(6, FabricRequestVisitor)
-		}
-	}
-	struct FabricRequestVisitor;
-	impl<'de> Visitor<'de> for FabricRequestVisitor {
-		type Value = FabricRequest<Vec<u8>, Vec<u8>>;
-		fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-			formatter.write_str("a byte array")
-		}
+	// impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
+	// 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	// 	where
+	// 		D: Deserializer<'de>,
+	// 	{
+	// 		deserializer.deserialize_tuple(6, FabricRequestVisitor)
+	// 	}
+	// }
+	// struct FabricRequestVisitor;
+	// impl<'de> Visitor<'de> for FabricRequestVisitor {
+	// 	type Value = FabricRequest<Vec<u8>, Vec<u8>>;
+	// 	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+	// 		formatter.write_str("a byte array")
+	// 	}
 
-		fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
-		where
-			V: SeqAccess<'de>,
-		{
-			let resources = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-			let bind = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-			let args: Vec<OsString> = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(2, &self))?;
-			let vars = seq
-				.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(3, &self))?;
-			let arg = seq
-				.next_element::<serde_bytes::ByteBuf>()?
-				.ok_or_else(|| de::Error::invalid_length(4, &self))?
-				.into_vec();
-			let binary = seq
-				.next_element::<serde_bytes::ByteBuf>()?
-				.ok_or_else(|| de::Error::invalid_length(5, &self))?
-				.into_vec();
-			Ok(FabricRequest {
-				resources,
-				bind,
-				args,
-				vars,
-				arg,
-				binary,
-			})
-		}
-	}
+	// 	fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+	// 	where
+	// 		V: SeqAccess<'de>,
+	// 	{
+	// 		let resources = seq
+	// 			.next_element()?
+	// 			.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+	// 		let bind = seq
+	// 			.next_element()?
+	// 			.ok_or_else(|| de::Error::invalid_length(1, &self))?;
+	// 		let args: Vec<OsString> = seq
+	// 			.next_element()?
+	// 			.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+	// 		let vars = seq
+	// 			.next_element()?
+	// 			.ok_or_else(|| de::Error::invalid_length(3, &self))?;
+	// 		let arg = seq
+	// 			.next_element::<serde_bytes::ByteBuf>()?
+	// 			.ok_or_else(|| de::Error::invalid_length(4, &self))?
+	// 			.into_vec();
+	// 		let binary = seq
+	// 			.next_element::<serde_bytes::ByteBuf>()?
+	// 			.ok_or_else(|| de::Error::invalid_length(5, &self))?
+	// 			.into_vec();
+	// 		Ok(FabricRequest {
+	// 			resources,
+	// 			bind,
+	// 			args,
+	// 			vars,
+	// 			arg,
+	// 			binary,
+	// 		})
+	// 	}
+	// }
+
+	thread_local!(static READER: std::cell::RefCell<Option<*mut dyn Read>> = std::cell::RefCell::new(None));
 
 	struct FabricRequestSeed<R, A, B> {
 		reader: R,
@@ -229,23 +231,26 @@ mod fabric_request {
 			}
 		}
 	}
-	impl<'de, R, A, B> DeserializeSeed<'de> for FabricRequestSeed<R, A, B>
+	impl<'de, A, B> Deserialize<'de> for FabricRequest<A, B>
 	where
-		R: Read + Copy,
 		A: FileOrVec,
 		B: FileOrVec,
 	{
-		type Value = FabricRequest<A, B>;
-		fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 		where
 			D: Deserializer<'de>,
 		{
-			deserializer.deserialize_tuple(6, self)
+			READER.with(|reader| {
+				deserializer.deserialize_tuple(
+					6,
+					FabricRequestSeed::new(unsafe { &mut **reader.borrow_mut().as_mut().unwrap() }),
+				)
+			})
 		}
 	}
 	impl<'de, R, A, B> Visitor<'de> for FabricRequestSeed<R, A, B>
 	where
-		R: Read + Copy,
+		R: Read,
 		A: FileOrVec,
 		B: FileOrVec,
 	{
@@ -254,7 +259,7 @@ mod fabric_request {
 			formatter.write_str("a byte array")
 		}
 
-		fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+		fn visit_seq<V>(mut self, mut seq: V) -> Result<Self::Value, V::Error>
 		where
 			V: SeqAccess<'de>,
 		{
@@ -273,7 +278,7 @@ mod fabric_request {
 			let arg = A::next_element_seed(
 				&mut seq,
 				FileSeed {
-					reader: self.reader,
+					reader: &mut self.reader,
 					name: &args[0],
 					cloexec: false,
 					seal: false,
@@ -283,7 +288,7 @@ mod fabric_request {
 			let binary = B::next_element_seed(
 				&mut seq,
 				FileSeed {
-					reader: self.reader,
+					reader: &mut self.reader,
 					name: &args[0],
 					cloexec: true,
 					seal: true,
@@ -387,7 +392,15 @@ mod fabric_request {
 		stream: &mut R,
 	) -> Result<FabricRequest<A, B>, bincode::Error> {
 		let reader = UnsafeCellReaderWriter::new(stream);
-		bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
+		READER.with(|reader_| {
+			let to: *mut dyn Read = &mut &reader;
+			#[allow(clippy::transmute_ptr_to_ptr)]
+			let to: *mut dyn Read = unsafe { std::mem::transmute(to) };
+			*reader_.borrow_mut() = Some(to);
+			let ret = bincode::config().deserialize_from(&reader);
+			let _ = reader_.borrow_mut().take().unwrap();
+			ret
+		})
 	}
 	pub fn bincode_serialize_into<W: Write, A: FileOrVec, B: FileOrVec>(
 		stream: &mut W, value: &FabricRequest<A, B>,
