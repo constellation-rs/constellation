@@ -43,6 +43,7 @@ more-asserts = "0.2"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = { version = "0.2", default-features = false }
 palaver = { version = "0.2" }
+pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
 relative = "0.1"
 serde = { version = "1.0", features = ["derive"] }

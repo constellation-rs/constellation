@@ -378,9 +378,6 @@ fn main() {
 		// if src != Path::new("tests/x.rs") {
 		// 	continue;
 		// }
-		// if src != Path::new("tests/r.rs") {
-		// 	continue;
-		// }
 		println!("{}", src.display());
 		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&BufReader::new(File::open(src).unwrap())

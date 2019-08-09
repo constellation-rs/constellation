@@ -49,11 +49,12 @@ use once_cell::sync::{Lazy, OnceCell};
 use palaver::{
 	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
+use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
 	any, borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, task::{Context, Poll}, thread
+	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
 
 use constellation_internal::{
@@ -74,7 +75,28 @@ pub trait FutureExt1: Future {
 	where
 		Self: Sized,
 	{
-		futures::executor::block_on(self)
+		// futures::executor::block_on(self) // Not reentrant for some reason
+		struct ThreadNotify {
+			thread: Thread,
+		}
+		impl futures::task::ArcWake for ThreadNotify {
+			fn wake_by_ref(arc_self: &Arc<Self>) {
+				arc_self.thread.unpark();
+			}
+		}
+		let f = self;
+		pin_mut!(f);
+		let thread_notify = Arc::new(ThreadNotify {
+			thread: thread::current(),
+		});
+		let waker = futures::task::waker_ref(&thread_notify);
+		let mut cx = Context::from_waker(&waker);
+		loop {
+			if let Poll::Ready(t) = f.as_mut().poll(&mut cx) {
+				return t;
+			}
+			thread::park();
+		}
 	}
 }
 impl<T: ?Sized> FutureExt1 for T where T: Future {}
@@ -934,12 +956,12 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			Receiver::<ProcessOutputEvent>::new(our_pid),
 		)];
 		while !processes.is_empty() {
-			let (event, i, _): (ProcessOutputEvent, usize, _) =
-				futures::executor::block_on(futures::future::select_all(
-					processes.iter().map(|&(_, ref receiver)| {
-						receiver.recv().map(Result::unwrap).boxed_local()
-					}),
-				));
+			let (event, i, _): (ProcessOutputEvent, usize, _) = futures::future::select_all(
+				processes
+					.iter()
+					.map(|&(_, ref receiver)| receiver.recv().map(Result::unwrap).boxed_local()),
+			)
+			.block();
 			let pid = processes[i].0.remote_pid();
 			let event = match event {
 				ProcessOutputEvent::Spawn(new_pid) => {
@@ -1119,7 +1141,7 @@ fn monitor_process(
 						break;
 					}
 					let event = event.unwrap();
-					futures::executor::block_on(bridge_sender2.send(event)).unwrap();
+					bridge_sender2.send(event).block().unwrap();
 				}
 				let _ = file.into_raw_fd();
 			})
@@ -1129,10 +1151,12 @@ fn monitor_process(
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(move || {
 				loop {
-					let selected = match futures::executor::block_on(futures::future::select(
+					let selected = match futures::future::select(
 						bridge_outbound_receiver.next(),
 						receiver.recv().boxed_local(),
-					)) {
+					)
+					.block()
+					{
 						futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
 						futures::future::Either::Right((a, _)) => futures::future::Either::Right(a),
 					};
@@ -1237,7 +1261,9 @@ fn monitor_process(
 		}
 		// trace!("joining x3");
 		x3.join().unwrap();
-		futures::executor::block_on(bridge_outbound_sender.send(ProcessOutputEvent::Exit(code)))
+		bridge_outbound_sender
+			.send(ProcessOutputEvent::Exit(code))
+			.block()
 			.unwrap();
 		drop(bridge_outbound_sender);
 		// trace!("joining x");
@@ -1525,16 +1551,16 @@ fn forward_fd(
 				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
 				let n = (&reader).read(&mut buf).unwrap();
 				if n > 0 {
-					futures::executor::block_on(
-						bridge_sender.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned())),
-					)
-					.unwrap();
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
+						.block()
+						.unwrap();
 				} else {
 					drop(reader);
-					futures::executor::block_on(
-						bridge_sender.send(ProcessOutputEvent::Output(fd, Vec::new())),
-					)
-					.unwrap();
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, Vec::new()))
+						.block()
+						.unwrap();
 					break;
 				}
 			}

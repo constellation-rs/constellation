@@ -86,10 +86,9 @@ fn monitor_process(
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
 	loop {
-		let x = match futures::executor::block_on(futures::future::select(
-			receiver_.next(),
-			receiver.recv().boxed_local(),
-		)) {
+		let x = match futures::future::select(receiver_.next(), receiver.recv().boxed_local())
+			.block()
+		{
 			futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
 			futures::future::Either::Right((a, _)) => futures::future::Either::Right(a),
 		};
@@ -352,15 +351,13 @@ fn manage_connection(
 					match event.unwrap() {
 						DeployInputEvent::Input(pid, fd, input) => {
 							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
-								let _unchecked_error = futures::executor::block_on(
-									sender.send(InputEventInt::Input(fd, input)),
-								);
+								let _unchecked_error =
+									sender.send(InputEventInt::Input(fd, input)).block();
 							}
 						}
 						DeployInputEvent::Kill(Some(pid)) => {
 							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
-								let _unchecked_error =
-									futures::executor::block_on(sender.send(InputEventInt::Kill));
+								let _unchecked_error = sender.send(InputEventInt::Kill).block();
 							}
 						}
 						DeployInputEvent::Kill(None) => {
@@ -370,8 +367,7 @@ fn manage_connection(
 				}
 				let mut x = hashmap.lock().unwrap();
 				for (_, process) in x.iter_mut() {
-					let _unchecked_error =
-						futures::executor::block_on(process.send(InputEventInt::Kill));
+					let _unchecked_error = process.send(InputEventInt::Kill).block();
 				}
 			});
 			for event in receiver.iter() {
@@ -401,8 +397,7 @@ fn manage_connection(
 			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
 			let mut x = hashmap.lock().unwrap();
 			for (_, mut process) in x.drain() {
-				let _unchecked_error =
-					futures::executor::block_on(process.send(InputEventInt::Kill));
+				let _unchecked_error = process.send(InputEventInt::Kill).block();
 			}
 			for _event in receiver {}
 		})
