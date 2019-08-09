@@ -81,7 +81,7 @@ fn main() {
 					let sender = Sender::<(String,[u8;20])>::new(parent);
 
 					// Send our record along the channel to our parent
-					sender.bsend(lowest);
+					sender.send(lowest).block();
 				}),
 			)
 			.expect("Unable to allocate process!");
@@ -96,7 +96,7 @@ fn main() {
 	let result = processes
 		.into_iter()
 		// Receive a record from each `Receiver`
-		.map(|receiver| receiver.brecv().unwrap())
+		.map(|receiver| receiver.recv().block().unwrap())
 		// Take the record with the lowest hash
 		.min_by_key(|&(_, hash)| hash)
 		.unwrap();

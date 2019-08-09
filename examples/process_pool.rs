@@ -93,11 +93,11 @@ impl ProcessPool {
 						// Create a `Sender` half of a channel to our parent
 						let sender = Sender::<Response>::new(parent);
 
-						while let Some(work) = receiver.brecv().unwrap() {
+						while let Some(work) = receiver.recv().block().unwrap() {
 							// println!("process {}: got work", i);
 							let ret = work();
 							// println!("process {}: done work", i);
-							sender.bsend(ret);
+							sender.send(ret).block();
 							// println!("process {}: awaiting work", i);
 						}
 					}),
@@ -135,10 +135,11 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		process
 			.sender
-			.bsend(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
+			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
 				let work: F = work;
 				st::Box::new(work()) as Response
-			})) as Request));
+			})) as Request))
+			.block();
 		process.queue.push_back(Queued::Awaiting);
 		JoinHandle(
 			process_index,
@@ -152,7 +153,7 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		while process.received <= process_offset {
 			process.queue[process.received - process.tail]
-				.received(process.receiver.brecv().unwrap());
+				.received(process.receiver.recv().block().unwrap());
 			process.received += 1;
 		}
 		let boxed: st::Box<_> = process.queue[process_offset - process.tail].take();
@@ -166,7 +167,7 @@ impl ProcessPool {
 impl Drop for ProcessPool {
 	fn drop(&mut self) {
 		for Process { sender, .. } in &self.processes {
-			sender.bsend(None);
+			sender.send(None).block();
 		}
 	}
 }

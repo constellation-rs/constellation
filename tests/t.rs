@@ -173,14 +173,14 @@ fn main() {
 				FnOnce!(|parent| {
 					let receiver = Receiver::<String>::new(parent);
 					let sender = Sender::<usize>::new(parent);
-					println!("{}", receiver.brecv().unwrap());
-					sender.bsend(1_234_567_890);
+					println!("{}", receiver.recv().block().unwrap());
+					sender.send(1_234_567_890).block();
 					mem::drop((receiver, sender));
 					thread::sleep(time::Duration::new(0, 100_000_000));
 					let receiver = Receiver::<usize>::new(parent);
 					let sender = Sender::<String>::new(parent);
-					sender.bsend(String::from("ho"));
-					println!("{}", receiver.brecv().unwrap());
+					sender.send(String::from("ho")).block();
+					println!("{}", receiver.recv().block().unwrap());
 				}),
 			)
 			.expect("SPAWN FAILED")
@@ -191,10 +191,10 @@ fn main() {
 		.map(|&pid| (Sender::<String>::new(pid), Receiver::<usize>::new(pid)))
 		.collect::<Vec<_>>();
 	for &(ref sender, ref _receiver) in channels.iter() {
-		sender.bsend(String::from("hi"));
+		sender.send(String::from("hi")).block();
 	}
 	for &(ref _sender, ref receiver) in channels.iter() {
-		println!("{}", receiver.brecv().unwrap());
+		println!("{}", receiver.recv().block().unwrap());
 	}
 	mem::drop(channels);
 	thread::sleep(time::Duration::new(0, 100_000_000));
@@ -203,9 +203,9 @@ fn main() {
 		.map(|&pid| (Sender::<usize>::new(pid), Receiver::<String>::new(pid)))
 		.collect::<Vec<_>>();
 	for &(ref _sender, ref receiver) in channels.iter() {
-		println!("{}", receiver.brecv().unwrap());
+		println!("{}", receiver.recv().block().unwrap());
 	}
 	for &(ref sender, ref _receiver) in channels.iter() {
-		sender.bsend(987_654_321);
+		sender.send(987_654_321).block();
 	}
 }

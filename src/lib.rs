@@ -69,8 +69,22 @@ pub type Never = !;
 #[allow(clippy::empty_enum)]
 pub enum Never {}
 
-pub use channel::{ChannelError, Selectable};
+pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Extension trait to provide convenient [`block()`](FutureExtExt::block) method on futures.
+pub trait FutureExtExt: Future {
+	/// Convenience method over `futures::executor::block_on(future)`.
+	fn block(self) -> Self::Output
+	where
+		Self: Sized,
+	{
+		futures::executor::block_on(self)
+	}
+}
+impl<T: ?Sized> FutureExtExt for T where T: Future {}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -97,7 +111,9 @@ static HANDLE: Lazy<RwLock<Option<channel::Handle>>> = Lazy::new(|| RwLock::new(
 
 /// The sending half of a channel.
 ///
-/// It has a synchronous blocking method [`send()`](Sender::send) and an asynchronous nonblocking method [`selectable_send()`](Sender::selectable_send).
+/// It has an async method [`send(value)`](Sender::send) and a nonblocking method [`try_send()`](Sender::try_send).
+///
+/// For blocking behaviour use [`.send(value).block()`](FutureExtExt::block).
 pub struct Sender<T: Serialize>(Option<channel::Sender<T>>, Pid);
 impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
@@ -127,7 +143,11 @@ impl<T: Serialize> Sender<T> {
 		self.1
 	}
 
-	fn async_send<'a>(&'a self) -> Option<impl FnOnce(T) + 'a>
+	/// Nonblocking send.
+	///
+	/// If sending would not block, `Some` is returned with a FnOnce that accepts a `T` to send.
+	/// If sending would block, `None` is returned.
+	pub fn try_send<'a>(&'a self) -> Option<impl FnOnce(T) + 'a>
 	where
 		T: 'static,
 	{
@@ -135,30 +155,7 @@ impl<T: Serialize> Sender<T> {
 		self.0
 			.as_ref()
 			.unwrap()
-			.async_send(BorrowMap::new(context, borrow_unwrap_option))
-	}
-
-	/// Blocking send.
-	pub fn bsend(&self, t: T)
-	where
-		T: 'static,
-	{
-		// let _ = select(vec![Box::new(
-		// 	self.0.as_ref().unwrap().selectable_send(|| t),
-		// )]);
-		futures::executor::block_on(self.send(t))
-	}
-
-	/// [Selectable] send.
-	///
-	/// This needs to be passed to [`select()`](select) to be executed.
-	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(
-		&'a self, send: F,
-	) -> impl Selectable + Future<Output = ()> + 'a
-	where
-		T: 'static,
-	{
-		self.0.as_ref().unwrap().selectable_send(send)
+			.try_send(BorrowMap::new(context, borrow_unwrap_option), None)
 	}
 
 	/// Send
@@ -168,17 +165,7 @@ impl<T: Serialize> Sender<T> {
 	where
 		T: 'static,
 	{
-		self.0.as_ref().unwrap().selectable_send(|| t).await;
-	}
-
-	/// Send
-	///
-	/// This is an async fn.
-	pub fn send2<'a>(&'a self, t: T) -> impl Future<Output = ()> + 'a
-	where
-		T: 'static,
-	{
-		self.0.as_ref().unwrap().selectable_send(|| t)
+		self.0.as_ref().unwrap().send(|| t).await;
 	}
 
 	/// Send
@@ -188,7 +175,7 @@ impl<T: Serialize> Sender<T> {
 	where
 		T: 'static,
 	{
-		self.0.as_ref().unwrap().selectable_send(f).await;
+		self.0.as_ref().unwrap().send(f).await;
 	}
 }
 
@@ -205,12 +192,12 @@ impl<'a> Write for &'a Sender<u8> {
 		if buf.is_empty() {
 			return Ok(0);
 		}
-		self.bsend(buf[0]);
+		self.send(buf[0]).block();
 		if buf.len() == 1 {
 			return Ok(1);
 		}
 		for (i, buf) in (1..buf.len()).zip(buf[1..].iter().cloned()) {
-			if let Some(send) = self.async_send() {
+			if let Some(send) = self.try_send() {
 				send(buf);
 			} else {
 				return Ok(i);
@@ -222,7 +209,7 @@ impl<'a> Write for &'a Sender<u8> {
 	#[inline(always)]
 	fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
 		for &byte in buf {
-			self.bsend(byte);
+			self.send(byte).block();
 		}
 		Ok(())
 	}
@@ -296,7 +283,9 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Future for channel::Send<'a, 
 
 /// The receiving half of a channel.
 ///
-/// It has a synchronous blocking method [`recv()`](Receiver::recv) and an asynchronous nonblocking method [`selectable_recv()`](Receiver::selectable_recv).
+/// It has an async method [`recv()`](Receiver::recv) and a nonblocking method [`try_recv()`](Receiver::try_recv).
+///
+/// For blocking behaviour use [`.recv().block()`](FutureExtExt::block).
 pub struct Receiver<T: DeserializeOwned>(Option<channel::Receiver<T>>, Pid);
 impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
@@ -326,7 +315,11 @@ impl<T: DeserializeOwned> Receiver<T> {
 		self.1
 	}
 
-	fn async_recv<'a>(&'a self) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
+	/// Nonblocking recv.
+	///
+	/// If receiving would not block, `Some` is returned with a FnOnce that returns a `Result<T, ChannelError>`.
+	/// If receiving would block, `None` is returned.
+	pub fn try_recv<'a>(&'a self) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
 	where
 		T: 'static,
 	{
@@ -334,33 +327,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 		self.0
 			.as_ref()
 			.unwrap()
-			.async_recv(BorrowMap::new(context, borrow_unwrap_option))
-	}
-
-	/// Blocking receive.
-	pub fn brecv(&self) -> Result<T, ChannelError>
-	where
-		T: 'static,
-	{
-		futures::executor::block_on(self.recv())
-		// let mut x = None;
-		// let _ = select(vec![Box::new(
-		// 	self.0.as_ref().unwrap().selectable_recv(|t| x = Some(t)),
-		// )]);
-		// // futures::executor::block_on(self.selectable_recv(|t| x = Some(t)));
-		// x.unwrap()
-	}
-
-	/// [Selectable] receive.
-	///
-	/// This needs to be passed to [`select()`](select) to be executed.
-	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
-		&'a self, recv: F,
-	) -> impl Selectable + Future<Output = ()> + 'a
-	where
-		T: 'static,
-	{
-		self.0.as_ref().unwrap().selectable_recv(recv)
+			.try_recv(BorrowMap::new(context, borrow_unwrap_option), None)
 	}
 
 	/// Receive.
@@ -371,11 +338,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 		T: 'static,
 	{
 		let mut x = None;
-		self.0
-			.as_ref()
-			.unwrap()
-			.selectable_recv(|y| x = Some(y))
-			.await;
+		self.0.as_ref().unwrap().recv(|y| x = Some(y)).await;
 		x.unwrap()
 	}
 }
@@ -392,7 +355,7 @@ impl<'a> Read for &'a Receiver<u8> {
 		if buf.is_empty() {
 			return Ok(0);
 		}
-		buf[0] = self.brecv().map_err(|e| match e {
+		buf[0] = self.recv().block().map_err(|e| match e {
 			ChannelError::Exited => io::ErrorKind::UnexpectedEof,
 			ChannelError::Error => io::ErrorKind::ConnectionReset,
 		})?;
@@ -400,7 +363,7 @@ impl<'a> Read for &'a Receiver<u8> {
 			return Ok(1);
 		}
 		for (i, buf) in (1..buf.len()).zip(buf[1..].iter_mut()) {
-			if let Some(recv) = self.async_recv() {
+			if let Some(recv) = self.try_recv() {
 				if let Ok(t) = recv() {
 					*buf = t;
 				} else {
@@ -416,7 +379,7 @@ impl<'a> Read for &'a Receiver<u8> {
 	#[inline(always)]
 	fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
 		for byte in buf {
-			*byte = self.brecv().map_err(|e| match e {
+			*byte = self.recv().block().map_err(|e| match e {
 				ChannelError::Exited => io::ErrorKind::UnexpectedEof,
 				ChannelError::Error => io::ErrorKind::ConnectionReset,
 			})?;
@@ -474,29 +437,6 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Futu
 		self.futures_poll(cx, context.as_ref().unwrap())
 	}
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// /// `select()` lets you block on multiple blocking operations until progress can be made on at least one.
-// ///
-// /// [`Receiver::selectable_recv()`](Receiver::selectable_recv) and [`Sender::selectable_send()`](Sender::selectable_send) let one create [Selectable] objects, any number of which can be passed to `select()`. `select()` then blocks until at least one is progressable, and then from any that are progressable picks one at random and executes it.
-// ///
-// /// It returns an iterator of all the [Selectable] objects bar the one that has been executed.
-// ///
-// /// It is inspired by the `select()` of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
-// pub fn select<'a>(
-// 	select: Vec<Box<dyn Selectable + 'a>>,
-// ) -> impl Iterator<Item = Box<dyn Selectable + 'a>> + 'a {
-// 	channel::select(select, &mut || {
-// 		BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option)
-// 	})
-// }
-// /// A thin wrapper around [`select()`](select) that loops until all [Selectable] objects have been executed.
-// pub fn run<'a>(mut select: Vec<Box<dyn Selectable + 'a>>) {
-// 	while !select.is_empty() {
-// 		select = self::select(select).collect();
-// 	}
-// }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -913,27 +853,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			Receiver::<ProcessOutputEvent>::new(our_pid),
 		)];
 		while !processes.is_empty() {
-			// trace!("select");
-			// let mut event = None;
-			// let event_ = &cell::RefCell::new(&mut event);
-
-			// let _ = select(
-			// 	processes
-			// 		.iter()
-			// 		.enumerate()
-			// 		.map(|(i, &(_, ref receiver))| -> Box<dyn Selectable> {
-			// 			Box::new(receiver.selectable_recv(
-			// 				move |t: Result<ProcessOutputEvent, _>| {
-			// 					// trace!("ProcessOutputEvent {}: {:?}", i, t);
-			// 					**event_.borrow_mut() = Some((i, t.unwrap()));
-			// 				},
-			// 			))
-			// 		})
-			// 		.collect(),
-			// );
-			// // trace!("/select");
-			// // drop(event_);
-			// let (i, event): (usize, ProcessOutputEvent) = event.unwrap();
 			let (event, i, _): (ProcessOutputEvent, usize, _) =
 				futures::executor::block_on(futures::future::select_all(
 					processes.iter().map(|&(_, ref receiver)| {
@@ -1139,7 +1058,7 @@ fn monitor_process(
 					match selected {
 						futures::future::Either::Left(event) => {
 							let event = event.unwrap();
-							sender.bsend(event.clone());
+							sender.send(event.clone()).block();
 							if let ProcessOutputEvent::Exit(_) = event {
 								// trace!("xxx exit");
 								break;

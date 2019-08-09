@@ -34,6 +34,7 @@ use std::{
 	}, thread, time::Duration
 };
 
+use constellation::FutureExtExt;
 use constellation_internal::{
 	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
@@ -94,10 +95,12 @@ fn monitor_process(
 		};
 		match x {
 			futures::future::Either::Left(event) => {
-				sender.bsend(match event.unwrap() {
-					InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-					InputEventInt::Kill => ProcessInputEvent::Kill,
-				});
+				sender
+					.send(match event.unwrap() {
+						InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
+						InputEventInt::Kill => ProcessInputEvent::Kill,
+					})
+					.block();
 			}
 			futures::future::Either::Right(event) => match event.unwrap() {
 				ProcessOutputEvent::Spawn(new_pid) => {
