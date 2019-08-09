@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.1")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![feature(async_await)]
 #![warn(
@@ -131,7 +131,7 @@ impl<T: Serialize> Sender<T> {
 		}
 	}
 
-	/// Get the pid of the remote end of this Sender
+	/// Get the pid of the remote end of this Sender.
 	pub fn remote_pid(&self) -> Pid {
 		self.1
 	}
@@ -303,7 +303,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 		}
 	}
 
-	/// Get the pid of the remote end of this Receiver
+	/// Get the pid of the remote end of this Receiver.
 	pub fn remote_pid(&self) -> Pid {
 		self.1
 	}
