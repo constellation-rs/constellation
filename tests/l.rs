@@ -60,7 +60,8 @@ fn main() {
 			},
 			FnOnce!(|_parent| ()),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 		let _receiver = Receiver::<String>::new(pid);
 	}
 }

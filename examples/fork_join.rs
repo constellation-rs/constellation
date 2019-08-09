@@ -84,6 +84,7 @@ fn main() {
 					sender.send(lowest).block();
 				}),
 			)
+			.block()
 			.expect("Unable to allocate process!");
 
 			// Create a `Receiver` half of a channel to the newly-spawned child

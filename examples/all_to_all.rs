@@ -93,6 +93,7 @@ fn main() {
 					println!("done");
 				}),
 			)
+			.block()
 			.expect("Spawn failed")
 		})
 		.collect();

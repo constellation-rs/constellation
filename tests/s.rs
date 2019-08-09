@@ -182,7 +182,8 @@ fn main() {
 					println!("{}", receiver.recv().block().unwrap());
 				}),
 			)
-			.expect("SPAWN FAILED")
+			.block()
+			.expect("spawn() failed")
 		})
 		.collect::<Vec<_>>();
 	let channels = pids

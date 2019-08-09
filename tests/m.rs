@@ -60,7 +60,8 @@ fn main() {
 				let _receiver = Receiver::<String>::new(parent);
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 		let _sender = Sender::<String>::new(pid);
 	}
 }

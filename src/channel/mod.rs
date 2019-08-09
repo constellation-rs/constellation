@@ -7,11 +7,11 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
-use super::{Fd, Never};
+use super::Fd;
 
 pub use self::{inner::*, inner_states::*};
 pub use tcp_typed::{socket_forwarder, SocketForwardee, SocketForwarder};
@@ -588,7 +588,9 @@ impl<T: Serialize> Sender<T> {
 	}
 }
 impl<T: Serialize> Sender<Option<T>> {
-	pub fn futures_poll_ready(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
+	pub fn futures_poll_ready(
+		&self, cx: &mut Context, context: &Reactor,
+	) -> Poll<Result<(), Infallible>>
 	where
 		T: 'static,
 	{
@@ -599,7 +601,7 @@ impl<T: Serialize> Sender<Option<T>> {
 		}
 	}
 
-	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), Never>
+	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), Infallible>
 	where
 		T: 'static,
 	{
@@ -610,7 +612,9 @@ impl<T: Serialize> Sender<Option<T>> {
 		Ok(())
 	}
 
-	pub fn futures_poll_close(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
+	pub fn futures_poll_close(
+		&self, cx: &mut Context, context: &Reactor,
+	) -> Poll<Result<(), Infallible>>
 	where
 		T: 'static,
 	{

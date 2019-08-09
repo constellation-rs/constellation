@@ -90,6 +90,7 @@ fn main() {
 				println!("hi {:?}", resources());
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 	}
 }

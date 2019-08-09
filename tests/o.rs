@@ -61,7 +61,8 @@ fn main() {
 				println!("{}", receiver.recv().block().unwrap());
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 		let sender = Sender::<String>::new(pid);
 		sender.send(String::from("hi")).block();
 	}

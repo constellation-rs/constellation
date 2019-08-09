@@ -184,7 +184,8 @@ fn main() {
 					println!("done {}", i);
 				}),
 			)
-			.expect("SPAWN FAILED");
+			.block()
+			.expect("spawn() failed");
 			(
 				Sender::<Option<String>>::new(pid),
 				Receiver::<Option<String>>::new(pid),

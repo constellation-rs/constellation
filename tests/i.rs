@@ -135,7 +135,8 @@ fn sub2<
 				sub2(parent, arg)
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 		let receiver = Receiver::<T>::new(child_pid);
 		let sender = Sender::new(parent);
 		sender.send(receiver.recv().block().unwrap()).block();
@@ -204,7 +205,8 @@ fn main() {
 					println!("done: {}", hi);
 				}),
 			)
-			.expect("SPAWN FAILED");
+			.block()
+			.expect("spawn() failed");
 			let sender = Sender::new(pid);
 			sender.send(format!("hello alec! {}", i)).block();
 		}
@@ -221,7 +223,8 @@ fn main() {
 				sub2(parent, arg)
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed");
 		let receiver = Receiver::<String>::new(pid);
 		println!("final: {:?}", receiver.recv().block().unwrap());
 	});
@@ -280,7 +283,8 @@ fn main() {
 						println!("done2");
 					}),
 				)
-				.expect("SPAWN FAILED")
+				.block()
+				.expect("spawn() failed")
 			})
 			.collect();
 		let senders: Vec<Sender<std::vec::Vec<Pid>>> =

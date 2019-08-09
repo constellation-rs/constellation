@@ -181,7 +181,8 @@ fn main() {
 						})
 					}),
 				)
-				.expect("SPAWN FAILED")
+				.block()
+				.expect("spawn() failed")
 			})
 			.collect::<Vec<_>>();
 		let channels = pids

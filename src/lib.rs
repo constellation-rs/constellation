@@ -10,7 +10,7 @@
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.0")]
-#![cfg_attr(feature = "nightly", feature(read_initializer, never_type))]
+#![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![feature(async_await)]
 #![warn(
 	missing_copy_implementations,
@@ -36,7 +36,7 @@ mod channel;
 
 use either::Either;
 use futures::{
-	future::FutureExt, sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
+	future::{FutureExt, TryFutureExt}, sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
 };
 use log::trace;
 use more_asserts::*;
@@ -51,7 +51,7 @@ use palaver::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, convert::TryInto, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	any, borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, task::{Context, Poll}, thread
 };
@@ -59,15 +59,6 @@ use std::{
 use constellation_internal::{
 	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
-
-/// The Never type
-#[cfg(feature = "nightly")]
-pub type Never = !;
-#[cfg(not(feature = "nightly"))]
-/// The Never type
-#[derive(Copy, Clone)]
-#[allow(clippy::empty_enum)]
-pub enum Never {}
 
 pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
@@ -241,7 +232,7 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 	}
 }
 impl<T: 'static + Serialize> Sink<T> for Sender<Option<T>> {
-	type Error = Never;
+	type Error = Infallible;
 
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
@@ -440,7 +431,7 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Futu
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Get the [Pid] of the current process
+/// Get the [Pid] of the current process.
 #[inline(always)]
 pub fn pid() -> Pid {
 	*PID.get().unwrap_or_else(|| {
@@ -448,7 +439,7 @@ pub fn pid() -> Pid {
 	})
 }
 
-/// Get the memory and CPU requirements configured at initialisation of the current process
+/// Get the memory and CPU requirements configured at initialisation of the current process.
 pub fn resources() -> Resources {
 	*RESOURCES.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
@@ -459,7 +450,8 @@ pub fn resources() -> Resources {
 
 fn spawn_native(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid, ()> {
+	_block: bool,
+) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_native");
 	let argv: Vec<CString> = env::args_os()
 		.expect("Couldn't get argv")
@@ -578,7 +570,7 @@ fn spawn_native(
 					pub fn execve(
 						path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
 						env: &[CString], mut env_p: Vec<*const libc::c_char>,
-					) -> nix::Result<Never> {
+					) -> nix::Result<Infallible> {
 						fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
 							for arg in args.iter().map(|s| s.as_ptr()) {
 								args_p.push(arg);
@@ -637,7 +629,8 @@ fn spawn_native(
 
 fn spawn_deployed(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid, ()> {
+	_block: bool,
+) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_deployed");
 	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
@@ -683,19 +676,75 @@ fn spawn_deployed(
 		let _ = file.into_raw_fd();
 	}
 	let _ = stream.into_raw_fd();
-	pid.ok_or(())
+	pid.ok_or(TrySpawnError::NoCapacity)
 }
 
-/// Spawn a new process.
-///
-/// `spawn()` takes 2 arguments:
-///  * `resources`: memory and CPU resource requirements of the new process
-///  * `start`: the closure to be run in the new process
-///
-/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
-pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
-	resources: Resources, start: T,
-) -> Result<Pid, ()> {
+/// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum TrySpawnError {
+	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
+	NoCapacity,
+	/// [`try_spawn()`](try_spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive, // https://github.com/rust-lang/rust/issues/44109
+}
+
+/// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SpawnError {
+	/// [`spawn()`](spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive,
+}
+impl From<SpawnError> for TrySpawnError {
+	fn from(error: SpawnError) -> Self {
+		match error {
+			SpawnError::Unknown => Self::Unknown,
+			SpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl TryFrom<TrySpawnError> for SpawnError {
+	type Error = ();
+
+	fn try_from(error: TrySpawnError) -> Result<Self, Self::Error> {
+		match error {
+			TrySpawnError::NoCapacity => Err(()),
+			TrySpawnError::Unknown => Ok(Self::Unknown),
+			TrySpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl fmt::Display for TrySpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::NoCapacity => write!(
+				f,
+				"try_spawn() failed because the new process couldn't be allocated"
+			),
+			Self::Unknown => write!(f, "try_spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl fmt::Display for SpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl Error for TrySpawnError {}
+impl Error for SpawnError {}
+
+async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T, block: bool,
+) -> Result<Pid, TrySpawnError> {
 	let _scheduler = SCHEDULER.lock().unwrap();
 	let deployed = *DEPLOYED.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
@@ -708,10 +757,38 @@ pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 		closure(parent)
 	});
 	if !deployed {
-		spawn_native(resources, start)
+		spawn_native(resources, start, block)
 	} else {
-		spawn_deployed(resources, start)
+		spawn_deployed(resources, start, block)
 	}
+}
+
+/// Spawn a new process if it can be allocated immediately.
+///
+/// `spawn()` takes 2 arguments:
+///  * `resources`: memory and CPU resource requirements of the new process
+///  * `start`: the closure to be run in the new process
+///
+/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T,
+) -> Result<Pid, TrySpawnError> {
+	spawn_inner(resources, start, false).await
+}
+
+/// Spawn a new process.
+///
+/// `spawn()` takes 2 arguments:
+///  * `resources`: memory and CPU resource requirements of the new process
+///  * `start`: the closure to be run in the new process
+///
+/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+pub async fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T,
+) -> Result<Pid, SpawnError> {
+	spawn_inner(resources, start, true)
+		.map_err(|err| err.try_into().unwrap())
+		.await
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
