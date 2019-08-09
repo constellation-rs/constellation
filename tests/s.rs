@@ -183,7 +183,7 @@ fn main() {
 				}),
 			)
 			.block()
-			.expect("spawn() failed")
+			.expect("spawn() failed to allocate process")
 		})
 		.collect::<Vec<_>>();
 	let channels = pids

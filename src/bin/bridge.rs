@@ -34,7 +34,7 @@ use std::{
 	}, thread, time::Duration
 };
 
-use constellation::FutureExtExt;
+use constellation::FutureExt1;
 use constellation_internal::{
 	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };

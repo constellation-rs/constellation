@@ -61,6 +61,6 @@ fn main() {
 			FnOnce!(|_parent| ()),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 	}
 }

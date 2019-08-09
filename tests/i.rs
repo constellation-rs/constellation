@@ -136,7 +136,7 @@ fn sub2<
 			}),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 		let receiver = Receiver::<T>::new(child_pid);
 		let sender = Sender::new(parent);
 		sender.send(receiver.recv().block().unwrap()).block();
@@ -206,7 +206,7 @@ fn main() {
 				}),
 			)
 			.block()
-			.expect("spawn() failed");
+			.expect("spawn() failed to allocate process");
 			let sender = Sender::new(pid);
 			sender.send(format!("hello alec! {}", i)).block();
 		}
@@ -224,7 +224,7 @@ fn main() {
 			}),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 		let receiver = Receiver::<String>::new(pid);
 		println!("final: {:?}", receiver.recv().block().unwrap());
 	});
@@ -284,7 +284,7 @@ fn main() {
 					}),
 				)
 				.block()
-				.expect("spawn() failed")
+				.expect("spawn() failed to allocate process")
 			})
 			.collect();
 		let senders: Vec<Sender<std::vec::Vec<Pid>>> =

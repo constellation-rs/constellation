@@ -65,8 +65,10 @@ pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Extension trait to provide convenient [`block()`](FutureExtExt::block) method on futures.
-pub trait FutureExtExt: Future {
+/// Extension trait to provide convenient [`block()`](FutureExt1::block) method on futures.
+///
+/// Named `FutureExt1` to avoid clashing with [`futures::future::FutureExt`].
+pub trait FutureExt1: Future {
 	/// Convenience method over `futures::executor::block_on(future)`.
 	fn block(self) -> Self::Output
 	where
@@ -75,7 +77,7 @@ pub trait FutureExtExt: Future {
 		futures::executor::block_on(self)
 	}
 }
-impl<T: ?Sized> FutureExtExt for T where T: Future {}
+impl<T: ?Sized> FutureExt1 for T where T: Future {}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -104,7 +106,7 @@ static HANDLE: Lazy<RwLock<Option<channel::Handle>>> = Lazy::new(|| RwLock::new(
 ///
 /// It has an async method [`send(value)`](Sender::send) and a nonblocking method [`try_send()`](Sender::try_send).
 ///
-/// For blocking behaviour use [`.send(value).block()`](FutureExtExt::block).
+/// For blocking behaviour use [`.send(value).block()`](FutureExt1::block).
 pub struct Sender<T: Serialize>(Option<channel::Sender<T>>, Pid);
 impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
@@ -276,7 +278,7 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Future for channel::Send<'a, 
 ///
 /// It has an async method [`recv()`](Receiver::recv) and a nonblocking method [`try_recv()`](Receiver::try_recv).
 ///
-/// For blocking behaviour use [`.recv().block()`](FutureExtExt::block).
+/// For blocking behaviour use [`.recv().block()`](FutureExt1::block).
 pub struct Receiver<T: DeserializeOwned>(Option<channel::Receiver<T>>, Pid);
 impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
@@ -348,7 +350,8 @@ impl<'a> Read for &'a Receiver<u8> {
 		}
 		buf[0] = self.recv().block().map_err(|e| match e {
 			ChannelError::Exited => io::ErrorKind::UnexpectedEof,
-			ChannelError::Error => io::ErrorKind::ConnectionReset,
+			ChannelError::Unknown => io::ErrorKind::ConnectionReset,
+			ChannelError::__Nonexhaustive => unreachable!(),
 		})?;
 		if buf.len() == 1 {
 			return Ok(1);
@@ -372,7 +375,8 @@ impl<'a> Read for &'a Receiver<u8> {
 		for byte in buf {
 			*byte = self.recv().block().map_err(|e| match e {
 				ChannelError::Exited => io::ErrorKind::UnexpectedEof,
-				ChannelError::Error => io::ErrorKind::ConnectionReset,
+				ChannelError::Unknown => io::ErrorKind::ConnectionReset,
+				ChannelError::__Nonexhaustive => unreachable!(),
 			})?;
 		}
 		Ok(())
@@ -681,7 +685,7 @@ fn spawn_deployed(
 
 /// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum TrySpawnError {
 	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
 	NoCapacity,
@@ -693,7 +697,7 @@ pub enum TrySpawnError {
 
 /// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum SpawnError {
 	/// [`spawn()`](spawn) failed for unknown reasons.
 	Unknown,

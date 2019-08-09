@@ -5,9 +5,9 @@ use either::Either;
 use log::trace;
 use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
@@ -423,36 +423,26 @@ impl Channel {
 }
 
 /// Channel operation error modes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ChannelError {
 	/// The remote process has exited, thus `send()`/`recv()` could never succeed.
 	Exited,
 	/// The remote process terminated abruptly, or the channel was killed by the OS or hardware.
-	Error,
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive,
 }
 impl fmt::Display for ChannelError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
-			Self::Error => write!(f, "Remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
-			Self::Exited => write!(f, "Remote process already exited"),
+			Self::Exited => write!(f, "remote process already exited"),
+			Self::Unknown => write!(f, "remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
+			Self::__Nonexhaustive => unreachable!(),
 		}
 	}
 }
-impl error::Error for ChannelError {
-	fn description(&self) -> &str {
-		match *self {
-			Self::Error => "remote process died or channel killed by OS/hardware", //(ref err) => err.description(),
-			Self::Exited => "remote process already exited",
-		}
-	}
-
-	fn cause(&self) -> Option<&dyn error::Error> {
-		match *self {
-			Self::Error /*(ref err) => Some(err),*/ |
-			Self::Exited => None,
-		}
-	}
-}
+impl Error for ChannelError {}
 
 pub struct Sender<T: Serialize> {
 	channel: Option<Arc<RwLock<Option<Channel>>>>,
@@ -728,7 +718,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 				// assert_eq!(Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
 				let inner = &mut channel.as_mut().unwrap().inner;
 				if !inner.valid() {
-					return Err(ChannelError::Error);
+					return Err(ChannelError::Unknown);
 				}
 				if !inner.recvable() {
 					return Err(ChannelError::Exited);

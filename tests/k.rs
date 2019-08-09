@@ -61,7 +61,7 @@ fn main() {
 			FnOnce!(|_parent| ()),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 		let _sender = Sender::<String>::new(pid);
 	}
 }

@@ -185,7 +185,7 @@ fn main() {
 				}),
 			)
 			.block()
-			.expect("spawn() failed");
+			.expect("spawn() failed to allocate process");
 			(
 				Sender::<Option<String>>::new(pid),
 				Receiver::<Option<String>>::new(pid),

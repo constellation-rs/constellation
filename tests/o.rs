@@ -62,7 +62,7 @@ fn main() {
 			}),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 		let sender = Sender::<String>::new(pid);
 		sender.send(String::from("hi")).block();
 	}

@@ -103,7 +103,7 @@ impl ProcessPool {
 					}),
 				)
 				.block()
-				.expect("Unable to allocate process!");
+				.expect("spawn() failed to allocate process");
 
 				// Create a `Receiver` half of a channel to the newly-spawned child
 				let sender = Sender::new(child);

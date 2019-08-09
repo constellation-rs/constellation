@@ -85,7 +85,7 @@ fn main() {
 				}),
 			)
 			.block()
-			.expect("Unable to allocate process!");
+			.expect("spawn() failed to allocate process");
 
 			// Create a `Receiver` half of a channel to the newly-spawned child
 			Receiver::<(String, [u8; 20])>::new(child)

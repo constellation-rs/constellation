@@ -94,7 +94,7 @@ fn main() {
 				}),
 			)
 			.block()
-			.expect("Spawn failed")
+			.expect("spawn() failed to allocate process")
 		})
 		.collect();
 

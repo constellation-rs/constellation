@@ -61,7 +61,7 @@ fn main() {
 			}),
 		)
 		.block()
-		.expect("spawn() failed");
+		.expect("spawn() failed to allocate process");
 		let _receiver = Receiver::<String>::new(pid);
 	}
 }
