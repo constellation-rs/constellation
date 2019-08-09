@@ -138,13 +138,13 @@ fn sub2<
 		.expect("SPAWN FAILED");
 		let receiver = Receiver::<T>::new(child_pid);
 		let sender = Sender::new(parent);
-		sender.send(receiver.recv().unwrap());
+		sender.bsend(receiver.brecv().unwrap());
 	} else {
 		// if unsafe{fork()} == 0 {
 		// 	loop{}
 		// }
 		let sender = Sender::new(parent);
-		sender.send(arg.1);
+		sender.bsend(arg.1);
 	}
 	// println!("PID!!! {:?}", unsafe{getpid()});
 	// std::thread::sleep(std::time::Duration::new(200,0));
@@ -187,7 +187,7 @@ fn main() {
 				FnOnce!([arg] move |parent| {
 					println!("! sub1");
 					let receiver = Receiver::new(parent);
-					let hi: String = receiver.recv().unwrap();
+					let hi: String = receiver.brecv().unwrap();
 					println!("{} : {:?}", hi, arg);
 					for i in 0..5 {
 						thread::sleep(time::Duration::new(0, 500_000_000));
@@ -206,7 +206,7 @@ fn main() {
 			)
 			.expect("SPAWN FAILED");
 			let sender = Sender::new(pid);
-			sender.send(format!("hello alec! {}", i));
+			sender.bsend(format!("hello alec! {}", i));
 		}
 	});
 	let b = thread::spawn(move || {
@@ -223,7 +223,7 @@ fn main() {
 		)
 		.expect("SPAWN FAILED");
 		let receiver = Receiver::<String>::new(pid);
-		println!("final: {:?}", receiver.recv().unwrap());
+		println!("final: {:?}", receiver.brecv().unwrap());
 	});
 	let c = thread::spawn(move || {
 		let count = c;
@@ -237,7 +237,7 @@ fn main() {
 					FnOnce!([arg] move |parent| {
 						println!("! sub3");
 						let receiver = Receiver::<Vec<Pid>>::new(parent);
-						let pids = receiver.recv().unwrap();
+						let pids = receiver.brecv().unwrap();
 						// println!("{:?}", pids);
 						assert_eq!(pids[arg], pid());
 						let mut senders: Vec<Option<Sender<usize>>> = Vec::with_capacity(pids.len());
@@ -269,10 +269,10 @@ fn main() {
 									continue;
 								}
 								if i == arg {
-									sender.as_ref().unwrap().send(i * j);
+									sender.as_ref().unwrap().bsend(i * j);
 								}
 								if j == arg {
-									let x = receiver.as_ref().unwrap().recv().unwrap();
+									let x = receiver.as_ref().unwrap().brecv().unwrap();
 									assert_eq!(x, i * j);
 								}
 							}
@@ -286,7 +286,7 @@ fn main() {
 		let senders: Vec<Sender<std::vec::Vec<Pid>>> =
 			pids.iter().map(|&pid| Sender::new(pid)).collect();
 		for sender in senders {
-			sender.send(pids.clone());
+			sender.bsend(pids.clone());
 		}
 	});
 	a.join().unwrap();

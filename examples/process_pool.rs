@@ -93,11 +93,11 @@ impl ProcessPool {
 						// Create a `Sender` half of a channel to our parent
 						let sender = Sender::<Response>::new(parent);
 
-						while let Some(work) = receiver.recv().unwrap() {
+						while let Some(work) = receiver.brecv().unwrap() {
 							// println!("process {}: got work", i);
 							let ret = work();
 							// println!("process {}: done work", i);
-							sender.send(ret);
+							sender.bsend(ret);
 							// println!("process {}: awaiting work", i);
 						}
 					}),
@@ -135,7 +135,7 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		process
 			.sender
-			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
+			.bsend(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
 				let work: F = work;
 				st::Box::new(work()) as Response
 			})) as Request));
@@ -152,7 +152,7 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		while process.received <= process_offset {
 			process.queue[process.received - process.tail]
-				.received(process.receiver.recv().unwrap());
+				.received(process.receiver.brecv().unwrap());
 			process.received += 1;
 		}
 		let boxed: st::Box<_> = process.queue[process_offset - process.tail].take();
@@ -166,7 +166,7 @@ impl ProcessPool {
 impl Drop for ProcessPool {
 	fn drop(&mut self) {
 		for Process { sender, .. } in &self.processes {
-			sender.send(None);
+			sender.bsend(None);
 		}
 	}
 }

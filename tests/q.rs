@@ -59,14 +59,14 @@ fn main() {
 			FnOnce!(|parent| {
 				let receiver = Receiver::<String>::new(parent);
 				let sender = Sender::<usize>::new(parent);
-				println!("{}", receiver.recv().unwrap());
-				sender.send(1_234_567_890);
+				println!("{}", receiver.brecv().unwrap());
+				sender.bsend(1_234_567_890);
 			}),
 		)
 		.expect("SPAWN FAILED");
 		let sender = Sender::<String>::new(pid);
 		let receiver = Receiver::<usize>::new(pid);
-		sender.send(String::from("hi"));
-		println!("{}", receiver.recv().unwrap());
+		sender.bsend(String::from("hi"));
+		println!("{}", receiver.brecv().unwrap());
 	}
 }

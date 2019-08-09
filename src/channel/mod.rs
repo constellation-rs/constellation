@@ -11,8 +11,6 @@ use std::{
 };
 use tcp_typed::{Connection, Listener};
 
-use constellation_internal::Rand;
-
 use super::{Fd, Never};
 
 pub use self::{inner::*, inner_states::*};
@@ -1023,44 +1021,44 @@ pub trait Selectable: fmt::Debug {
 // 		self.0.run(self.1)
 // 	}
 // }
-pub fn select<'a, F: FnMut() -> C, C: Borrow<Reactor>>(
-	mut select: Vec<Box<dyn Selectable + 'a>>, context: &mut F,
-) -> impl Iterator<Item = Box<dyn Selectable + 'a>> + 'a {
-	for selectable in &select {
-		selectable.subscribe(thread::current());
-	}
-	let mut context_lock;
-	let ret = loop {
-		let mut rand = Rand::new();
-		context_lock = Some(context());
-		for (i, selectable) in select.iter_mut().enumerate() {
-			if let Some(run) = selectable.available(context_lock.as_ref().unwrap().borrow()) {
-				rand.push((i, run), &mut rand::thread_rng());
-			}
-		}
-		if let Some((i, run)) = rand.get() {
-			break (i, run);
-		}
-		drop(context_lock.take().unwrap());
-		thread::park();
-	};
-	let i_ = ret.0;
-	{ ret }.1();
-	for (i, selectable) in select.iter().enumerate() {
-		// TODO: unsub should be before run
-		if i != i_ {
-			selectable.unsubscribe(thread::current());
-		}
-	}
-	drop(context_lock.take().unwrap());
-	let mut rem = Vec::with_capacity(select.len() - 1);
-	for (i, select) in select.into_iter().enumerate() {
-		if i != i_ {
-			rem.push(select);
-			// } else {
-			// ret.1();
-			// select.run(&*context());
-		}
-	}
-	rem.into_iter()
-}
+// pub fn select<'a, F: FnMut() -> C, C: Borrow<Reactor>>(
+// 	mut select: Vec<Box<dyn Selectable + 'a>>, context: &mut F,
+// ) -> impl Iterator<Item = Box<dyn Selectable + 'a>> + 'a {
+// 	for selectable in &select {
+// 		selectable.subscribe(thread::current());
+// 	}
+// 	let mut context_lock;
+// 	let ret = loop {
+// 		let mut rand = Rand::new();
+// 		context_lock = Some(context());
+// 		for (i, selectable) in select.iter_mut().enumerate() {
+// 			if let Some(run) = selectable.available(context_lock.as_ref().unwrap().borrow()) {
+// 				rand.push((i, run), &mut rand::thread_rng());
+// 			}
+// 		}
+// 		if let Some((i, run)) = rand.get() {
+// 			break (i, run);
+// 		}
+// 		drop(context_lock.take().unwrap());
+// 		thread::park();
+// 	};
+// 	let i_ = ret.0;
+// 	{ ret }.1();
+// 	for (i, selectable) in select.iter().enumerate() {
+// 		// TODO: unsub should be before run
+// 		if i != i_ {
+// 			selectable.unsubscribe(thread::current());
+// 		}
+// 	}
+// 	drop(context_lock.take().unwrap());
+// 	let mut rem = Vec::with_capacity(select.len() - 1);
+// 	for (i, select) in select.into_iter().enumerate() {
+// 		if i != i_ {
+// 			rem.push(select);
+// 			// } else {
+// 			// ret.1();
+// 			// select.run(&*context());
+// 		}
+// 	}
+// 	rem.into_iter()
+// }

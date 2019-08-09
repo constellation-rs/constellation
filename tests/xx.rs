@@ -174,9 +174,9 @@ fn main() {
 					let receiver = Receiver::<Option<String>>::new(parent);
 					let sender = Sender::<Option<String>>::new(parent);
 					loop {
-						let x = receiver.recv().unwrap();
+						let x = receiver.brecv().unwrap();
 						let end = x.is_none();
-						sender.send(x);
+						sender.bsend(x);
 						if end {
 							break;
 						}
@@ -200,9 +200,9 @@ fn main() {
 	];
 	for &(ref sender, _) in &workers {
 		for x in &xx {
-			sender.send(Some(x.clone()));
+			sender.bsend(Some(x.clone()));
 		}
-		sender.send(None);
+		sender.bsend(None);
 	}
 	let x = workers
 		.iter()
@@ -210,13 +210,13 @@ fn main() {
 			let x = xx
 				.iter()
 				.map(|x| {
-					let y = receiver.recv().unwrap();
+					let y = receiver.brecv().unwrap();
 					assert_eq!(Some(x.clone()), y);
 					y.unwrap()
 				})
 				.collect::<Vec<_>>()
 				.join("");
-			let y = receiver.recv().unwrap();
+			let y = receiver.brecv().unwrap();
 			assert_eq!(None, y);
 			x
 		})

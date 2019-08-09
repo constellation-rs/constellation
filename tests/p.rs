@@ -58,11 +58,11 @@ fn main() {
 			},
 			FnOnce!(|parent| {
 				let sender = Sender::<String>::new(parent);
-				sender.send(String::from("hi"));
+				sender.bsend(String::from("hi"));
 			}),
 		)
 		.expect("SPAWN FAILED");
 		let receiver = Receiver::<String>::new(pid);
-		println!("{}", receiver.recv().unwrap());
+		println!("{}", receiver.brecv().unwrap());
 	}
 }
