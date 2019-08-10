@@ -174,6 +174,7 @@ fn main() {
 				println!("hi {}", i);
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed to allocate process");
 	}
 }

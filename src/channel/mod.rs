@@ -5,15 +5,13 @@ use either::Either;
 use log::trace;
 use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread::{self, Thread, ThreadId}, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
 };
 use tcp_typed::{Connection, Listener};
 
-use constellation_internal::Rand;
-
-use super::{Fd, Never};
+use super::Fd;
 
 pub use self::{inner::*, inner_states::*};
 pub use tcp_typed::{socket_forwarder, SocketForwardee, SocketForwarder};
@@ -51,6 +49,7 @@ pub struct Reactor {
 	local: SocketAddr,
 }
 impl Reactor {
+	#[allow(dead_code)]
 	pub fn new(host: IpAddr) -> (Self, u16) {
 		let notifier = Notifier::new();
 		let (listener, port) = Listener::new_ephemeral(&host, &notifier.context(Key(ptr::null())));
@@ -242,14 +241,8 @@ impl Reactor {
 											channel.inner.close(notifier); // if the other end's process is ending; this could be given sooner
 										}
 										if !is_done {
-											for sender in channel.senders.values() {
-												sender.unpark(); // TODO: don't do unless actual progress
-											}
 											for sender_future in channel.senders_futures.drain(..) {
 												sender_future.wake();
-											}
-											for receiver in channel.receivers.values() {
-												receiver.unpark(); // TODO: don't do unless actual progress
 											}
 											for receiver_future in
 												channel.receivers_futures.drain(..)
@@ -327,14 +320,8 @@ impl Reactor {
 										inner.close(notifier); // if the other end's process is ending; this could be given sooner
 									}
 									if !is_done {
-										for sender in channel.senders.values() {
-											sender.unpark(); // TODO: don't do unless actual progress
-										}
 										for sender_future in channel.senders_futures.drain(..) {
 											sender_future.wake();
-										}
-										for receiver in channel.receivers.values() {
-											receiver.unpark(); // TODO: don't do unless actual progress
 										}
 										for receiver_future in channel.receivers_futures.drain(..) {
 											receiver_future.wake();
@@ -420,9 +407,7 @@ pub struct Channel {
 	inner: Inner,
 	senders_count: usize,
 	receivers_count: usize,
-	senders: HashMap<ThreadId, Thread>, // TODO: linked list
 	senders_futures: Vec<Waker>,
-	receivers: HashMap<ThreadId, Thread>,
 	receivers_futures: Vec<Waker>,
 }
 impl Channel {
@@ -431,45 +416,33 @@ impl Channel {
 			inner,
 			senders_count: 0,
 			receivers_count: 0,
-			senders: HashMap::new(),
 			senders_futures: Vec::new(),
-			receivers: HashMap::new(),
 			receivers_futures: Vec::new(),
 		}
 	}
 }
 
 /// Channel operation error modes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ChannelError {
 	/// The remote process has exited, thus `send()`/`recv()` could never succeed.
 	Exited,
 	/// The remote process terminated abruptly, or the channel was killed by the OS or hardware.
-	Error,
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive,
 }
 impl fmt::Display for ChannelError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
-			Self::Error => write!(f, "Remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
-			Self::Exited => write!(f, "Remote process already exited"),
+			Self::Exited => write!(f, "remote process already exited"),
+			Self::Unknown => write!(f, "remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
+			Self::__Nonexhaustive => unreachable!(),
 		}
 	}
 }
-impl error::Error for ChannelError {
-	fn description(&self) -> &str {
-		match *self {
-			Self::Error => "remote process died or channel killed by OS/hardware", //(ref err) => err.description(),
-			Self::Exited => "remote process already exited",
-		}
-	}
-
-	fn cause(&self) -> Option<&dyn error::Error> {
-		match *self {
-			Self::Error /*(ref err) => Some(err),*/ |
-			Self::Exited => None,
-		}
-	}
-}
+impl Error for ChannelError {}
 
 pub struct Sender<T: Serialize> {
 	channel: Option<Arc<RwLock<Option<Channel>>>>,
@@ -515,8 +488,8 @@ impl<T: Serialize> Sender<T> {
 		})
 	}
 
-	pub fn async_send<'a, C: Borrow<Reactor> + 'a>(
-		&'a self, context: C,
+	pub fn try_send<'a, C: Borrow<Reactor> + 'a>(
+		&'a self, context: C, register: Option<&mut Context>,
 	) -> Option<impl FnOnce(T) + 'a>
 	where
 		T: 'static,
@@ -533,11 +506,6 @@ impl<T: Serialize> Sender<T> {
 		};
 		if unblocked {
 			Some(move |t| {
-				let _ = channel
-					.as_mut()
-					.unwrap()
-					.senders
-					.remove(&thread::current().id()); //.unwrap();
 				let notifier = &context.borrow().notifier;
 				let notifier_key: *const RwLock<Option<Channel>> =
 					&**self.channel.as_ref().unwrap();
@@ -553,11 +521,18 @@ impl<T: Serialize> Sender<T> {
 				// TODO: unpark queue?
 			})
 		} else {
+			if let Some(cx) = register {
+				channel
+					.as_mut()
+					.unwrap()
+					.senders_futures
+					.push(cx.waker().clone());
+			}
 			None
 		}
 	}
 
-	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(&'a self, f: F) -> Send<'a, T, F>
+	pub fn send<'a, F: FnOnce() -> T + 'a>(&'a self, f: F) -> Send<'a, T, F>
 	where
 		T: 'static,
 	{
@@ -603,52 +578,37 @@ impl<T: Serialize> Sender<T> {
 	}
 }
 impl<T: Serialize> Sender<Option<T>> {
-	pub fn futures_poll_ready(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
+	pub fn futures_poll_ready(
+		&self, cx: &mut Context, context: &Reactor,
+	) -> Poll<Result<(), Infallible>>
 	where
 		T: 'static,
 	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders_futures
-			.push(cx.waker().clone());
-		if let Some(_send) = self.async_send(context) {
-			// TODO: remove from senders_futures
+		if let Some(_send) = self.try_send(context, Some(cx)) {
 			Poll::Ready(Ok(()))
 		} else {
 			Poll::Pending
 		}
 	}
 
-	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), Never>
+	pub fn futures_start_send(&self, item: T, context: &Reactor) -> Result<(), Infallible>
 	where
 		T: 'static,
 	{
-		self.async_send(context).expect(
-			"called futures::Sink::start_send without the go-ahead from futures::Sink::poll_ready",
+		// TODO: Race
+		self.try_send(context, None).expect(
+			"called futures::Sink::start_send without the go-ahead from futures::Sink::poll_ready OR another thread has beaten us to it (!)",
 		)(Some(item));
 		Ok(())
 	}
 
-	pub fn futures_poll_close(&self, cx: &mut Context, context: &Reactor) -> Poll<Result<(), Never>>
+	pub fn futures_poll_close(
+		&self, cx: &mut Context, context: &Reactor,
+	) -> Poll<Result<(), Infallible>>
 	where
 		T: 'static,
 	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders_futures
-			.push(cx.waker().clone());
-		if let Some(send) = self.async_send(context) {
-			// TODO: remove from senders_futures
+		if let Some(send) = self.try_send(context, Some(cx)) {
 			send(None);
 			Poll::Ready(Ok(()))
 		} else {
@@ -670,62 +630,9 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> fmt::Debug for Send<'a, T, F>
 		f.debug_struct("Send").field("sender", &self.0).finish()
 	}
 }
-impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Selectable for Send<'a, T, F> {
-	fn subscribe(&self, thread: Thread) {
-		let x = self
-			.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders
-			.insert(thread.id(), thread);
-		assert!(x.is_none());
-	}
-
-	fn available<'b>(&'b mut self, context: &'b Reactor) -> Option<Box<dyn FnOnce() + 'b>> {
-		self.0
-			.async_send(context)
-			.map(|t| -> Box<dyn FnOnce() + 'b> {
-				Box::new(move || {
-					let f = self.1.get_mut().unwrap().take().unwrap();
-					t(f())
-				})
-			})
-	}
-
-	fn unsubscribe(&self, thread: Thread) {
-		let _ = self
-			.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders
-			.remove(&thread.id())
-			.unwrap();
-	}
-}
 impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Send<'a, T, F> {
 	pub fn futures_poll(self: Pin<&mut Self>, cx: &mut Context, context: &Reactor) -> Poll<()> {
-		self.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.senders_futures
-			.push(cx.waker().clone());
-		if let Some(send) = self.0.async_send(context) {
-			// TODO: remove from senders_futures
+		if let Some(send) = self.0.try_send(context, Some(cx)) {
 			send(self.as_ref().1.write().unwrap().take().unwrap()());
 			Poll::Ready(())
 		} else {
@@ -786,8 +693,8 @@ impl<T: DeserializeOwned> Receiver<T> {
 		})
 	}
 
-	pub fn async_recv<'a, C: Borrow<Reactor> + 'a>(
-		&'a self, context: C,
+	pub fn try_recv<'a, C: Borrow<Reactor> + 'a>(
+		&'a self, context: C, register: Option<&mut Context>,
 	) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
 	where
 		T: 'static,
@@ -803,11 +710,6 @@ impl<T: DeserializeOwned> Receiver<T> {
 		};
 		if unblocked {
 			Some(move || {
-				let _ = channel
-					.as_mut()
-					.unwrap()
-					.receivers
-					.remove(&thread::current().id()); //.unwrap();
 				let notifier = &context.borrow().notifier;
 				let notifier_key: *const RwLock<Option<Channel>> =
 					&**self.channel.as_ref().unwrap();
@@ -816,7 +718,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 				// assert_eq!(Arc::strong_count(&self.channel.as_ref().unwrap()), 1+channel.as_ref().unwrap().senders_count+channel.as_ref().unwrap().receivers_count);
 				let inner = &mut channel.as_mut().unwrap().inner;
 				if !inner.valid() {
-					return Err(ChannelError::Error);
+					return Err(ChannelError::Unknown);
 				}
 				if !inner.recvable() {
 					return Err(ChannelError::Exited);
@@ -825,13 +727,18 @@ impl<T: DeserializeOwned> Receiver<T> {
 				// TODO: unpark queue?
 			})
 		} else {
+			if let Some(cx) = register {
+				channel
+					.as_mut()
+					.unwrap()
+					.receivers_futures
+					.push(cx.waker().clone());
+			}
 			None
 		}
 	}
 
-	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
-		&'a self, f: F,
-	) -> Recv<'a, T, F>
+	pub fn recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(&'a self, f: F) -> Recv<'a, T, F>
 	where
 		T: 'static,
 	{
@@ -883,17 +790,7 @@ impl<T: DeserializeOwned> Receiver<Option<T>> {
 	where
 		T: 'static,
 	{
-		self.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.receivers_futures
-			.push(cx.waker().clone());
-		if let Some(recv) = self.async_recv(context) {
-			// TODO: remove from receivers_futures
+		if let Some(recv) = self.try_recv(context, Some(cx)) {
 			Poll::Ready(match recv() {
 				Ok(Some(t)) => Some(Ok(t)),
 				Ok(None) => None,
@@ -920,67 +817,12 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> fmt:
 		f.debug_struct("Recv").field("receiver", &self.0).finish()
 	}
 }
-impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Selectable
-	for Recv<'a, T, F>
-{
-	fn subscribe(&self, thread: Thread) {
-		let x = self
-			.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.receivers
-			.insert(thread.id(), thread);
-		assert!(x.is_none());
-	}
-
-	fn available<'b>(&'b mut self, context: &'b Reactor) -> Option<Box<dyn FnOnce() + 'b>> {
-		self.0
-			.async_recv(context)
-			.map(|t| -> Box<dyn FnOnce() + 'b> {
-				Box::new(move || {
-					let f = self.1.write().unwrap().take().unwrap();
-					f(t())
-				})
-			})
-	}
-
-	fn unsubscribe(&self, thread: Thread) {
-		let _ = self
-			.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.receivers
-			.remove(&thread.id())
-			.unwrap();
-	}
-}
 impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Recv<'a, T, F> {
 	pub fn futures_poll(self: Pin<&mut Self>, cx: &mut Context, context: &Reactor) -> Poll<()>
 	where
 		T: 'static,
 	{
-		self.0
-			.channel
-			.as_ref()
-			.unwrap()
-			.write()
-			.unwrap()
-			.as_mut()
-			.unwrap()
-			.receivers_futures
-			.push(cx.waker().clone());
-		if let Some(recv) = self.0.async_recv(context) {
-			// TODO: remove from receivers_futures
+		if let Some(recv) = self.0.try_recv(context, Some(cx)) {
 			self.as_ref().1.write().unwrap().take().unwrap()(recv());
 			Poll::Ready(())
 		} else {
@@ -995,72 +837,4 @@ impl<T: DeserializeOwned> fmt::Debug for Receiver<T> {
 			.field("inner", &self.channel)
 			.finish()
 	}
-}
-
-/// Types that can be [`select()`](select)ed upon.
-///
-/// [`select()`](select) lets you block on multiple blocking operations until progress can be made on at least one.
-///
-/// [`Receiver::selectable_recv()`](Receiver::selectable_recv) and [`Sender::selectable_send()`](Sender::selectable_send) let one create `Selectable` objects, any number of which can be passed to [`select()`](select). [`select()`](select) then blocks until at least one is progressable, and then from any that are progressable picks one at random and executes it.
-///
-/// It is inspired by the [`select()`](select) of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
-pub trait Selectable: fmt::Debug {
-	#[doc(hidden)]
-	fn subscribe(&self, thread: Thread);
-	#[doc(hidden)]
-	// type State;
-	#[doc(hidden)]
-	fn available<'a>(&'a mut self, context: &'a Reactor) -> Option<Box<dyn FnOnce() + 'a>>;
-	// #[doc(hidden)]
-	// fn run(&mut self, state: Self::State); // get rid once impl trait works in trait method return vals
-	#[doc(hidden)]
-	fn unsubscribe(&self, thread: Thread);
-}
-// struct SelectableRun<'a,T:Selectable+?Sized+'a>(&'a mut T,<T as Selectable>::State);
-// impl<'a,T:Selectable+?Sized+'a> ops::FnOnce<()> for SelectableRun<'a,T> {
-// 	type Output = String;
-// 	extern "rust-call" fn call_once(self, args: ()) -> Self::Output {
-// 		self.0.run(self.1)
-// 	}
-// }
-pub fn select<'a, F: FnMut() -> C, C: Borrow<Reactor>>(
-	mut select: Vec<Box<dyn Selectable + 'a>>, context: &mut F,
-) -> impl Iterator<Item = Box<dyn Selectable + 'a>> + 'a {
-	for selectable in &select {
-		selectable.subscribe(thread::current());
-	}
-	let mut context_lock;
-	let ret = loop {
-		let mut rand = Rand::new();
-		context_lock = Some(context());
-		for (i, selectable) in select.iter_mut().enumerate() {
-			if let Some(run) = selectable.available(context_lock.as_ref().unwrap().borrow()) {
-				rand.push((i, run), &mut rand::thread_rng());
-			}
-		}
-		if let Some((i, run)) = rand.get() {
-			break (i, run);
-		}
-		drop(context_lock.take().unwrap());
-		thread::park();
-	};
-	let i_ = ret.0;
-	{ ret }.1();
-	for (i, selectable) in select.iter().enumerate() {
-		// TODO: unsub should be before run
-		if i != i_ {
-			selectable.unsubscribe(thread::current());
-		}
-	}
-	drop(context_lock.take().unwrap());
-	let mut rem = Vec::with_capacity(select.len() - 1);
-	for (i, select) in select.into_iter().enumerate() {
-		if i != i_ {
-			rem.push(select);
-			// } else {
-			// ret.1();
-			// select.run(&*context());
-		}
-	}
-	rem.into_iter()
 }

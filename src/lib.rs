@@ -9,8 +9,9 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.0")]
-#![cfg_attr(feature = "nightly", feature(read_initializer, never_type))]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.1")]
+#![cfg_attr(feature = "nightly", feature(read_initializer))]
+#![feature(async_await)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -35,7 +36,7 @@ mod channel;
 
 use either::Either;
 use futures::{
-	sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
+	future::{FutureExt, TryFutureExt}, sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
 };
 use log::trace;
 use more_asserts::*;
@@ -48,28 +49,57 @@ use once_cell::sync::{Lazy, OnceCell};
 use palaver::{
 	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
+use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, cell, convert::TryInto, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	any, borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{mpsc, Mutex, RwLock}, task::{Context, Poll}, thread
+	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
 
 use constellation_internal::{
 	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
-/// The Never type
-#[cfg(feature = "nightly")]
-pub type Never = !;
-#[cfg(not(feature = "nightly"))]
-/// The Never type
-#[derive(Copy, Clone)]
-#[allow(clippy::empty_enum)]
-pub enum Never {}
-
-pub use channel::{ChannelError, Selectable};
+pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Extension trait to provide convenient [`block()`](FutureExt1::block) method on futures.
+///
+/// Named `FutureExt1` to avoid clashing with [`futures::future::FutureExt`].
+pub trait FutureExt1: Future {
+	/// Convenience method over `futures::executor::block_on(future)`.
+	fn block(self) -> Self::Output
+	where
+		Self: Sized,
+	{
+		// futures::executor::block_on(self) // Not reentrant for some reason
+		struct ThreadNotify {
+			thread: Thread,
+		}
+		impl futures::task::ArcWake for ThreadNotify {
+			fn wake_by_ref(arc_self: &Arc<Self>) {
+				arc_self.thread.unpark();
+			}
+		}
+		let f = self;
+		pin_mut!(f);
+		let thread_notify = Arc::new(ThreadNotify {
+			thread: thread::current(),
+		});
+		let waker = futures::task::waker_ref(&thread_notify);
+		let mut cx = Context::from_waker(&waker);
+		loop {
+			if let Poll::Ready(t) = f.as_mut().poll(&mut cx) {
+				return t;
+			}
+			thread::park();
+		}
+	}
+}
+impl<T: ?Sized> FutureExt1 for T where T: Future {}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -96,7 +126,9 @@ static HANDLE: Lazy<RwLock<Option<channel::Handle>>> = Lazy::new(|| RwLock::new(
 
 /// The sending half of a channel.
 ///
-/// It has a synchronous blocking method [`send()`](Sender::send) and an asynchronous nonblocking method [`selectable_send()`](Sender::selectable_send).
+/// It has an async method [`send(value)`](Sender::send) and a nonblocking method [`try_send()`](Sender::try_send).
+///
+/// For blocking behaviour use [`.send(value).block()`](FutureExt1::block).
 pub struct Sender<T: Serialize>(Option<channel::Sender<T>>, Pid);
 impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
@@ -121,12 +153,16 @@ impl<T: Serialize> Sender<T> {
 		}
 	}
 
-	/// Get the pid of the remote end of this Sender
+	/// Get the pid of the remote end of this Sender.
 	pub fn remote_pid(&self) -> Pid {
 		self.1
 	}
 
-	fn async_send<'a>(&'a self) -> Option<impl FnOnce(T) + 'a>
+	/// Nonblocking send.
+	///
+	/// If sending would not block, `Some` is returned with a FnOnce that accepts a `T` to send.
+	/// If sending would block, `None` is returned.
+	pub fn try_send<'a>(&'a self) -> Option<impl FnOnce(T) + 'a>
 	where
 		T: 'static,
 	{
@@ -134,29 +170,27 @@ impl<T: Serialize> Sender<T> {
 		self.0
 			.as_ref()
 			.unwrap()
-			.async_send(BorrowMap::new(context, borrow_unwrap_option))
+			.try_send(BorrowMap::new(context, borrow_unwrap_option), None)
 	}
 
-	/// Blocking send.
-	pub fn send(&self, t: T)
-	where
-		T: 'static,
-	{
-		let _ = select(vec![Box::new(
-			self.0.as_ref().unwrap().selectable_send(|| t),
-		)]);
-	}
-
-	/// [Selectable] send.
+	/// Send
 	///
-	/// This needs to be passed to [`select()`](select) to be executed.
-	pub fn selectable_send<'a, F: FnOnce() -> T + 'a>(
-		&'a self, send: F,
-	) -> impl Selectable + Future<Output = ()> + 'a
+	/// This is an async fn.
+	pub async fn send(&self, t: T)
 	where
 		T: 'static,
 	{
-		self.0.as_ref().unwrap().selectable_send(send)
+		self.0.as_ref().unwrap().send(|| t).await;
+	}
+
+	/// Send
+	///
+	/// This is an async fn.
+	pub async fn send_with(&self, f: impl FnOnce() -> T)
+	where
+		T: 'static,
+	{
+		self.0.as_ref().unwrap().send(f).await;
 	}
 }
 
@@ -173,12 +207,12 @@ impl<'a> Write for &'a Sender<u8> {
 		if buf.is_empty() {
 			return Ok(0);
 		}
-		self.send(buf[0]);
+		self.send(buf[0]).block();
 		if buf.len() == 1 {
 			return Ok(1);
 		}
 		for (i, buf) in (1..buf.len()).zip(buf[1..].iter().cloned()) {
-			if let Some(send) = self.async_send() {
+			if let Some(send) = self.try_send() {
 				send(buf);
 			} else {
 				return Ok(i);
@@ -190,7 +224,7 @@ impl<'a> Write for &'a Sender<u8> {
 	#[inline(always)]
 	fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
 		for &byte in buf {
-			self.send(byte);
+			self.send(byte).block();
 		}
 		Ok(())
 	}
@@ -222,7 +256,7 @@ impl<T: Serialize> fmt::Debug for Sender<T> {
 	}
 }
 impl<T: 'static + Serialize> Sink<T> for Sender<Option<T>> {
-	type Error = Never;
+	type Error = Infallible;
 
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		let context = REACTOR.read().unwrap();
@@ -264,7 +298,9 @@ impl<'a, T: Serialize + 'static, F: FnOnce() -> T> Future for channel::Send<'a, 
 
 /// The receiving half of a channel.
 ///
-/// It has a synchronous blocking method [`recv()`](Receiver::recv) and an asynchronous nonblocking method [`selectable_recv()`](Receiver::selectable_recv).
+/// It has an async method [`recv()`](Receiver::recv) and a nonblocking method [`try_recv()`](Receiver::try_recv).
+///
+/// For blocking behaviour use [`.recv().block()`](FutureExt1::block).
 pub struct Receiver<T: DeserializeOwned>(Option<channel::Receiver<T>>, Pid);
 impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
@@ -289,12 +325,16 @@ impl<T: DeserializeOwned> Receiver<T> {
 		}
 	}
 
-	/// Get the pid of the remote end of this Receiver
+	/// Get the pid of the remote end of this Receiver.
 	pub fn remote_pid(&self) -> Pid {
 		self.1
 	}
 
-	fn async_recv<'a>(&'a self) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
+	/// Nonblocking recv.
+	///
+	/// If receiving would not block, `Some` is returned with a FnOnce that returns a `Result<T, ChannelError>`.
+	/// If receiving would block, `None` is returned.
+	pub fn try_recv<'a>(&'a self) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
 	where
 		T: 'static,
 	{
@@ -302,32 +342,19 @@ impl<T: DeserializeOwned> Receiver<T> {
 		self.0
 			.as_ref()
 			.unwrap()
-			.async_recv(BorrowMap::new(context, borrow_unwrap_option))
+			.try_recv(BorrowMap::new(context, borrow_unwrap_option), None)
 	}
 
-	/// Blocking receive.
-	pub fn recv(&self) -> Result<T, ChannelError>
+	/// Receive.
+	///
+	/// This is an async fn.
+	pub async fn recv(&self) -> Result<T, ChannelError>
 	where
 		T: 'static,
 	{
 		let mut x = None;
-		let _ = select(vec![Box::new(
-			self.0.as_ref().unwrap().selectable_recv(|t| x = Some(t)),
-		)]);
-		// futures::executor::block_on(self.selectable_recv(|t| x = Some(t)));
+		self.0.as_ref().unwrap().recv(|y| x = Some(y)).await;
 		x.unwrap()
-	}
-
-	/// [Selectable] receive.
-	///
-	/// This needs to be passed to [`select()`](select) to be executed.
-	pub fn selectable_recv<'a, F: FnOnce(Result<T, ChannelError>) + 'a>(
-		&'a self, recv: F,
-	) -> impl Selectable + Future<Output = ()> + 'a
-	where
-		T: 'static,
-	{
-		self.0.as_ref().unwrap().selectable_recv(recv)
 	}
 }
 #[doc(hidden)] // noise
@@ -343,15 +370,16 @@ impl<'a> Read for &'a Receiver<u8> {
 		if buf.is_empty() {
 			return Ok(0);
 		}
-		buf[0] = self.recv().map_err(|e| match e {
+		buf[0] = self.recv().block().map_err(|e| match e {
 			ChannelError::Exited => io::ErrorKind::UnexpectedEof,
-			ChannelError::Error => io::ErrorKind::ConnectionReset,
+			ChannelError::Unknown => io::ErrorKind::ConnectionReset,
+			ChannelError::__Nonexhaustive => unreachable!(),
 		})?;
 		if buf.len() == 1 {
 			return Ok(1);
 		}
 		for (i, buf) in (1..buf.len()).zip(buf[1..].iter_mut()) {
-			if let Some(recv) = self.async_recv() {
+			if let Some(recv) = self.try_recv() {
 				if let Ok(t) = recv() {
 					*buf = t;
 				} else {
@@ -367,9 +395,10 @@ impl<'a> Read for &'a Receiver<u8> {
 	#[inline(always)]
 	fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
 		for byte in buf {
-			*byte = self.recv().map_err(|e| match e {
+			*byte = self.recv().block().map_err(|e| match e {
 				ChannelError::Exited => io::ErrorKind::UnexpectedEof,
-				ChannelError::Error => io::ErrorKind::ConnectionReset,
+				ChannelError::Unknown => io::ErrorKind::ConnectionReset,
+				ChannelError::__Nonexhaustive => unreachable!(),
 			})?;
 		}
 		Ok(())
@@ -428,30 +457,7 @@ impl<'a, T: DeserializeOwned + 'static, F: FnOnce(Result<T, ChannelError>)> Futu
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// `select()` lets you block on multiple blocking operations until progress can be made on at least one.
-///
-/// [`Receiver::selectable_recv()`](Receiver::selectable_recv) and [`Sender::selectable_send()`](Sender::selectable_send) let one create [Selectable] objects, any number of which can be passed to `select()`. `select()` then blocks until at least one is progressable, and then from any that are progressable picks one at random and executes it.
-///
-/// It returns an iterator of all the [Selectable] objects bar the one that has been executed.
-///
-/// It is inspired by the `select()` of go, which itself draws from David May's language [occam](https://en.wikipedia.org/wiki/Occam_(programming_language)) and Tony Hoare’s formalisation of [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes).
-pub fn select<'a>(
-	select: Vec<Box<dyn Selectable + 'a>>,
-) -> impl Iterator<Item = Box<dyn Selectable + 'a>> + 'a {
-	channel::select(select, &mut || {
-		BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option)
-	})
-}
-/// A thin wrapper around [`select()`](select) that loops until all [Selectable] objects have been executed.
-pub fn run<'a>(mut select: Vec<Box<dyn Selectable + 'a>>) {
-	while !select.is_empty() {
-		select = self::select(select).collect();
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Get the [Pid] of the current process
+/// Get the [Pid] of the current process.
 #[inline(always)]
 pub fn pid() -> Pid {
 	*PID.get().unwrap_or_else(|| {
@@ -459,7 +465,7 @@ pub fn pid() -> Pid {
 	})
 }
 
-/// Get the memory and CPU requirements configured at initialisation of the current process
+/// Get the memory and CPU requirements configured at initialisation of the current process.
 pub fn resources() -> Resources {
 	*RESOURCES.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
@@ -470,7 +476,8 @@ pub fn resources() -> Resources {
 
 fn spawn_native(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid, ()> {
+	_block: bool,
+) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_native");
 	let argv: Vec<CString> = env::args_os()
 		.expect("Couldn't get argv")
@@ -589,7 +596,7 @@ fn spawn_native(
 					pub fn execve(
 						path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
 						env: &[CString], mut env_p: Vec<*const libc::c_char>,
-					) -> nix::Result<Never> {
+					) -> nix::Result<Infallible> {
 						fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
 							for arg in args.iter().map(|s| s.as_ptr()) {
 								args_p.push(arg);
@@ -648,7 +655,8 @@ fn spawn_native(
 
 fn spawn_deployed(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-) -> Result<Pid, ()> {
+	_block: bool,
+) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_deployed");
 	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
 	let (mut stream_read, mut stream_write) =
@@ -694,19 +702,75 @@ fn spawn_deployed(
 		let _ = file.into_raw_fd();
 	}
 	let _ = stream.into_raw_fd();
-	pid.ok_or(())
+	pid.ok_or(TrySpawnError::NoCapacity)
 }
 
-/// Spawn a new process.
-///
-/// `spawn()` takes 2 arguments:
-///  * `resources`: memory and CPU resource requirements of the new process
-///  * `start`: the closure to be run in the new process
-///
-/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
-pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
-	resources: Resources, start: T,
-) -> Result<Pid, ()> {
+/// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum TrySpawnError {
+	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
+	NoCapacity,
+	/// [`try_spawn()`](try_spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive, // https://github.com/rust-lang/rust/issues/44109
+}
+
+/// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum SpawnError {
+	/// [`spawn()`](spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive,
+}
+impl From<SpawnError> for TrySpawnError {
+	fn from(error: SpawnError) -> Self {
+		match error {
+			SpawnError::Unknown => Self::Unknown,
+			SpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl TryFrom<TrySpawnError> for SpawnError {
+	type Error = ();
+
+	fn try_from(error: TrySpawnError) -> Result<Self, Self::Error> {
+		match error {
+			TrySpawnError::NoCapacity => Err(()),
+			TrySpawnError::Unknown => Ok(Self::Unknown),
+			TrySpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl fmt::Display for TrySpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::NoCapacity => write!(
+				f,
+				"try_spawn() failed because the new process couldn't be allocated"
+			),
+			Self::Unknown => write!(f, "try_spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl fmt::Display for SpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl Error for TrySpawnError {}
+impl Error for SpawnError {}
+
+async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T, block: bool,
+) -> Result<Pid, TrySpawnError> {
 	let _scheduler = SCHEDULER.lock().unwrap();
 	let deployed = *DEPLOYED.get().unwrap_or_else(|| {
 		panic!("You must call init() immediately inside your application's main() function")
@@ -719,10 +783,38 @@ pub fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 		closure(parent)
 	});
 	if !deployed {
-		spawn_native(resources, start)
+		spawn_native(resources, start, block)
 	} else {
-		spawn_deployed(resources, start)
+		spawn_deployed(resources, start, block)
 	}
+}
+
+/// Spawn a new process if it can be allocated immediately.
+///
+/// `spawn()` takes 2 arguments:
+///  * `resources`: memory and CPU resource requirements of the new process
+///  * `start`: the closure to be run in the new process
+///
+/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T,
+) -> Result<Pid, TrySpawnError> {
+	spawn_inner(resources, start, false).await
+}
+
+/// Spawn a new process.
+///
+/// `spawn()` takes 2 arguments:
+///  * `resources`: memory and CPU resource requirements of the new process
+///  * `start`: the closure to be run in the new process
+///
+/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+pub async fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+	resources: Resources, start: T,
+) -> Result<Pid, SpawnError> {
+	spawn_inner(resources, start, true)
+		.map_err(|err| err.try_into().unwrap())
+		.await
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -864,27 +956,12 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 			Receiver::<ProcessOutputEvent>::new(our_pid),
 		)];
 		while !processes.is_empty() {
-			// trace!("select");
-			let mut event = None;
-			let event_ = &cell::RefCell::new(&mut event);
-
-			let _ = select(
+			let (event, i, _): (ProcessOutputEvent, usize, _) = futures::future::select_all(
 				processes
 					.iter()
-					.enumerate()
-					.map(|(i, &(_, ref receiver))| -> Box<dyn Selectable> {
-						Box::new(receiver.selectable_recv(
-							move |t: Result<ProcessOutputEvent, _>| {
-								// trace!("ProcessOutputEvent {}: {:?}", i, t);
-								**event_.borrow_mut() = Some((i, t.unwrap()));
-							},
-						))
-					})
-					.collect(),
-			);
-			// trace!("/select");
-			// drop(event_);
-			let (i, event): (usize, ProcessOutputEvent) = event.unwrap();
+					.map(|&(_, ref receiver)| receiver.recv().map(Result::unwrap).boxed_local()),
+			)
+			.block();
 			let pid = processes[i].0.remote_pid();
 			let event = match event {
 				ProcessOutputEvent::Spawn(new_pid) => {
@@ -1064,7 +1141,7 @@ fn monitor_process(
 						break;
 					}
 					let event = event.unwrap();
-					futures::executor::block_on(bridge_sender2.send(event)).unwrap();
+					bridge_sender2.send(event).block().unwrap();
 				}
 				let _ = file.into_raw_fd();
 			})
@@ -1074,31 +1151,25 @@ fn monitor_process(
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(move || {
 				loop {
-					let mut event = None;
-					let selected: futures::future::Either<Option<ProcessOutputEvent>, ()> = {
-						match futures::executor::block_on(futures::future::select(
-							bridge_outbound_receiver.next(),
-							receiver.selectable_recv(|t| event = Some(t)),
-						)) {
-							futures::future::Either::Left((a, _)) => {
-								futures::future::Either::Left(a)
-							}
-							futures::future::Either::Right(((), _)) => {
-								futures::future::Either::Right(())
-							}
-						}
+					let selected = match futures::future::select(
+						bridge_outbound_receiver.next(),
+						receiver.recv().boxed_local(),
+					)
+					.block()
+					{
+						futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
+						futures::future::Either::Right((a, _)) => futures::future::Either::Right(a),
 					};
 					match selected {
 						futures::future::Either::Left(event) => {
 							let event = event.unwrap();
-							sender.send(event.clone());
+							sender.send(event.clone()).block();
 							if let ProcessOutputEvent::Exit(_) = event {
 								// trace!("xxx exit");
 								break;
 							}
 						}
-						futures::future::Either::Right(()) => {
-							let event = event.unwrap();
+						futures::future::Either::Right(event) => {
 							match event.unwrap() {
 								ProcessInputEvent::Input(fd, input) => {
 									// trace!("xxx INPUT {:?} {}", input, input.len());
@@ -1190,7 +1261,9 @@ fn monitor_process(
 		}
 		// trace!("joining x3");
 		x3.join().unwrap();
-		futures::executor::block_on(bridge_outbound_sender.send(ProcessOutputEvent::Exit(code)))
+		bridge_outbound_sender
+			.send(ProcessOutputEvent::Exit(code))
+			.block()
 			.unwrap();
 		drop(bridge_outbound_sender);
 		// trace!("joining x");
@@ -1478,16 +1551,16 @@ fn forward_fd(
 				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
 				let n = (&reader).read(&mut buf).unwrap();
 				if n > 0 {
-					futures::executor::block_on(
-						bridge_sender.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned())),
-					)
-					.unwrap();
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
+						.block()
+						.unwrap();
 				} else {
 					drop(reader);
-					futures::executor::block_on(
-						bridge_sender.send(ProcessOutputEvent::Output(fd, Vec::new())),
-					)
-					.unwrap();
+					bridge_sender
+						.send(ProcessOutputEvent::Output(fd, Vec::new()))
+						.block()
+						.unwrap();
 					break;
 				}
 			}

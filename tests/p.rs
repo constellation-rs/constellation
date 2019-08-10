@@ -58,11 +58,12 @@ fn main() {
 			},
 			FnOnce!(|parent| {
 				let sender = Sender::<String>::new(parent);
-				sender.send(String::from("hi"));
+				sender.send(String::from("hi")).block();
 			}),
 		)
-		.expect("SPAWN FAILED");
+		.block()
+		.expect("spawn() failed to allocate process");
 		let receiver = Receiver::<String>::new(pid);
-		println!("{}", receiver.recv().unwrap());
+		println!("{}", receiver.recv().block().unwrap());
 	}
 }

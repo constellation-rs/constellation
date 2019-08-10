@@ -70,7 +70,8 @@ fn main() {
 		},
 		FnOnce!(|_parent| ()),
 	)
-	.expect("SPAWN FAILED");
+	.block()
+	.expect("spawn() failed to allocate process");
 	let _sender1 = Sender::<usize>::new(pid);
 	let _sender2 = Sender::<usize>::new(pid);
 }

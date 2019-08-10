@@ -174,9 +174,9 @@ fn main() {
 					let receiver = Receiver::<Option<String>>::new(parent);
 					let sender = Sender::<Option<String>>::new(parent);
 					loop {
-						let x = receiver.recv().unwrap();
+						let x = receiver.recv().block().unwrap();
 						let end = x.is_none();
-						sender.send(x);
+						sender.send(x).block();
 						if end {
 							break;
 						}
@@ -184,7 +184,8 @@ fn main() {
 					println!("done {}", i);
 				}),
 			)
-			.expect("SPAWN FAILED");
+			.block()
+			.expect("spawn() failed to allocate process");
 			(
 				Sender::<Option<String>>::new(pid),
 				Receiver::<Option<String>>::new(pid),
@@ -200,9 +201,9 @@ fn main() {
 	];
 	for &(ref sender, _) in &workers {
 		for x in &xx {
-			sender.send(Some(x.clone()));
+			sender.send(Some(x.clone())).block();
 		}
-		sender.send(None);
+		sender.send(None).block();
 	}
 	let x = workers
 		.iter()
@@ -210,13 +211,13 @@ fn main() {
 			let x = xx
 				.iter()
 				.map(|x| {
-					let y = receiver.recv().unwrap();
+					let y = receiver.recv().block().unwrap();
 					assert_eq!(Some(x.clone()), y);
 					y.unwrap()
 				})
 				.collect::<Vec<_>>()
 				.join("");
-			let y = receiver.recv().unwrap();
+			let y = receiver.recv().block().unwrap();
 			assert_eq!(None, y);
 			x
 		})

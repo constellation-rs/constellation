@@ -54,7 +54,7 @@ fn main() {
 				},
 				serde_closure::FnOnce!([process_index] move |parent| {
 					let receiver = Receiver::<Vec<Pid>>::new(parent);
-					let pids = receiver.recv().unwrap();
+					let pids = receiver.recv().block().unwrap();
 					assert_eq!(pids[process_index], pid());
 					let mut senders: Vec<Option<Sender<usize>>> = Vec::with_capacity(pids.len());
 					let mut receivers: Vec<Option<Receiver<usize>>> = Vec::with_capacity(pids.len());
@@ -82,10 +82,10 @@ fn main() {
 								continue;
 							}
 							if i == process_index {
-								sender.as_ref().unwrap().send(i * j);
+								sender.as_ref().unwrap().send(i * j).block();
 							}
 							if j == process_index {
-								let x = receiver.as_ref().unwrap().recv().unwrap();
+								let x = receiver.as_ref().unwrap().recv().block().unwrap();
 								assert_eq!(x, i * j);
 							}
 						}
@@ -93,7 +93,8 @@ fn main() {
 					println!("done");
 				}),
 			)
-			.expect("Spawn failed")
+			.block()
+			.expect("spawn() failed to allocate process")
 		})
 		.collect();
 
@@ -101,6 +102,6 @@ fn main() {
 		pids.iter().map(|&pid| Sender::new(pid)).collect();
 
 	for sender in senders {
-		sender.send(pids.clone());
+		sender.send(pids.clone()).block();
 	}
 }

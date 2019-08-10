@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.1")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -272,6 +272,16 @@ pub enum Format {
 /// This is used in allocation of a process, to ensure that sufficient resources are available.
 ///
 /// Best effort is made to enforce these as limits to avoid buggy/greedy processes starving others.
+///
+/// The default is [`RESOURCES_DEFAULT`], which is defined as:
+///
+/// ```
+/// # use constellation_internal::Resources;
+/// pub const RESOURCES_DEFAULT: Resources = Resources {
+/// 	mem: 1024 * 1024 * 1024, // 1 GiB
+/// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
+/// };
+/// ```
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct Resources {
 	/// Memory requirement in bytes
@@ -285,9 +295,17 @@ impl Default for Resources {
 	}
 }
 /// The [Resources] returned by [`Resources::default()`](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
+///
+/// ```
+/// # use constellation_internal::Resources;
+/// pub const RESOURCES_DEFAULT: Resources = Resources {
+/// 	mem: 1024 * 1024 * 1024, // 1 GiB
+/// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
+/// };
+/// ```
 pub const RESOURCES_DEFAULT: Resources = Resources {
-	mem: 1024 * 1024 * 1024,
-	cpu: 65536 / 16,
+	mem: 1024 * 1024 * 1024, // 1 GiB
+	cpu: 65536 / 16,         // 1/16th of a logical CPU core
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

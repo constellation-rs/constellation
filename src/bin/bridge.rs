@@ -23,7 +23,7 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 	clippy::shadow_unrelated
 )]
 
-use futures::{sink::SinkExt, stream::StreamExt};
+use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
 use log::trace;
 use palaver::file::{fexecve, move_fds, seal_fd};
 use std::{
@@ -34,6 +34,7 @@ use std::{
 	}, thread, time::Duration
 };
 
+use constellation::FutureExt1;
 use constellation_internal::{
 	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
@@ -85,46 +86,43 @@ fn monitor_process(
 	let receiver = constellation::Receiver::new(pid);
 	let sender = constellation::Sender::new(pid);
 	loop {
-		let mut event = None;
-		let x = match futures::executor::block_on(futures::future::select(
-			receiver_.next(),
-			receiver.selectable_recv(|t| event = Some(t)),
-		)) {
+		let x = match futures::future::select(receiver_.next(), receiver.recv().boxed_local())
+			.block()
+		{
 			futures::future::Either::Left((a, _)) => futures::future::Either::Left(a),
-			futures::future::Either::Right(((), _)) => futures::future::Either::Right(()),
+			futures::future::Either::Right((a, _)) => futures::future::Either::Right(a),
 		};
 		match x {
 			futures::future::Either::Left(event) => {
-				sender.send(match event.unwrap() {
-					InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
-					InputEventInt::Kill => ProcessInputEvent::Kill,
-				});
+				sender
+					.send(match event.unwrap() {
+						InputEventInt::Input(fd, input) => ProcessInputEvent::Input(fd, input),
+						InputEventInt::Kill => ProcessInputEvent::Kill,
+					})
+					.block();
 			}
-			futures::future::Either::Right(()) => {
-				let event = event.unwrap();
-				match event.unwrap() {
-					ProcessOutputEvent::Spawn(new_pid) => {
-						let (sender1, receiver1) = futures::channel::mpsc::channel(0);
-						sender_
-							.send(OutputEventInt::Spawn(pid, new_pid, sender1))
-							.unwrap();
-						let sender_ = sender_.clone();
-						let _ = thread::Builder::new()
-							.name(String::from("d"))
-							.spawn(move || monitor_process(new_pid, sender_, receiver1))
-							.unwrap();
-					}
-					ProcessOutputEvent::Output(fd, output) => {
-						sender_
-							.send(OutputEventInt::Output(pid, fd, output))
-							.unwrap();
-					}
-					ProcessOutputEvent::Exit(exit_code) => {
-						sender_.send(OutputEventInt::Exit(pid, exit_code)).unwrap();
-						break;
-					}
+			futures::future::Either::Right(event) => match event.unwrap() {
+				ProcessOutputEvent::Spawn(new_pid) => {
+					let (sender1, receiver1) = futures::channel::mpsc::channel(0);
+					sender_
+						.send(OutputEventInt::Spawn(pid, new_pid, sender1))
+						.unwrap();
+					let sender_ = sender_.clone();
+					let _ = thread::Builder::new()
+						.name(String::from("d"))
+						.spawn(move || monitor_process(new_pid, sender_, receiver1))
+						.unwrap();
 				}
-			}
+				ProcessOutputEvent::Output(fd, output) => {
+					sender_
+						.send(OutputEventInt::Output(pid, fd, output))
+						.unwrap();
+				}
+				ProcessOutputEvent::Exit(exit_code) => {
+					sender_.send(OutputEventInt::Exit(pid, exit_code)).unwrap();
+					break;
+				}
+			},
 		}
 	}
 	drop(sender_); // placate clippy needless_pass_by_value
@@ -353,15 +351,13 @@ fn manage_connection(
 					match event.unwrap() {
 						DeployInputEvent::Input(pid, fd, input) => {
 							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
-								let _unchecked_error = futures::executor::block_on(
-									sender.send(InputEventInt::Input(fd, input)),
-								);
+								let _unchecked_error =
+									sender.send(InputEventInt::Input(fd, input)).block();
 							}
 						}
 						DeployInputEvent::Kill(Some(pid)) => {
 							if let Some(sender) = hashmap.lock().unwrap().get_mut(&pid) {
-								let _unchecked_error =
-									futures::executor::block_on(sender.send(InputEventInt::Kill));
+								let _unchecked_error = sender.send(InputEventInt::Kill).block();
 							}
 						}
 						DeployInputEvent::Kill(None) => {
@@ -371,8 +367,7 @@ fn manage_connection(
 				}
 				let mut x = hashmap.lock().unwrap();
 				for (_, process) in x.iter_mut() {
-					let _unchecked_error =
-						futures::executor::block_on(process.send(InputEventInt::Kill));
+					let _unchecked_error = process.send(InputEventInt::Kill).block();
 				}
 			});
 			for event in receiver.iter() {
@@ -402,8 +397,7 @@ fn manage_connection(
 			trace!("BRIDGE: KILLED: {:?}", *hashmap.lock().unwrap());
 			let mut x = hashmap.lock().unwrap();
 			for (_, mut process) in x.drain() {
-				let _unchecked_error =
-					futures::executor::block_on(process.send(InputEventInt::Kill));
+				let _unchecked_error = process.send(InputEventInt::Kill).block();
 			}
 			for _event in receiver {}
 		})
