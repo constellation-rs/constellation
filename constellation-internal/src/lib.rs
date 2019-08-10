@@ -276,6 +276,7 @@ pub enum Format {
 /// The default is [`RESOURCES_DEFAULT`], which is defined as:
 ///
 /// ```
+/// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
 /// 	mem: 1024 * 1024 * 1024, // 1 GiB
 /// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
@@ -296,6 +297,7 @@ impl Default for Resources {
 /// The [Resources] returned by [`Resources::default()`](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
 ///
 /// ```
+/// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
 /// 	mem: 1024 * 1024 * 1024, // 1 GiB
 /// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
