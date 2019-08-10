@@ -52,7 +52,7 @@ use palaver::{
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	any, borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -63,6 +63,19 @@ use constellation_internal::{
 
 pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+fn type_name<T: ?Sized>() -> &'static str {
+	#[cfg(feature = "nightly")]
+	{
+		std::any::type_name::<T>()
+	}
+	#[cfg(not(feature = "nightly"))]
+	{
+		"<unknown>"
+	}
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -134,7 +147,7 @@ impl<T: Serialize> Sender<T> {
 	/// Create a new `Sender<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", any::type_name::<T>());
+			panic!("Sender::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", type_name::<T>());
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(sender) = channel::Sender::new(
@@ -147,7 +160,7 @@ impl<T: Serialize> Sender<T> {
 		} else {
 			panic!(
 				"Sender::<{}>::new() called for pid {} when a Sender to this pid already exists",
-				any::type_name::<T>(),
+				type_name::<T>(),
 				remote
 			);
 		}
@@ -306,7 +319,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// Create a new `Receiver<T>` with a remote [Pid]. This method returns instantly.
 	pub fn new(remote: Pid) -> Self {
 		if remote == pid() {
-			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", any::type_name::<T>());
+			panic!("Receiver::<{}>::new() called with process's own pid. A process cannot create a channel to itself.", type_name::<T>());
 		}
 		let context = REACTOR.read().unwrap();
 		if let Some(receiver) = channel::Receiver::new(
@@ -319,7 +332,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 		} else {
 			panic!(
 				"Receiver::<{}>::new() called for pid {} when a Receiver to this pid already exists",
-				any::type_name::<T>(),
+				type_name::<T>(),
 				remote
 			);
 		}

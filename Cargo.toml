@@ -37,7 +37,7 @@ bincode = "1.0"
 crossbeam = "0.7"
 docopt = "1.0"
 either = "1.5"
-futures-preview = "0.3.0-alpha.17"
+futures-preview = "=0.3.0-alpha.17"
 log = "0.4"
 more-asserts = "0.2"
 notifier = { version = "0.1", features = ["tcp_typed"] }
