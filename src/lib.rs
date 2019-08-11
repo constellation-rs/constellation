@@ -4,7 +4,7 @@
 //!
 //! The two key ideas are:
 //!
-//!  * **Spawning new processes:** The [`spawn()`](spawn) function can be used to spawn a new process running a particular function.
+//!  * **Spawning new processes:** The [`spawn()`](spawn) function can be used to spawn a new process running a particular closure.
 //!  * **Channels:** [Sender]s and [Receiver]s can be used for synchronous or asynchronous inter-process communication.
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
@@ -804,11 +804,11 @@ async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 
 /// Spawn a new process if it can be allocated immediately.
 ///
-/// `spawn()` takes 2 arguments:
+/// `try_spawn()` takes 2 arguments:
 ///  * `resources`: memory and CPU resource requirements of the new process
 ///  * `start`: the closure to be run in the new process
 ///
-/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+/// `try_spawn()` on success returns the [Pid] of the new process.
 pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, TrySpawnError> {
@@ -821,7 +821,7 @@ pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 ///  * `resources`: memory and CPU resource requirements of the new process
 ///  * `start`: the closure to be run in the new process
 ///
-/// `spawn()` returns an Option<Pid>, which contains the [Pid] of the new process.
+/// `spawn()` on success returns the [Pid] of the new process.
 pub async fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, SpawnError> {
@@ -1316,7 +1316,7 @@ fn monitor_process(
 	)
 }
 
-/// Initialise the [deploy](self) runtime. This must be called immediately inside your application's `main()` function.
+/// Initialise the [constellation](self) runtime. This must be called immediately inside your application's `main()` function.
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
 pub fn init(resources: Resources) {
