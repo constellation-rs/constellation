@@ -47,15 +47,15 @@ static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 pub use ext::*;
 pub use format::*;
 
-/// An opaque identifier for a process.
+/// A process identifier.
 ///
 /// The current process's `Pid` can be retrieved with [pid()](pid).
 ///
 /// Unlike typical OS pids, it is:
-///  * Universally unique – that is to say, the same `Pid` will never be seen twice
-///  * When running across a cluster, it is cluster-wide, rather than within a single instance.
+///  * Universally unique – that is to say, the same `Pid` will never be seen twice;
+///  * When running across a cluster, it is valid and unique cluster-wide, rather than within a single node.
 ///
-/// All inter-process communication occurs after [Sender](Sender)s and [Receiver](Receiver)s have been created with `Pid`s, thus `Pid`s are the sole form of addressing necessary.
+/// All inter-process communication occurs after [Sender](Sender)s and [Receiver](Receiver)s have been created with their remotes' `Pid`s. Thus `Pid`s are the primary form of addressing in a `constellation` cluster.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Pid([u8; 16]);
 impl Pid {

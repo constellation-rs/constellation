@@ -7,24 +7,36 @@ where
 	A: FileOrVec,
 	B: FileOrVec,
 {
+	/// The resources required for this process.
 	pub resources: Resources,
+	/// The socket addresses required to bind to for this process.
 	pub bind: Vec<SocketAddr>,
+	/// The command line arguments passed to the process.
 	pub args: Vec<OsString>,
+	/// The environment variables passed to the process.
 	pub vars: Vec<(OsString, OsString)>,
+	/// An extra argument passed to the process on a special file descriptor.
 	pub arg: A,
+	/// The process to spawn.
 	pub binary: B,
 }
 
+/// This is the request made by `deploy` to the `bridge`.
 #[derive(Debug)]
 pub struct BridgeRequest<A, B>
 where
 	A: FileOrVec,
 	B: FileOrVec,
 {
-	pub resources: Option<Resources>, // None here means the bridge does a recce to determine
+	/// The resources required for this process. `None` here means the bridge does a recce to determine what's passed to `init()`.
+	pub resources: Option<Resources>,
+	/// The command line arguments passed to the process.
 	pub args: Vec<OsString>,
+	/// The environment variables passed to the process.
 	pub vars: Vec<(OsString, OsString)>,
+	/// An extra argument passed to the process on a special file descriptor.
 	pub arg: A,
+	/// The process to spawn.
 	pub binary: B,
 }
 
