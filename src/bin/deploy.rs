@@ -28,14 +28,13 @@
 )] // from https://github.com/rust-unofficial/patterns/blob/master/anti_patterns/deny-warnings.md
 
 use either::Either;
-use palaver::file::copy_sendfile;
 use serde::Deserialize;
 use std::{
 	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
 };
 
 use constellation_internal::{
-	map_bincode_err, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, Resources, StyleSupport
+	map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport
 };
 
 const USAGE: &str = "
@@ -92,21 +91,21 @@ fn main() {
 		.unwrap_or_else(|e| panic!("Could not connect to {:?}: {:?}", bridge_address, e));
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
-	let binary = fs::File::open(path).unwrap();
-	let len: u64 = binary.metadata().unwrap().len();
-	assert_ne!(len, 0);
-	let mut stream_write_ = stream_write.write();
-	bincode::serialize_into(&mut stream_write_, &None::<Resources>).unwrap();
-	bincode::serialize_into(&mut stream_write_, &args).unwrap();
-	bincode::serialize_into(&mut stream_write_, &vars).unwrap();
-	let arg: Vec<u8> = Vec::new();
-	bincode::serialize_into(&mut stream_write_, &arg).unwrap();
-	bincode::serialize_into(&mut stream_write_, &len).unwrap();
-	drop(stream_write_);
-	copy_sendfile(&binary, &**stream_write.get_ref(), len).unwrap();
+	let binary =
+		fs::File::open(&path).unwrap_or_else(|e| panic!("Couldn't open file {:?}: {:?}", path, e));
+	let request = BridgeRequest {
+		resources: None,
+		args,
+		vars,
+		arg: vec![],
+		binary,
+	};
+	bincode_serialize_into(&mut stream_write.write(), &request)
+		.map_err(map_bincode_err)
+		.unwrap_or_else(|e| panic!("Couldn't communicate with bridge: {:?}", e));
 	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
-		.unwrap();
+		.unwrap_or_else(|e| panic!("Couldn't communicate with bridge: {:?}", e));
 	let pid = pid.unwrap_or_else(|| {
 		panic!("Deploy failed due to not being able to allocate process to any of the nodes or constellation::init() not being called immediately inside main()")
 	}); // TODO get resources from bridge

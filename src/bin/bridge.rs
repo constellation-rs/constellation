@@ -25,9 +25,9 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
 use log::trace;
-use palaver::file::{fexecve, move_fds, seal_fd};
+use palaver::file::{fexecve, move_fds};
 use std::{
-	collections::HashMap, ffi::{CString, OsString}, fs::File, io::{self, Read}, iter, net::TcpStream, os::unix::{
+	collections::HashMap, ffi::{CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{
 		atomic::{self, AtomicUsize}, mpsc, Mutex
@@ -36,7 +36,7 @@ use std::{
 
 use constellation::FutureExt1;
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -52,29 +52,6 @@ enum OutputEventInt {
 enum InputEventInt {
 	Input(Fd, Vec<u8>),
 	Kill,
-}
-
-fn parse_request<R: Read>(
-	mut stream: &mut R,
-) -> Result<
-	(
-		Option<Resources>,
-		Vec<OsString>,
-		Vec<(OsString, OsString)>,
-		File,
-		Vec<u8>,
-	),
-	io::Error,
-> {
-	let process = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let args: Vec<OsString> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let vars: Vec<(OsString, OsString)> =
-		bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let arg: Vec<u8> = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let binary_len: u64 = bincode::deserialize_from(&mut stream).map_err(map_bincode_err)?;
-	let binary = file_from_reader(&mut stream, binary_len, &args[0], true)?;
-	seal_fd(binary.as_raw_fd());
-	Ok((process, args, vars, binary, arg))
 }
 
 static PROCESS_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -306,11 +283,14 @@ fn manage_connection(
 		nix::errno::Errno::result(res).map(drop).map_err(drop)?;
 	}
 	let (mut stream_read, mut stream_write) = (BufferedStream::new(&stream), &stream);
-	let (resources, args, vars, binary, mut arg) = parse_request(&mut stream_read).map_err(drop)?;
-	// let request: FabricRequest::<Vec<u8>,File> = bincode_deserialize_from(&mut stream).map_err(map_bincode_err).map_err(drop)?;
-	assert_eq!(arg.len(), 0);
-	bincode::serialize_into(&mut arg, &constellation::pid()).unwrap();
-	let resources = resources.or_else(|| recce(&binary, &args, &vars).ok());
+	let mut request: BridgeRequest<Vec<u8>, File> = bincode_deserialize_from(&mut stream_read)
+		.map_err(map_bincode_err)
+		.map_err(drop)?;
+	assert_eq!(request.arg.len(), 0);
+	bincode::serialize_into(&mut request.arg, &constellation::pid()).unwrap();
+	let resources = request
+		.resources
+		.or_else(|| recce(&request.binary, &request.args, &request.vars).ok());
 	let pid: Option<Pid> = resources.and_then(|resources| {
 		let (sender_, receiver) = mpsc::sync_channel(0);
 		sender
@@ -318,10 +298,10 @@ fn manage_connection(
 				FabricRequest {
 					resources,
 					bind: vec![],
-					args,
-					vars,
-					arg,
-					binary,
+					args: request.args,
+					vars: request.vars,
+					arg: request.arg,
+					binary: request.binary,
 				},
 				sender_,
 			))
