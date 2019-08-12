@@ -54,7 +54,7 @@ simple-logging = "2.0"
 tcp_typed = "0.1"
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.14"
+nix = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
