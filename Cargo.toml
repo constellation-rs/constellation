@@ -52,6 +52,7 @@ serde_json = "1.0"
 serde_pipe = "0.1"
 simple-logging = "2.0"
 tcp_typed = "0.1"
+toml = "0.5"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.15"

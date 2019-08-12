@@ -1,7 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf};
+use serde::Deserialize;
+use std::{error::Error, fs::File, io::Read, net::SocketAddr};
 
-use super::{Args, Node, Role, Run};
-use constellation_internal::{parse_binary_size, Format};
+use super::{Args, Node, Role};
+use constellation_internal::{parse_cpu_size, parse_mem_size, Format};
 
 const DESCRIPTION: &str = r"
 constellation
@@ -99,54 +100,72 @@ impl Args {
 			}
 		}
 		let format = format.unwrap_or(Format::Human);
-		let role: Role = match &*args.next().unwrap() {
-			"master" => {
-				let bind = match args.next().and_then(|x| x.parse().ok()) {
-					Some(bind) => bind,
-					None => return Err((format!("Invalid bind address\n{}", USAGE), false)),
-				};
+		let role: Role = match (&*args.next().unwrap(), args.peek()) {
+			("bridge", None) => Role::Bridge,
+			(bind, Some(_)) if bind.parse::<SocketAddr>().is_ok() => {
+				let bind = bind.parse().unwrap();
 				let mut nodes = Vec::new();
-				loop {
-					match (
-						args.next().map(|x| x.parse()),
-						args.next().map(|x| parse_binary_size(&x)),
-						args.next().map(|x| x.parse::<u32>()), // TODO
-					) {
-						(None, _, _) if !nodes.is_empty() => break,
-						(Some(Ok(addr)), Some(Ok(mem)), Some(Ok(cpu))) => {
-							let cpu = cpu * 65536; // TODO
-							let mut run = Vec::new();
-							while let Some(Err(_binary)) =
-								args.peek().map(|x| x.parse::<SocketAddr>())
-							{
-								if let (binary, Some(Ok(addr))) =
-									(args.next().unwrap(), args.next().map(|x| x.parse()))
-								{
-									run.push(Run {
-										binary: PathBuf::from(binary),
-										addr,
+				match (args.next().unwrap(), args.peek()) {
+					(arg, Some(_)) => {
+						let mut arg: Option<String> = Some(arg);
+						loop {
+							match (
+								arg.take().or_else(|| args.next()).map(|x| x.parse()),
+								args.next().map(|x| {
+									if x == "-" {
+										Ok(None)
+									} else {
+										x.parse().map(Some)
+									}
+								}),
+								args.next().map(|x| parse_mem_size(&x)),
+								args.next().map(|x| parse_cpu_size(&x)),
+							) {
+								(None, _, _, _) if !nodes.is_empty() => break,
+								(
+									Some(Ok(fabric)),
+									Some(Ok(bridge)),
+									Some(Ok(mem)),
+									Some(Ok(cpu)),
+								) => {
+									nodes.push(Node {
+										fabric,
+										bridge,
+										mem,
+										cpu,
 									});
-								} else {
-									return Err((format!("Invalid bridge, expecting bridge: <bridge> <addr> or node options: <addr> <mem> <cpu>\n{}", USAGE),false));
+								}
+								_ => {
+									return Err((format!("Invalid node options, expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
 								}
 							}
-							nodes.push(Node {
-								addr,
-								mem,
-								cpu,
-								run,
-							});
 						}
-						_ => {
-							return Err((format!("Invalid node options, expecting <addr> <mem> <cpu>, like 127.0.0.1:9999 400GiB 34\n{}", USAGE),false));
+						if nodes.is_empty() {
+							return Err((format!("At least one node must be present: expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
 						}
+					}
+					(arg, None) => {
+						nodes = Self::from_toml(&mut File::open(&arg).map_err(|e| {
+							(
+								format!("Can't open the TOML file \"{}\": {}", arg, e),
+								false,
+							)
+						})?)
+						.map_err(|e| {
+							(
+								format!("Can't parse the TOML file \"{}\": {}", arg, e),
+								false,
+							)
+						})?;
 					}
 				}
 				Role::Master(bind, nodes)
 			}
-			x if x.parse::<SocketAddr>().is_ok() => Role::Worker(x.parse::<SocketAddr>().unwrap()),
-			x => {
-				return Err((format!("Invalid option \"{}\", expecting either \"master\" or an address, like 127.0.0.1:9999\n{}", x, USAGE),false));
+			(bind, None) if bind.parse::<SocketAddr>().is_ok() => {
+				Role::Worker(bind.parse::<SocketAddr>().unwrap())
+			}
+			(x, _) => {
+				return Err((format!("Invalid option \"{}\", expecting an address to bind to, like 127.0.0.1:9999\n{}", x, USAGE), false));
 			}
 		};
 		Ok(Self {
@@ -154,6 +173,152 @@ impl Args {
 			verbose,
 			role,
 		})
+	}
+	fn from_toml<R: Read>(reader: &mut R) -> Result<Vec<Node>, Box<dyn Error>> {
+		#[derive(Deserialize)]
+		struct A {
+			nodes: Vec<B>,
+		}
+		#[derive(Deserialize)]
+		struct B {
+			fabric_addr: SocketAddr,
+			bridge_bind: Option<SocketAddr>,
+			#[serde(deserialize_with = "serde_mem::deserialize")]
+			mem: u64,
+			#[serde(deserialize_with = "serde_cpu::deserialize")]
+			cpu: u32,
+		}
+
+		mod serde_mem {
+			use constellation_internal::parse_mem_size;
+			use serde::{de::Visitor, *};
+			use std::fmt;
+			pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+			where
+				D: Deserializer<'de>,
+			{
+				if deserializer.is_human_readable() {
+					deserializer.deserialize_str(MemVisitor)
+				} else {
+					u64::deserialize(deserializer)
+				}
+			}
+			struct MemVisitor;
+
+			impl<'de> Visitor<'de> for MemVisitor {
+				type Value = u64;
+
+				fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+					formatter.write_str("a memory size, like \"800 MiB\" or \"6 GiB\"")
+				}
+
+				fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					parse_mem_size(value)
+						.map_err(|()| E::custom(format!("couldn't parse memory size: {}", value)))
+				}
+
+				fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					Ok(value)
+				}
+			}
+		}
+		mod serde_cpu {
+			use constellation_internal::parse_cpu_size;
+			use serde::{de::Visitor, *};
+			use std::{convert::TryInto, fmt};
+			pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
+			where
+				D: Deserializer<'de>,
+			{
+				if deserializer.is_human_readable() {
+					deserializer.deserialize_any(CpuVisitor)
+				} else {
+					u32::deserialize(deserializer)
+				}
+			}
+			struct CpuVisitor;
+			impl<'de> Visitor<'de> for CpuVisitor {
+				type Value = u32;
+
+				fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+					formatter.write_str("a quantity of logical CPU cores, like \"0.5\" or \"4\"")
+				}
+
+				fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					parse_cpu_size(value)
+						.map_err(|()| E::custom(format!("couldn't parse CPU quantity: {}", value)))
+				}
+
+				fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					Ok((value * 65536).try_into().map_err(|_| {
+						E::custom(format!("couldn't parse CPU quantity: {}", value))
+					})?)
+				}
+				fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					self.visit_u64(value.try_into().map_err(|_| {
+						E::custom(format!("couldn't parse CPU quantity: {}", value))
+					})?)
+				}
+				#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+				fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+				where
+					E: de::Error,
+				{
+					Ok((value * 65536.0) as u32) // TODO
+				}
+			}
+		}
+
+		let mut toml = Vec::new();
+		let _ = reader.read_to_end(&mut toml)?;
+		let nodes = toml::from_slice::<A>(&toml)
+			.map_err(|e| {
+				format!(
+					r#"{}
+It should look something like:
+
+[[nodes]]
+fabric_addr = "10.0.0.1:9999"
+bridge_bind = "10.0.0.1:8888"
+mem = "5 GiB"
+cpu = 1
+
+[[nodes]]
+fabric_addr = "10.0.0.2:9999"
+mem = "5 GiB"
+cpu = 1
+"#,
+					e
+				)
+			})?
+			.nodes;
+		if nodes.is_empty() {
+			return Err("must contain multiple nodes".into());
+		}
+		Ok(nodes
+			.into_iter()
+			.map(|node| Node {
+				fabric: node.fabric_addr,
+				bridge: node.bridge_bind,
+				mem: node.mem,
+				cpu: node.cpu,
+			})
+			.collect())
 	}
 }
 
@@ -209,28 +374,58 @@ mod tests {
 		assert_eq!(
 			from_args(&[
 				"--format=json",
-				"master",
-				"10.0.0.1",
 				"10.0.0.1:8888",
+				"10.0.0.1:8888",
+				"10.0.0.1:7777",
 				"400GiB",
 				"34",
-				"bridge",
-				"10.0.0.1:7777"
 			]),
 			Ok(Args {
 				format: Format::Json,
 				verbose: false,
 				role: Role::Master(
-					"10.0.0.1".parse().unwrap(),
+					"10.0.0.1:8888".parse().unwrap(),
 					vec![Node {
-						addr: "10.0.0.1:8888".parse().unwrap(),
+						fabric: "10.0.0.1:8888".parse().unwrap(),
+						bridge: Some("10.0.0.1:7777".parse().unwrap()),
 						mem: 400 * 1024 * 1024 * 1024,
 						cpu: 34 * 65536,
-						run: vec![Run {
-							binary: PathBuf::from("bridge"),
-							addr: "10.0.0.1:7777".parse().unwrap()
-						}]
 					}]
+				)
+			})
+		);
+		assert_eq!(
+			from_args(&[
+				"--format=json",
+				"10.0.0.1:8888",
+				"10.0.0.1:8888",
+				"10.0.0.1:7777",
+				"400GiB",
+				"34",
+				"10.0.0.1:8888",
+				"-",
+				"400GiB",
+				"34",
+			]),
+			Ok(Args {
+				format: Format::Json,
+				verbose: false,
+				role: Role::Master(
+					"10.0.0.1:8888".parse().unwrap(),
+					vec![
+						Node {
+							fabric: "10.0.0.1:8888".parse().unwrap(),
+							bridge: Some("10.0.0.1:7777".parse().unwrap()),
+							mem: 400 * 1024 * 1024 * 1024,
+							cpu: 34 * 65536,
+						},
+						Node {
+							fabric: "10.0.0.1:8888".parse().unwrap(),
+							bridge: None,
+							mem: 400 * 1024 * 1024 * 1024,
+							cpu: 34 * 65536,
+						}
+					]
 				)
 			})
 		);

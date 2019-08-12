@@ -71,6 +71,7 @@
 )]
 
 mod args;
+mod bridge;
 mod master;
 
 use either::Either;
@@ -80,7 +81,7 @@ use palaver::{
 	file::{copy_fd, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, net::{IpAddr, SocketAddr, TcpListener}, path::PathBuf, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, net::{IpAddr, SocketAddr, TcpListener}, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -99,20 +100,16 @@ struct Args {
 }
 #[derive(PartialEq, Debug)]
 enum Role {
-	Master(IpAddr, Vec<Node>),
+	Master(SocketAddr, Vec<Node>),
 	Worker(SocketAddr),
+	Bridge,
 }
 #[derive(PartialEq, Debug)]
 struct Node {
-	addr: SocketAddr,
+	fabric: SocketAddr,
+	bridge: Option<SocketAddr>,
 	mem: u64,
 	cpu: u32,
-	run: Vec<Run>,
-}
-#[derive(PartialEq, Debug)]
-struct Run {
-	binary: PathBuf,
-	addr: SocketAddr,
 }
 
 const LISTENER_FD: Fd = 3;
@@ -139,56 +136,53 @@ fn main() {
 		println!("{}", message);
 		process::exit(if success { 0 } else { 1 })
 	});
+	if args.role == Role::Bridge {
+		return bridge::main();
+	}
 	let stdout = io::stdout();
 	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		Role::Master(listen, mut nodes) => {
-			let fabric = TcpListener::bind(SocketAddr::new(listen, 0)).unwrap();
-			let master_addr = nodes[0].addr;
-			nodes[0].addr.set_port(fabric.local_addr().unwrap().port());
+			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();
+			let master_addr = nodes[0].fabric;
+			nodes[0]
+				.fabric
+				.set_port(fabric.local_addr().unwrap().port());
 			let _ = thread::Builder::new()
 				.name(String::from("master"))
 				.spawn(move || {
 					master::run(
-						SocketAddr::new(listen, master_addr.port()),
+						SocketAddr::new(listen.ip(), master_addr.port()),
 						Pid::new(master_addr.ip(), master_addr.port()),
 						nodes
 							.into_iter()
 							.map(
 								|Node {
-								     addr,
+								     fabric,
+								     bridge,
 								     mem,
 								     cpu,
-								     run,
-								 }| {
-									(
-										addr,
-										(
-											mem,
-											cpu,
-											run.into_iter()
-												.map(|Run { binary, addr }| (binary, vec![addr]))
-												.collect(),
-										),
-									)
-								},
+								 }| { (fabric, (bridge, mem, cpu)) },
 							)
 							.collect::<HashMap<_, _>>(),
 					); // TODO: error on clash
 				})
 				.unwrap();
-			(listen, fabric)
+			(listen.ip(), fabric)
 		}
 		Role::Worker(listen) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
+		Role::Bridge => unreachable!(),
 	};
 
-	for stream in listener.incoming() {
-		let stream = stream.unwrap();
+	loop {
+		let (stream, addr) = listener.accept().unwrap();
 		println!("accepted");
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		let (mut stream_read, stream_write) =
 			(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
+		bincode::serialize_into::<_, IpAddr>(&mut *stream_write.lock().unwrap(), &addr.ip())
+			.unwrap();
 		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
 		crossbeam::scope(|scope| {
 			while let Ok(request) =
