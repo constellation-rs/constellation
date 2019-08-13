@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.1")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.2")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![feature(async_await)]
 #![warn(
@@ -842,21 +842,6 @@ extern "C" fn at_exit() {
 #[doc(hidden)]
 pub fn bridge_init() -> TcpListener {
 	const BOUND_FD: Fd = 5; // from fabric
-	std::env::set_var("RUST_BACKTRACE", "full");
-	std::panic::set_hook(Box::new(|info| {
-		eprintln!(
-			"thread '{}' {}",
-			thread::current().name().unwrap_or("<unnamed>"),
-			info
-		);
-		eprintln!("{:?}", backtrace::Backtrace::new());
-		std::process::abort();
-	}));
-	// simple_logging::log_to_file(
-	// 	format!("logs/{}.log", std::process::id()),
-	// 	log::LevelFilter::Trace,
-	// )
-	// .unwrap();
 	if valgrind::is().unwrap_or(false) {
 		unistd::close(valgrind::start_fd() - 1 - 12).unwrap();
 	}

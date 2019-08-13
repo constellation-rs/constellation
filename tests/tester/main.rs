@@ -26,7 +26,7 @@ mod ext;
 use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fs::File, hash, io::{self, BufRead, BufReader, Write}, iter, net::{SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str::{self, FromStr}, thread, time::{self, Duration}
+	collections::HashMap, env, fs::File, hash, io::{self, BufRead, BufReader, Write}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
@@ -35,7 +35,6 @@ use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
 const FABRIC: &str = "src/bin/constellation/main.rs";
-const BRIDGE: &str = "src/bin/bridge.rs";
 const TESTS: &str = "tests/";
 const SELF: &str = "tests/tester/main.rs";
 
@@ -120,7 +119,7 @@ impl OutputTest {
 
 fn parse_output(output: &process::Output) -> Result<Output, Option<serde_json::Error>> {
 	if !FORWARD_STDERR {
-		println!("stderr: {:?}", std::str::from_utf8(&output.stderr).unwrap());
+		println!("stderr: {:?}", str::from_utf8(&output.stderr).unwrap());
 	} else if !output.stderr.is_empty() {
 		return Err(None);
 	}
@@ -281,11 +280,7 @@ fn main() {
 		}
 	}
 
-	let (deploy, fabric, bridge) = (
-		&products[Path::new(DEPLOY)],
-		&products[Path::new(FABRIC)],
-		&products[Path::new(BRIDGE)],
-	);
+	let (deploy, fabric) = (&products[Path::new(DEPLOY)], &products[Path::new(FABRIC)]);
 
 	if TcpStream::connect(FABRIC_ADDR).is_ok() {
 		panic!("Service already running on FABRIC_ADDR {}", FABRIC_ADDR);
@@ -298,13 +293,11 @@ fn main() {
 			"--format",
 			"json",
 			"-v",
-			"master",
-			&SocketAddr::from_str(FABRIC_ADDR).unwrap().ip().to_string(),
 			FABRIC_ADDR,
+			FABRIC_ADDR,
+			BRIDGE_ADDR,
 			"4GiB",
 			"4",
-			bridge.to_str().unwrap(),
-			BRIDGE_ADDR,
 		])
 		.stdin(process::Stdio::null())
 		.stdout(process::Stdio::piped())

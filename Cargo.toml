@@ -2,17 +2,17 @@
 
 [package]
 name = "constellation-rs"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
 keywords = ["constellation","deploy","distributed","cluster"]
 description = """
-The `constellation` framework to aide writing and debugging of distributed programs, as well as tooling to run them across a cluster.
+Constellation is a framework for Rust (nightly) that aides in the writing, debugging and deployment of distributed programs.
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation-rs/0.1.1"
+documentation = "https://docs.rs/constellation-rs/0.1.2"
 readme = "README.md"
 edition = "2018"
 autotests = true
@@ -30,7 +30,7 @@ no_alloc = ["constellation-internal/no_alloc"]
 nightly = ["palaver/nightly", "relative/nightly"]
 
 [dependencies]
-constellation-internal = { path = "constellation-internal", version = "=0.1.1" }
+constellation-internal = { path = "constellation-internal", version = "=0.1.2" }
 atty = "0.2"
 backtrace = "0.3"
 bincode = "1.0"
@@ -42,7 +42,7 @@ log = "0.4"
 more-asserts = "0.2"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = { version = "0.2", default-features = false }
-palaver = { version = "0.2" }
+palaver = "0.2"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
 relative = "0.1"
@@ -50,8 +50,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.1"
 serde_json = "1.0"
 serde_pipe = "0.1"
-simple-logging = "2.0"
 tcp_typed = "0.1"
+toml = "0.5"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.15"
@@ -65,7 +65,6 @@ hex = "0.3"
 itertools = "0.8"
 multiset = "0.0"
 regex = "1.0"
-# runtime = "0.3.0-alpha.6"
 serde_traitobject = "0.1"
 sha1 = "0.6"
 systemstat = "0.1"
@@ -73,6 +72,7 @@ systemstat = "0.1"
 [patch.crates-io]
 # bincode = { git = "https://github.com/alecmocatta/bincode" }
 systemstat = { git = "https://github.com/alecmocatta/systemstat" }
+serde_traitobject = { git = "https://github.com/alecmocatta/serde_traitobject", branch = "ergo-impls" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297

@@ -390,7 +390,7 @@ fn manage_connection(
 	Ok(())
 }
 
-fn main() {
+pub fn main() {
 	let listener = constellation::bridge_init();
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let (sender, receiver) = mpsc::sync_channel(0);

@@ -3,7 +3,7 @@ use crossbeam;
 use either::Either;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, HashSet, VecDeque}, env, ffi::OsString, fs, io::Read, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, path, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, VecDeque}, env, ffi::OsString, io::Read, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{
@@ -40,7 +40,7 @@ struct SchedulerArg {
 
 pub fn run(
 	bind_addr: SocketAddr, master_pid: Pid,
-	nodes: HashMap<SocketAddr, (u64, u32, Vec<(path::PathBuf, Vec<SocketAddr>)>)>,
+	nodes: HashMap<SocketAddr, (Option<SocketAddr>, u64, u32)>,
 ) {
 	let (sender, receiver) = sync_channel::<
 		Either<
@@ -56,20 +56,18 @@ pub fn run(
 	let mut nodes = nodes
 		.into_iter()
 		.enumerate()
-		.map(|(i, (addr, (mem, cpu, bridges)))| {
+		.map(|(i, (fabric, (bridge, mem, cpu)))| {
 			let node = Node { mem, cpu };
-			let mut check_addresses = HashSet::new();
-			let check_port = check_addresses.insert(addr);
-			assert!(check_port);
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = TcpStream::connect(&addr).unwrap();
+			let stream = TcpStream::connect(&fabric).unwrap();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(move || {
 					let (receiver, sender) = (receiver_a, sender1);
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
-					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &addr.ip()).unwrap();
+					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
+					let _ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(|_spawn| {
 							for request in receiver {
@@ -87,43 +85,35 @@ pub fn run(
 					.unwrap();
 				})
 				.unwrap();
-			for (bridge, bind) in bridges {
-				for &port in &bind {
-					let check_port = check_addresses.insert(port);
-					assert!(check_port);
-				}
-				let sender = sender.clone();
-				let _ = thread::Builder::new()
-					.spawn(move || {
-						let mut path = env::current_exe().unwrap();
-						let _ = path.pop();
-						path.push(&bridge);
-						let mut file_in = fs::File::open(&path)
-							.or_else(|_| fs::File::open(&bridge))
-							.unwrap_or_else(|_| panic!("Failed to open bridge {:?}", &bridge));
-						let mut binary = Vec::new();
-						let _ = file_in.read_to_end(&mut binary).unwrap();
-						let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-						sender
-							.send(Either::Left((
-								FabricRequest {
-									resources: Resources { mem: 0, cpu: 0 },
-									bind,
-									args: vec![OsString::from(bridge)],
-									vars: Vec::new(),
-									binary,
-									arg: Vec::new(),
-								},
-								sender_,
-								Some(i),
-							)))
-							.unwrap();
-						let _pid: Option<Pid> = receiver.recv().unwrap();
-						// println!("bridge at {:?}", pid.unwrap());
-					})
-					.unwrap();
-			}
-			(sender_a, node, addr.ip(), VecDeque::new())
+			let sender = sender.clone();
+			let _ = thread::Builder::new()
+				.spawn(move || {
+					let mut file_in = palaver::env::exe().unwrap();
+					let mut binary = Vec::new();
+					let _ = file_in.read_to_end(&mut binary).unwrap();
+					let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
+					sender
+						.send(Either::Left((
+							FabricRequest {
+								resources: Resources { mem: 0, cpu: 0 },
+								bind: bridge.into_iter().collect(),
+								args: vec![
+									OsString::from(env::current_exe().unwrap()),
+									OsString::from("bridge"),
+								],
+								vars: Vec::new(),
+								binary,
+								arg: Vec::new(),
+							},
+							sender_,
+							Some(i),
+						)))
+						.unwrap();
+					let _pid: Pid = receiver.recv().unwrap().unwrap();
+					// println!("bridge at {:?}", pid);
+				})
+				.unwrap();
+			(sender_a, node, fabric.ip(), VecDeque::new())
 		})
 		.collect::<Vec<_>>();
 
