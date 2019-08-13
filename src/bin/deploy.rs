@@ -37,9 +37,7 @@ use constellation_internal::{
 	map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport
 };
 
-const USAGE: &str = "
-deploy
-Run a binary on a constellation cluster
+const USAGE: &str = "Run a binary on a constellation cluster.
 
 USAGE:
     deploy [options] <host> <binary> [--] [args]...

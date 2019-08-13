@@ -4,67 +4,110 @@ use std::{error::Error, fs::File, io::Read, net::SocketAddr};
 use super::{Args, Node, Role};
 use constellation_internal::{parse_cpu_size, parse_mem_size, Format};
 
-const DESCRIPTION: &str = r"
-constellation
-Run a constellation node, optionally as master, and optionally start a bridge running
+const DESCRIPTION: &str = r"Run a constellation node.
 ";
-const USAGE: &str = r"
-USAGE:
-    constellation master <addr> (<addr> <mem> <cpu> [<bridge> <addr>]...)...
-    constellation <addr>
+const USAGE: &str = r"USAGE:
+    constellation <bind> [<nodes.toml>]
 
 OPTIONS:
-    -h --help          Show this screen.
-    -V --version       Show version.
-    -v --verbose       Verbose output.
-    --format=<fmt>     Output format [possible values: human, json] [default: human]
+    -h --help           Show this screen.
+    -V --version        Show version.
+    -v --verbose        Verbose output.
+       --format [human|json]
+                        Output format [default: human].
 ";
-const HELP: &str = r"
-A constellation cluster comprises one or more nodes, where one is declared master.
+const HELP: &str = r#"A constellation cluster consists of one or more nodes. A node is started like
+this:
 
-The arguments to the master node are the address and resources of each node,
-including itself. The arguments for a node can include a binary to spawn
-immediately and an address to reserve for it. This is intended to be used to
-spawn the bridge, which works with the deploy command and library to handle
-transparent capture and forwarding of output and debug information.
-
-The first set of arguments to the master node is for itself – as such the
-address is bound to not connected to.
-
-The argument to non-master nodes is the address to bind to.
-
-For example, respective invocations on each of a cluster of 3 servers with
-512GiB memory and 36 logical cores apiece might be:
-    constellation master 10.0.0.1:9999 400GiB 34 bridge 10.0.0.1:8888 \
-                  10.0.0.2:9999 400GiB 34 \
-                  10.0.0.3:9999 400GiB 34
     constellation 10.0.0.2:9999
-    constellation 10.0.0.3:9999
+
+This binds to 10.0.0.2:9999, listening for connections from other nodes.
+
+In order for nodes to know about each other, one node must be started with a
+list of all the nodes:
+
+    constellation 10.0.0.1:9999 nodes.toml
+
+For more information, see the documentation at
+https://github.com/alecmocatta/constellation/ or run again with --help -v
+"#;
+const VERBOSE_HELP: &str =
+	r#"A constellation cluster consists of one or more nodes. A node is started like
+this:
+
+    constellation 10.0.0.2:9999
+
+This binds to 10.0.0.2:9999, listening for connections from other nodes.
+
+In order for nodes to know about each other, one node must be started with a
+list of all the nodes:
+
+    constellation 10.0.0.1:9999 nodes.toml
+
+This reads the file "nodes.toml", which should look something like this:
+
+    [[nodes]]
+    fabric_addr = "10.0.0.1:9999"
+    bridge_bind = "10.0.0.1:8888"
+    mem = "5 GiB"
+    cpu = 1
+
+    [[nodes]]
+    fabric_addr = "10.0.0.2:9999"
+    mem = "5 GiB"
+    cpu = 1
+
+This enables the nodes to see and communicate with each other.
 
 Deploying to this cluster might then be:
+
     deploy 10.0.0.1:8888 ./binary
+
 or, for a Rust crate:
+
     cargo deploy 10.0.0.1:8888
-";
+"#;
+//     constellation master <bind> (<fabric_addr> [<bridge_bind>] <mem> <cpu>)...
+// The arguments to the master node are the address and resources of each node,
+// including itself. The arguments for a node can include a binary to spawn
+// immediately and an address to reserve for it. This is intended to be used to
+// spawn the bridge, which works with the deploy command and library to handle
+// transparent capture and forwarding of output and debug information.
+
+// The first set of arguments to the master node is for itself – as such the
+// address is bound to not connected to.
+
+// The argument to non-master nodes is the address to bind to.
+
+// For example, respective invocations on each of a cluster of 3 servers with
+// 512GiB memory and 36 logical cores apiece might be:
+//     constellation master 10.0.0.1 \
+//                   10.0.0.1:9999 10.0.0.1:8888 400GiB 34 \
+//                   10.0.0.2:9999 10.0.0.2:8888 400GiB 34 \
+//                   10.0.0.3:9999 10.0.0.3:8888 400GiB 34
+//     constellation 10.0.0.2:9999
+//     constellation 10.0.0.3:9999
 
 impl Args {
 	pub fn from_args(args: impl Iterator<Item = String>) -> Result<Self, (String, bool)> {
 		let mut args = args.peekable();
 		let mut format = None;
 		let mut verbose = false;
+		let mut help = None;
 		loop {
 			match args.peek().map(|x| &**x) {
-				arg @ None | arg @ Some("-h") | arg @ Some("--help") => {
-					return Err((format!("{}{}{}", DESCRIPTION, USAGE, HELP), arg.is_some()));
+				arg @ None | arg @ Some("-h") | arg @ Some("--help") if help.is_none() => {
+					help = Some(arg.is_some());
+					let _ = args.next();
 				}
 				Some("-V") | Some("--version") => {
 					return Err((format!("constellation {}", env!("CARGO_PKG_VERSION")), true))
 				}
-				Some("-v") | Some("--verbose") => {
+				Some("-v") | Some("--verbose") if !verbose => {
 					let _ = args.next().unwrap();
 					verbose = true
 				}
-				Some("--format") => {
+				Some("--format") if format.is_none() => {
 					let _ = args.next().unwrap();
 					match args.next().as_ref().map(|x| &**x) {
 						Some("json") => format = Some(Format::Json),
@@ -80,7 +123,7 @@ impl Args {
 						}
 					}
 				}
-				Some(format_) if format_.starts_with("--format=") => {
+				Some(format_) if format.is_none() && format_.starts_with("--format=") => {
 					let format_ = args.next().unwrap();
 					match &format_[9..] {
 						"json" => format = Some(Format::Json),
@@ -98,6 +141,16 @@ impl Args {
 				}
 				_ => break,
 			}
+		}
+		if let Some(success) = help {
+			return Err((
+				if verbose {
+					format!("{}\n{}\n{}", DESCRIPTION, USAGE, VERBOSE_HELP)
+				} else {
+					format!("{}\n{}\n{}", DESCRIPTION, USAGE, HELP)
+				},
+				success,
+			));
 		}
 		let format = format.unwrap_or(Format::Human);
 		let role: Role = match (&*args.next().unwrap(), args.peek()) {
@@ -333,19 +386,19 @@ mod tests {
 		}
 		assert_eq!(
 			from_args(&[]),
-			Err((format!("{}{}{}", DESCRIPTION, USAGE, HELP), false))
+			Err((format!("{}\n{}\n{}", DESCRIPTION, USAGE, HELP), false))
 		);
 		assert_eq!(
 			from_args(&["--format=json"]),
-			Err((format!("{}{}{}", DESCRIPTION, USAGE, HELP), false))
+			Err((format!("{}\n{}\n{}", DESCRIPTION, USAGE, HELP), false))
 		);
 		assert_eq!(
 			from_args(&["--format", "json"]),
-			Err((format!("{}{}{}", DESCRIPTION, USAGE, HELP), false))
+			Err((format!("{}\n{}\n{}", DESCRIPTION, USAGE, HELP), false))
 		);
 		assert_eq!(
 			from_args(&["-h"]),
-			Err((format!("{}{}{}", DESCRIPTION, USAGE, HELP), true))
+			Err((format!("{}\n{}\n{}", DESCRIPTION, USAGE, HELP), true))
 		);
 		assert_eq!(
 			from_args(&["10.0.0.1:8888"]),
