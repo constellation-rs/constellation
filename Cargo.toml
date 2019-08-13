@@ -2,7 +2,7 @@
 
 [package]
 name = "constellation-rs"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -12,7 +12,7 @@ Constellation is a framework for Rust (nightly) that aides in the writing, debug
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation-rs/0.1.1"
+documentation = "https://docs.rs/constellation-rs/0.1.2"
 readme = "README.md"
 edition = "2018"
 autotests = true
@@ -30,7 +30,7 @@ no_alloc = ["constellation-internal/no_alloc"]
 nightly = ["palaver/nightly", "relative/nightly"]
 
 [dependencies]
-constellation-internal = { path = "constellation-internal", version = "=0.1.1" }
+constellation-internal = { path = "constellation-internal", version = "=0.1.2" }
 atty = "0.2"
 backtrace = "0.3"
 bincode = "1.0"
