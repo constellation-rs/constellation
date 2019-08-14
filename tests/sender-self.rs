@@ -5,7 +5,7 @@
 //=       true
 //=     ],
 //=     "2": [
-//=       "thread 'main' panicked at 'Sender::<.*>::new\\(\\) called with process's own pid\\. A process cannot create a channel to itself\\.', src/lib\\.rs:[0-9]+:[0-9]+\n",
+//=       "thread 'main' panicked at 'Sender::<.*>::new\\(\\) called with process's own pid\\. A process cannot create a channel to itself\\.', src/.*\\.rs:[0-9]+:[0-9]+\n",
 //=       true
 //=     ]
 //=   },

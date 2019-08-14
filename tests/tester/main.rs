@@ -26,7 +26,7 @@ mod ext;
 use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fs::File, hash, io::{self, BufRead, BufReader, Write}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
+	collections::HashMap, env, fmt, fs::File, hash, io::{self, BufRead, BufReader}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
@@ -415,7 +415,7 @@ fn main() {
 				.env_remove("CONSTELLATION_VERSION")
 				.env("CONSTELLATION_FORMAT", "json"));
 		}
-		dump_system_load(io::stdout()).unwrap();
+		print!("{:?}", SystemLoad::measure());
 		println!("  deployed");
 		for i in 0..iterations {
 			println!("    {}", i);
@@ -424,7 +424,7 @@ fn main() {
 				.env_remove("CONSTELLATION_FORMAT")
 				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
 		}
-		dump_system_load(io::stdout()).unwrap();
+		print!("{:?}", SystemLoad::measure());
 	}
 
 	println!("killing");
@@ -446,55 +446,75 @@ fn main() {
 	}
 }
 
-fn dump_system_load<W: Write>(mut writer: W) -> Result<(), io::Error> {
-	let sys = System::new();
-	match sys.memory() {
-		Ok(mem) => writeln!(
-			writer,
-			"Memory: {} used / {} ({} bytes) total ({:?})",
-			saturating_sub_bytes(mem.total, mem.free),
-			mem.total,
-			mem.total.as_u64(),
-			mem.platform_memory
-		)?,
-		Err(x) => writeln!(writer, "Memory: error: {}", x)?,
+struct SystemLoad {
+	memory: Result<systemstat::data::Memory, io::Error>,
+	load_average: Result<systemstat::data::LoadAverage, io::Error>,
+	load_aggregate: Result<systemstat::data::CPULoad, io::Error>,
+	processes: usize,
+	threads: usize,
+	file_stats: Result<systemstat::data::FileStats, io::Error>,
+}
+impl SystemLoad {
+	fn measure() -> Self {
+		let sys = System::new();
+		Self {
+			memory: sys.memory(),
+			load_average: sys.load_average(),
+			load_aggregate: sys.cpu_load_aggregate().and_then(|cpu| {
+				thread::sleep(Duration::from_millis(500)); // TODO: make sleep opt-in
+				cpu.done()
+			}),
+			processes: palaver::process::count(),
+			threads: palaver::process::count_threads(),
+			file_stats: sys.file_stats(),
+		}
 	}
-	match sys.load_average() {
-		Ok(loadavg) => writeln!(
-			writer,
-			"Load average: {} {} {}",
-			loadavg.one, loadavg.five, loadavg.fifteen
-		)?,
-		Err(x) => writeln!(writer, "Load average: error: {}", x)?,
-	}
-	match sys.cpu_load_aggregate() {
-		Ok(cpu) => {
-			thread::sleep(Duration::from_millis(500)); // TODO: make sleep opt-in
-			let cpu = cpu.done().unwrap();
-			writeln!(
-				writer,
+}
+impl fmt::Debug for SystemLoad {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match &self.memory {
+			Ok(mem) => writeln!(
+				f,
+				"Memory: {} used / {} ({} bytes) total ({:?})",
+				saturating_sub_bytes(mem.total, mem.free),
+				mem.total,
+				mem.total.as_u64(),
+				mem.platform_memory
+			)?,
+			Err(x) => writeln!(f, "Memory: error: {}", x)?,
+		}
+		match &self.load_average {
+			Ok(loadavg) => writeln!(
+				f,
+				"Load average: {} {} {}",
+				loadavg.one, loadavg.five, loadavg.fifteen
+			)?,
+			Err(x) => writeln!(f, "Load average: error: {}", x)?,
+		}
+		match &self.load_aggregate {
+			Ok(cpu) => writeln!(
+				f,
 				"CPU load: {}% user, {}% nice, {}% system, {}% intr, {}% idle",
 				cpu.user * 100.0,
 				cpu.nice * 100.0,
 				cpu.system * 100.0,
 				cpu.interrupt * 100.0,
 				cpu.idle * 100.0
-			)?
+			)?,
+			Err(x) => writeln!(f, "CPU load: error: {}", x)?,
 		}
-		Err(x) => writeln!(writer, "CPU load: error: {}", x)?,
-	}
-	writeln!(
-		writer,
-		"Processes: {}, threads: {}",
-		palaver::process::count(),
-		palaver::process::count_threads()
-	)?;
-	if let Ok(file_stats) = sys.file_stats() {
 		writeln!(
-			writer,
-			"File descriptors: {} open, {} max",
-			file_stats.open, file_stats.max
+			f,
+			"Processes: {}, threads: {}",
+			self.processes, self.threads
 		)?;
+		if let Ok(file_stats) = &self.file_stats {
+			writeln!(
+				f,
+				"File descriptors: {} open, {} max",
+				file_stats.open, file_stats.max
+			)?;
+		}
+		Ok(())
 	}
-	Ok(())
 }

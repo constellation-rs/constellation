@@ -1,7 +1,7 @@
 //= {
 //=   "output": {
 //=     "2": [
-//=       "thread 'main' panicked at 'qwertyuiop', tests/a\\.rs:[0-9]+:[0-9]+\n",
+//=       "thread 'main' panicked at 'qwertyuiop', tests/.*\\.rs:[0-9]+:[0-9]+\n",
 //=       true
 //=     ],
 //=     "1": [
