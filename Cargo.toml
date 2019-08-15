@@ -82,83 +82,83 @@ name = "tester"
 harness = false
 
 [[test]]
-name = "a"
+name = "abort-sleep"
 harness = false
 [[test]]
-name = "b"
+name = "abort"
 harness = false
 [[test]]
-name = "c"
+name = "failure-sleep"
 harness = false
 [[test]]
-name = "d"
+name = "failure"
 harness = false
 [[test]]
-name = "e"
+name = "message-alltoall-sleep"
 harness = false
 [[test]]
-name = "f"
+name = "output-data"
 harness = false
 [[test]]
-name = "g"
+name = "resources"
 harness = false
 [[test]]
-name = "h"
+name = "sender-duplicate"
 harness = false
 [[test]]
-name = "i"
+name = "sender-self"
 harness = false
 [[test]]
-name = "j"
+name = "spawn-multiple-futures-send-recv-stream"
 harness = false
 [[test]]
-name = "k"
+name = "spawn-multiple-send-recv-recv-send-sleep"
 harness = false
 [[test]]
-name = "l"
+name = "spawn-multiple-send-recv-recv-send"
 harness = false
 [[test]]
-name = "m"
+name = "spawn-multiple-send-recv-stream"
 harness = false
 [[test]]
-name = "n"
+name = "spawn-multiple-send-recv"
 harness = false
 [[test]]
-name = "o"
+name = "spawn-multiple-sleep"
 harness = false
 [[test]]
-name = "p"
+name = "spawn-receiver-sender"
 harness = false
 [[test]]
-name = "q"
+name = "spawn-receiver"
 harness = false
 [[test]]
-name = "r"
+name = "spawn-recv"
 harness = false
 [[test]]
-name = "s"
+name = "spawn-send-recv"
 harness = false
 [[test]]
-name = "t"
+name = "spawn-send"
 harness = false
 [[test]]
-name = "u"
+name = "spawn-sender-receiver"
 harness = false
 [[test]]
-name = "v"
+name = "spawn-sender"
 harness = false
 [[test]]
-name = "w"
+name = "spawn"
 harness = false
 [[test]]
-name = "x"
+name = "success-return-sleep"
 harness = false
 [[test]]
-name = "xx"
+name = "success-return"
 harness = false
 [[test]]
-name = "y"
+name = "success-sleep"
 harness = false
 [[test]]
-name = "z"
+name = "success"
 harness = false
