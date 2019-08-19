@@ -89,8 +89,11 @@ fn main() {
 		.unwrap_or_else(|e| panic!("Could not connect to {:?}: {:?}", bridge_address, e));
 	let (mut stream_read, mut stream_write) =
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
+	#[cfg(feature = "distribute_binaries")]
 	let binary =
 		fs::File::open(&path).unwrap_or_else(|e| panic!("Couldn't open file {:?}: {:?}", path, e));
+	#[cfg(not(feature = "distribute_binaries"))]
+	let binary = std::marker::PhantomData::<fs::File>;
 	let request = BridgeRequest {
 		resources: None,
 		args,

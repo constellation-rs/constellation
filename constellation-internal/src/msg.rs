@@ -1,4 +1,6 @@
 use crate::Resources;
+#[cfg(not(feature = "distribute_binaries"))]
+use std::marker::PhantomData;
 use std::{ffi::OsString, net::SocketAddr};
 
 #[derive(Debug)]
@@ -18,7 +20,10 @@ where
 	/// An extra argument passed to the process on a special file descriptor.
 	pub arg: A,
 	/// The process to spawn.
+	#[cfg(feature = "distribute_binaries")]
 	pub binary: B,
+	#[cfg(not(feature = "distribute_binaries"))]
+	pub binary: PhantomData<B>,
 }
 
 /// This is the request made by `deploy` to the `bridge`.
@@ -37,7 +42,10 @@ where
 	/// An extra argument passed to the process on a special file descriptor.
 	pub arg: A,
 	/// The process to spawn.
+	#[cfg(feature = "distribute_binaries")]
 	pub binary: B,
+	#[cfg(not(feature = "distribute_binaries"))]
+	pub binary: PhantomData<B>,
 }
 
 pub use self::serde::{bincode_deserialize_from, bincode_serialize_into, FileOrVec};
@@ -146,7 +154,10 @@ mod serde {
 			state.serialize_element(&self.args)?;
 			state.serialize_element(&self.vars)?;
 			state.serialize_element(&serde_bytes::Bytes::new(&self.arg))?;
+			#[cfg(feature = "distribute_binaries")]
 			state.serialize_element(&serde_bytes::Bytes::new(&self.binary))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			state.serialize_element(&PhantomData::<Vec<u8>>)?;
 			state.end()
 		}
 	}
@@ -188,7 +199,10 @@ mod serde {
 			state.serialize_element(&self.value.args)?;
 			state.serialize_element(&self.value.vars)?;
 			state.serialize_element(&self.value.arg.as_serializer(&self.writer))?;
+			#[cfg(feature = "distribute_binaries")]
 			state.serialize_element(&self.value.binary.as_serializer(&self.writer))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			state.serialize_element(&PhantomData::<B>)?;
 			state.end()
 		}
 	}
@@ -203,7 +217,10 @@ mod serde {
 			state.serialize_element(&self.args)?;
 			state.serialize_element(&self.vars)?;
 			state.serialize_element(&serde_bytes::Bytes::new(&self.arg))?;
+			#[cfg(feature = "distribute_binaries")]
 			state.serialize_element(&serde_bytes::Bytes::new(&self.binary))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			state.serialize_element(&PhantomData::<Vec<u8>>)?;
 			state.end()
 		}
 	}
@@ -244,7 +261,10 @@ mod serde {
 			state.serialize_element(&self.value.args)?;
 			state.serialize_element(&self.value.vars)?;
 			state.serialize_element(&self.value.arg.as_serializer(&self.writer))?;
+			#[cfg(feature = "distribute_binaries")]
 			state.serialize_element(&self.value.binary.as_serializer(&self.writer))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			state.serialize_element(&PhantomData::<B>)?;
 			state.end()
 		}
 	}
@@ -413,6 +433,7 @@ mod serde {
 				},
 			)?
 			.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			#[cfg(feature = "distribute_binaries")]
 			let binary = B::next_element_seed(
 				&mut seq,
 				FileSeed {
@@ -423,6 +444,9 @@ mod serde {
 				},
 			)?
 			.ok_or_else(|| de::Error::invalid_length(5, &self))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			let binary = seq.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(5, &self))?;
 			Ok(FabricRequest {
 				resources,
 				bind,
@@ -497,6 +521,7 @@ mod serde {
 				},
 			)?
 			.ok_or_else(|| de::Error::invalid_length(3, &self))?;
+			#[cfg(feature = "distribute_binaries")]
 			let binary = B::next_element_seed(
 				&mut seq,
 				FileSeed {
@@ -507,6 +532,9 @@ mod serde {
 				},
 			)?
 			.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			#[cfg(not(feature = "distribute_binaries"))]
+			let binary = seq.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(5, &self))?;
 			Ok(BridgeRequest {
 				resources,
 				args,

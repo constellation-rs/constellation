@@ -25,9 +25,9 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
 use log::trace;
-use palaver::file::{fexecve, move_fds};
+use palaver::file::{execve, fexecve, move_fds};
 use std::{
-	collections::HashMap, ffi::{CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
+	collections::HashMap, ffi::{CStr, CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{
 		atomic::{self, AtomicUsize}, mpsc, Mutex
@@ -105,9 +105,16 @@ fn monitor_process(
 	drop(sender_); // placate clippy needless_pass_by_value
 }
 
-fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Result<Resources, ()> {
+fn recce(
+	#[cfg(feature = "distribute_binaries")] /* https://github.com/rust-lang/rustfmt/issues/3623 */
+	binary: &File, args: &[OsString], vars: &[(OsString, OsString)],
+) -> Result<Resources, ()> {
 	let (reader, writer) = nix::unistd::pipe().unwrap();
 
+	let args = args
+		.iter()
+		.map(|x| CString::new(OsStringExt::into_vec(x.clone())).unwrap())
+		.collect::<Vec<_>>();
 	let vars = iter::once((
 		CString::new("CONSTELLATION").unwrap(),
 		CString::new("fabric").unwrap(),
@@ -132,13 +139,8 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 	})
 	.collect::<Vec<_>>();
 
-	let args = args
-		.iter()
-		.map(|x| CString::new(OsStringExt::into_vec(x.clone())).unwrap())
-		.collect::<Vec<_>>();
-
-	let args_p = Vec::with_capacity(args.len() + 1);
-	let vars_p = Vec::with_capacity(vars.len() + 1);
+	let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
+	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
 	let child = if let nix::unistd::ForkResult::Parent { child, .. } =
 		nix::unistd::fork().expect("Fork failed")
@@ -158,13 +160,22 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 				assert_eq!(err, 0);
 			}
 			nix::unistd::close(reader).unwrap();
-			for fd in (0..1024).filter(|&fd| fd != binary.as_raw_fd() && fd != writer)
 			// FdIter::new().unwrap()
-			{
+			for fd in (0..1024).filter(|&fd| {
+				#[cfg(feature = "distribute_binaries")]
+				let not_binary = fd != binary.as_raw_fd();
+				#[cfg(not(feature = "distribute_binaries"))]
+				let not_binary = true;
+				not_binary && fd != writer
+			}) {
 				let _ = nix::unistd::close(fd); //.unwrap();
 			}
 			move_fds(
-				&mut [(writer, 3), (binary.as_raw_fd(), 4)],
+				&mut [
+					(writer, 3),
+					#[cfg(feature = "distribute_binaries")]
+					(binary.as_raw_fd(), 4),
+				],
 				Some(nix::fcntl::FdFlag::empty()),
 				true,
 			);
@@ -179,42 +190,16 @@ fn recce(binary: &File, args: &[OsString], vars: &[(OsString, OsString)]) -> Res
 			assert_eq!(err, nix::libc::STDOUT_FILENO);
 			let err = nix::unistd::dup(nix::libc::STDIN_FILENO).unwrap();
 			assert_eq!(err, nix::libc::STDERR_FILENO);
-			if true {
-				// nix::unistd::execve(&args[0], &args, &vars).expect("Failed to fexecve ELF");
-				use more_asserts::*;
-				use nix::libc;
-				#[inline]
-				pub fn execve(
-					path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
-					env: &[CString], mut env_p: Vec<*const libc::c_char>,
-				) -> nix::Result<()> {
-					fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
-						for arg in args.iter().map(|s| s.as_ptr()) {
-							args_p.push(arg);
-						}
-						args_p.push(std::ptr::null());
-					}
-					assert_eq!(args_p.len(), 0);
-					assert_eq!(env_p.len(), 0);
-					assert_le!(args.len() + 1, args_p.capacity());
-					assert_le!(env.len() + 1, env_p.capacity());
-					to_exec_array(args, &mut args_p);
-					to_exec_array(env, &mut env_p);
-
-					let _ = unsafe { libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr()) };
-
-					Err(nix::Error::Sys(nix::errno::Errno::last()))
-				}
-				execve(&args[0], &args, args_p, &vars, vars_p)
-					.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
-			} else {
+			if cfg!(feature = "distribute_binaries") {
 				// if is_valgrind() {
 				// 	let binary_desired_fd_ = valgrind_start_fd()-1; assert!(binary_desired_fd_ > binary_desired_fd);
 				// 	nix::unistd::dup2(binary_desired_fd, binary_desired_fd_).unwrap();
 				// 	nix::unistd::close(binary_desired_fd).unwrap();
 				// 	binary_desired_fd = binary_desired_fd_;
 				// }
-				fexecve(4, &args, &vars).expect("Failed to fexecve ELF");
+				fexecve(4, &args, &vars).expect("Failed to fexecve for recce");
+			} else {
+				execve(&args[0], &args, &vars).expect("Failed to execve for recce");
 			}
 			unreachable!()
 		})
@@ -288,9 +273,15 @@ fn manage_connection(
 		.map_err(drop)?;
 	assert_eq!(request.arg.len(), 0);
 	bincode::serialize_into(&mut request.arg, &constellation::pid()).unwrap();
-	let resources = request
-		.resources
-		.or_else(|| recce(&request.binary, &request.args, &request.vars).ok());
+	let resources = request.resources.or_else(|| {
+		recce(
+			#[cfg(feature = "distribute_binaries")]
+			&request.binary,
+			&request.args,
+			&request.vars,
+		)
+		.ok()
+	});
 	let pid: Option<Pid> = resources.and_then(|resources| {
 		let (sender_, receiver) = mpsc::sync_channel(0);
 		sender

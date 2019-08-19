@@ -14,6 +14,7 @@ documentation = "https://docs.rs/constellation-internal/0.1.2"
 edition = "2018"
 
 [features]
+distribute_binaries = []
 no_alloc = ["alloc_counter"]
 
 [dependencies]

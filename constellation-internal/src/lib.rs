@@ -30,7 +30,7 @@ use nix::{fcntl, sys::signal, unistd};
 use palaver::file::{copy, memfd_create};
 use serde::{Deserialize, Serialize};
 use std::{
-	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read}, net, ops, os::unix::{
+	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek}, net, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd}
 	}, sync::{Arc, Mutex}
 };
@@ -606,7 +606,7 @@ pub fn file_from_reader<R: Read>(
 	);
 	unistd::ftruncate(file.as_raw_fd(), len.try_into().unwrap()).unwrap();
 	copy(reader, &mut file, len)?;
-	let x = unistd::lseek(file.as_raw_fd(), 0, unistd::Whence::SeekSet).unwrap();
+	let x = file.seek(io::SeekFrom::Start(0)).unwrap();
 	assert_eq!(x, 0);
 	Ok(file)
 }

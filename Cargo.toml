@@ -25,9 +25,11 @@ azure-devops = { project = "alecmocatta/constellation", pipeline = "tests" }
 maintenance = { status = "actively-developed" }
 
 [features]
+default = ["distribute_binaries"]
+nightly = ["palaver/nightly", "relative/nightly"]
+distribute_binaries = ["constellation-internal/distribute_binaries"]
 fringe = ["serde_pipe/fringe"]
 no_alloc = ["constellation-internal/no_alloc"]
-nightly = ["palaver/nightly", "relative/nightly"]
 
 [dependencies]
 constellation-internal = { path = "constellation-internal", version = "=0.1.2" }
@@ -39,7 +41,6 @@ docopt = "1.0"
 either = "1.5"
 futures-preview = "0.3.0-alpha.18"
 log = "0.4"
-more-asserts = "0.2"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = { version = "0.2", default-features = false }
 palaver = "0.2"
@@ -70,9 +71,9 @@ sha1 = "0.6"
 systemstat = "0.1"
 
 [patch.crates-io]
-# bincode = { git = "https://github.com/alecmocatta/bincode" }
 systemstat = { git = "https://github.com/alecmocatta/systemstat" }
 serde_traitobject = { git = "https://github.com/alecmocatta/serde_traitobject", branch = "ergo-impls" }
+palaver = { git = "https://github.com/alecmocatta/palaver", branch = "fexecve-noalloc" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297

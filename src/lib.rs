@@ -39,7 +39,6 @@ use futures::{
 	future::{FutureExt, TryFutureExt}, sink::{Sink, SinkExt}, stream::{Stream, StreamExt}
 };
 use log::trace;
-use more_asserts::*;
 use nix::{
 	errno, fcntl, libc, sys::{
 		signal, socket::{self, sockopt}, stat, wait
@@ -47,12 +46,12 @@ use nix::{
 };
 use once_cell::sync::{Lazy, OnceCell};
 use palaver::{
-	env, file::{fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
+	env, file::{execve, fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -492,12 +491,13 @@ fn spawn_native(
 	_block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_native");
-	let argv: Vec<CString> = env::args_os()
+	let args: Vec<CString> = env::args_os()
 		.expect("Couldn't get argv")
 		.iter()
 		.map(|x| CString::new(OsStringExt::into_vec(x.clone())).unwrap())
-		.collect(); // argv.split('\0').map(|x|CString::new(x).unwrap()).collect();
-	let envp: Vec<(CString, CString)> = env::vars_os()
+		.collect(); // args.split('\0').map(|x|CString::new(x).unwrap()).collect();
+	let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
+	let vars: Vec<CString> = env::vars_os()
 		.expect("Couldn't get envp")
 		.iter()
 		.map(|&(ref x, ref y)| {
@@ -510,7 +510,16 @@ fn spawn_native(
 			CString::new("CONSTELLATION_RESOURCES").unwrap(),
 			CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
 		)))
-		.collect(); //envp.split('\0').map(|x|{let (a,b) = x.split_at(x.chars().position(|x|x=='=').unwrap_or_else(||panic!("invalid envp {:?}", x)));(CString::new(a).unwrap(),CString::new(&b[1..]).unwrap())}).collect();
+		.map(|(key, value)| {
+			CString::new(format!(
+				"{}={}",
+				key.to_str().unwrap(),
+				value.to_str().unwrap()
+			))
+			.unwrap()
+		})
+		.collect(); //vars.split('\0').map(|x|{let (a,b) = x.split_at(x.chars().position(|x|x=='=').unwrap_or_else(||panic!("invalid vars {:?}", x)));(CString::new(a).unwrap(),CString::new(&b[1..]).unwrap())}).collect();
+	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
 	let our_pid = pid();
 
@@ -535,19 +544,6 @@ fn spawn_native(
 		// std::env::current_exe().unwrap().into(),
 	))
 	.unwrap();
-	let envp = envp
-		.into_iter()
-		.map(|(key, value)| {
-			CString::new(format!(
-				"{}={}",
-				key.to_str().unwrap(),
-				value.to_str().unwrap()
-			))
-			.unwrap()
-		})
-		.collect::<Vec<_>>();
-	let args_p = Vec::with_capacity(argv.len() + 1);
-	let env_p = Vec::with_capacity(envp.len() + 1);
 
 	let _child_pid = match unistd::fork().expect("Fork failed") {
 		unistd::ForkResult::Child => {
@@ -575,8 +571,8 @@ fn spawn_native(
 					None
 				};
 				// FdIter uses libc::opendir which mallocs. Underlying syscall is getdents…
+				// FdIter::new().unwrap()
 				for fd in (0..1024).filter(|&fd| {
-					// FdIter::new().unwrap()
 					fd >= 3
 						&& fd != process_listener
 						&& fd != arg.as_raw_fd() && (valgrind_start_fd.is_none()
@@ -605,31 +601,8 @@ fn spawn_native(
 				}
 
 				if !valgrind::is().unwrap_or(false) {
-					#[inline]
-					pub fn execve(
-						path: &CString, args: &[CString], mut args_p: Vec<*const libc::c_char>,
-						env: &[CString], mut env_p: Vec<*const libc::c_char>,
-					) -> nix::Result<Infallible> {
-						fn to_exec_array(args: &[CString], args_p: &mut Vec<*const libc::c_char>) {
-							for arg in args.iter().map(|s| s.as_ptr()) {
-								args_p.push(arg);
-							}
-							args_p.push(std::ptr::null());
-						}
-						assert_eq!(args_p.len(), 0);
-						assert_eq!(env_p.len(), 0);
-						assert_le!(args.len() + 1, args_p.capacity());
-						assert_le!(env.len() + 1, env_p.capacity());
-						to_exec_array(args, &mut args_p);
-						to_exec_array(env, &mut env_p);
-
-						let _ =
-							unsafe { libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr()) };
-
-						Err(nix::Error::Sys(nix::errno::Errno::last()))
-					}
-					execve(&exe, &argv, args_p, &envp, env_p)
-						.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
+					execve(&exe, &args, &vars)
+						.expect("Failed to execve /proc/self/exe for spawn_native");
 				} else {
 					let fd = fcntl::open::<path::PathBuf>(
 						&fd_path(valgrind_start_fd.unwrap()).unwrap(),
@@ -646,8 +619,8 @@ fn spawn_native(
 						true,
 					)
 					.unwrap();
-					fexecve(binary_desired_fd_, &argv, &envp)
-						.expect("Failed to execve /proc/self/fd/n");
+					fexecve(binary_desired_fd_, &args, &vars)
+						.expect("Failed to fexecve /proc/self/fd/n for spawn_native");
 				}
 				unreachable!();
 			})
@@ -679,6 +652,7 @@ fn spawn_deployed(
 	bincode::serialize_into(&mut arg, &bridge_pid).unwrap();
 	bincode::serialize_into(&mut arg, &pid()).unwrap();
 	bincode::serialize_into(&mut arg, &f).unwrap();
+	#[cfg(feature = "distribute_binaries")]
 	let binary = if !valgrind::is().unwrap_or(false) {
 		env::exe().unwrap()
 	} else {
@@ -693,6 +667,8 @@ fn spawn_deployed(
 			)
 		}
 	};
+	#[cfg(not(feature = "distribute_binaries"))]
+	let binary = std::marker::PhantomData::<fs::File>;
 	let request = FabricRequest {
 		resources,
 		bind: vec![],
