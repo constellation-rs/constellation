@@ -15,6 +15,7 @@
 //!
 //! Note: --format can also be given as an env var, such as `CONSTELLATION_FORMAT=json`
 
+#![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![warn(
 	missing_copy_implementations,
 	missing_debug_implementations,
@@ -30,7 +31,7 @@
 use either::Either;
 use serde::Deserialize;
 use std::{
-	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem, net, path, process
+	collections::HashSet, env, ffi, fs, io::{self, Read, Write}, iter, mem::MaybeUninit, net, path, process
 };
 
 use constellation_internal::{
@@ -114,11 +115,15 @@ fn main() {
 		let _ = scope.spawn(|_scope| {
 			let mut stdin = io::stdin();
 			loop {
-				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
-				let n = stdin.read(&mut buf).unwrap();
+				let mut buf = MaybeUninit::<[u8; 1024]>::uninit();
+				#[cfg(feature = "nightly")]
+				unsafe {
+					stdin.initializer().initialize(&mut *buf.as_mut_ptr());
+				}
+				let n = stdin.read(unsafe { &mut *buf.as_mut_ptr() }).unwrap();
 				bincode::serialize_into(
 					&mut stream_write.write(),
-					&DeployInputEvent::Input(pid, 0, buf[..n].to_owned()),
+					&DeployInputEvent::Input(pid, 0, unsafe { &(&*buf.as_ptr())[..n] }.to_owned()),
 				)
 				.unwrap();
 				if n == 0 {

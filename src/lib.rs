@@ -51,7 +51,7 @@ use palaver::{
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -1519,14 +1519,21 @@ fn forward_fd(
 	thread::Builder::new()
 		.name(String::from("monitor-forward_fd"))
 		.spawn(move || {
-			let reader = unsafe { fs::File::from_raw_fd(reader) };
+			let mut reader = unsafe { fs::File::from_raw_fd(reader) };
 			let _ = fcntl::fcntl(reader.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
 			loop {
-				let mut buf: [u8; 1024] = unsafe { mem::uninitialized() };
-				let n = (&reader).read(&mut buf).unwrap();
+				let mut buf = MaybeUninit::<[u8; 1024]>::uninit();
+				#[cfg(feature = "nightly")]
+				unsafe {
+					reader.initializer().initialize(&mut *buf.as_mut_ptr());
+				}
+				let n = reader.read(unsafe { &mut *buf.as_mut_ptr() }).unwrap();
 				if n > 0 {
 					bridge_sender
-						.send(ProcessOutputEvent::Output(fd, buf[..n].to_owned()))
+						.send(ProcessOutputEvent::Output(
+							fd,
+							unsafe { &(&*buf.as_ptr())[..n] }.to_owned(),
+						))
 						.block()
 						.unwrap();
 				} else {

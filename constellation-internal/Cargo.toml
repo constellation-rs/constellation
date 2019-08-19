@@ -18,7 +18,7 @@ distribute_binaries = []
 no_alloc = ["alloc_counter"]
 
 [dependencies]
-aes_frast = "0.1"
+aes = "0.3"
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
 ansi_term = "0.12"
 bincode = "1.0"

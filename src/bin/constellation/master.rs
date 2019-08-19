@@ -1,5 +1,3 @@
-use bincode;
-use crossbeam;
 use either::Either;
 use serde::Serialize;
 use std::{
