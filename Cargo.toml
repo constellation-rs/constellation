@@ -43,7 +43,7 @@ futures-preview = "0.3.0-alpha.18"
 log = "0.4"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = { version = "0.2", default-features = false }
-palaver = "0.2"
+palaver = "0.2.8"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
 relative = "0.1"
@@ -71,9 +71,8 @@ sha1 = "0.6"
 systemstat = "0.1"
 
 [patch.crates-io]
-systemstat = { git = "https://github.com/alecmocatta/systemstat" }
 serde_traitobject = { git = "https://github.com/alecmocatta/serde_traitobject", branch = "ergo-impls" }
-palaver = { git = "https://github.com/alecmocatta/palaver", branch = "fexecve-noalloc" }
+systemstat = { git = "https://github.com/alecmocatta/systemstat" }
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297
