@@ -51,6 +51,7 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
+#![feature(param_attrs)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -78,14 +79,14 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
 use palaver::{
-	file::{copy_fd, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
+	file::{copy_fd, execve, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, io, net::{IpAddr, SocketAddr, TcpListener}, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
-	ffi::CString, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
+	ffi::{CStr, CString}, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
 };
 
 use constellation_internal::{
@@ -214,6 +215,12 @@ fn main() {
 				}
 				.port();
 				let process_id = Pid::new(ip, port);
+
+				let args = request
+					.args
+					.into_iter()
+					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
+					.collect::<Vec<_>>();
 				let vars = [
 					(
 						CString::new("CONSTELLATION").unwrap(),
@@ -241,16 +248,11 @@ fn main() {
 					.unwrap()
 				})
 				.collect::<Vec<_>>();
-				// let path = CString::new(OsStringExt::into_vec(args[0].clone())).unwrap();
-				let args = request
-					.args
-					.into_iter()
-					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
-					.collect::<Vec<_>>();
 
-				let args_p = Vec::with_capacity(args.len() + 1);
-				let vars_p = Vec::with_capacity(vars.len() + 1);
+				let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
+				let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
+				#[cfg(feature = "distribute_binaries")]
 				let binary = request.binary;
 				let mut binary_desired_fd =
 					BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
@@ -274,12 +276,14 @@ fn main() {
 							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
+							#[cfg(feature = "distribute_binaries")]
 							let binary = binary.into_raw_fd(); // These are dropped by parent
 							let arg = arg.into_raw_fd();
 							move_fds(
 								&mut [
 									(arg, ARG_FD),
 									(process_listener, LISTENER_FD),
+									#[cfg(feature = "distribute_binaries")]
 									(binary, binary_desired_fd),
 								],
 								Some(fcntl::FdFlag::empty()),
@@ -307,40 +311,7 @@ fn main() {
 								)
 								.unwrap();
 							}
-							if true {
-								// unistd::execve(&path, &args, &vars).expect("Failed to fexecve");
-								use more_asserts::*;
-								use nix::libc;
-								#[inline]
-								pub fn execve(
-									path: &CString, args: &[CString],
-									mut args_p: Vec<*const libc::c_char>, env: &[CString],
-									mut env_p: Vec<*const libc::c_char>,
-								) -> nix::Result<()> {
-									fn to_exec_array(
-										args: &[CString], args_p: &mut Vec<*const libc::c_char>,
-									) {
-										for arg in args.iter().map(|s| s.as_ptr()) {
-											args_p.push(arg);
-										}
-										args_p.push(std::ptr::null());
-									}
-									assert_eq!(args_p.len(), 0);
-									assert_eq!(env_p.len(), 0);
-									assert_le!(args.len() + 1, args_p.capacity());
-									assert_le!(env.len() + 1, env_p.capacity());
-									to_exec_array(args, &mut args_p);
-									to_exec_array(env, &mut env_p);
-
-									let _ = unsafe {
-										libc::execve(path.as_ptr(), args_p.as_ptr(), env_p.as_ptr())
-									};
-
-									Err(nix::Error::Sys(nix::errno::Errno::last()))
-								}
-								execve(&args[0], &args, args_p, &vars, vars_p)
-									.expect("Failed to execve /proc/self/exe"); // or fexecve but on linux that uses proc also
-							} else {
+							if cfg!(feature = "distribute_binaries") {
 								if valgrind::is().unwrap_or(false) {
 									let binary_desired_fd_ = valgrind::start_fd() - 1;
 									assert!(binary_desired_fd_ > binary_desired_fd);
@@ -355,7 +326,10 @@ fn main() {
 									binary_desired_fd = binary_desired_fd_;
 								}
 								fexecve(binary_desired_fd, &args, &vars)
-									.expect("Failed to fexecve");
+									.expect("Failed to fexecve for fabric");
+							} else {
+								execve(&args[0], &args, &vars)
+									.expect("Failed to execve for fabric");
 							}
 							unreachable!()
 						})

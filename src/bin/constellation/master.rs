@@ -3,7 +3,7 @@ use crossbeam;
 use either::Either;
 use serde::Serialize;
 use std::{
-	collections::{HashMap, VecDeque}, env, ffi::OsString, io::Read, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{
@@ -88,9 +88,15 @@ pub fn run(
 			let sender = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(move || {
-					let mut file_in = palaver::env::exe().unwrap();
-					let mut binary = Vec::new();
-					let _ = file_in.read_to_end(&mut binary).unwrap();
+					#[cfg(feature = "distribute_binaries")]
+					let binary = {
+						let mut binary = Vec::new();
+						let mut file_in = palaver::env::exe().unwrap();
+						let _ = std::io::Read::read_to_end(&mut file_in, &mut binary).unwrap();
+						binary
+					};
+					#[cfg(not(feature = "distribute_binaries"))]
+					let binary = std::marker::PhantomData;
 					let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
 					sender
 						.send(Either::Left((
