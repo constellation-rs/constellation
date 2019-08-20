@@ -66,12 +66,11 @@ hex = "0.3"
 itertools = "0.8"
 multiset = "0.0"
 regex = "1.0"
-serde_traitobject = "0.1"
+serde_traitobject = "0.1.5"
 sha1 = "0.6"
 systemstat = "0.1"
 
 [patch.crates-io]
-serde_traitobject = { git = "https://github.com/alecmocatta/serde_traitobject", branch = "ergo-impls" }
 systemstat = { git = "https://github.com/alecmocatta/systemstat" }
 
 # Hopefully we won't need to exhaustively list in future:
