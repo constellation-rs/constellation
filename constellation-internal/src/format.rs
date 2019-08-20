@@ -1,4 +1,5 @@
 use super::{DeployOutputEvent, Pid, ToHex};
+use aes::{block_cipher_trait::BlockCipher, Aes128};
 use rand::{self, Rng, SeedableRng};
 use std::{
 	borrow, fmt, fs, io::{self, Write}, os::{self, unix::io::IntoRawFd}
@@ -281,23 +282,15 @@ pub(crate) fn pretty_pid(
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub(crate) fn encrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	use aes::{
-		block_cipher_trait::{generic_array::GenericArray, BlockCipher}, Aes128
-	};
-
-	let key = GenericArray::from_slice(&key);
-	let mut block = GenericArray::clone_from_slice(&input);
+	let key = key.into();
+	let mut block = input.into();
 	let cipher = Aes128::new(&key);
 	cipher.encrypt_block(&mut block);
 	block.into()
 }
 pub(crate) fn decrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	use aes::{
-		block_cipher_trait::{generic_array::GenericArray, BlockCipher}, Aes128
-	};
-
-	let key = GenericArray::from_slice(&key);
-	let mut block = GenericArray::clone_from_slice(&input);
+	let key = key.into();
+	let mut block = input.into();
 	let cipher = Aes128::new(&key);
 	cipher.decrypt_block(&mut block);
 	block.into()
