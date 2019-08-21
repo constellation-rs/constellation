@@ -1,9 +1,8 @@
 use super::{DeployOutputEvent, Pid, ToHex};
-use aes_frast;
-use ansi_term;
+use aes::{block_cipher_trait::BlockCipher, Aes128};
 use rand::{self, Rng, SeedableRng};
 use std::{
-	borrow, fmt, fs, io::{self, Write}, mem, os::{self, unix::io::IntoRawFd}
+	borrow, fmt, fs, io::{self, Write}, os::{self, unix::io::IntoRawFd}
 };
 
 const STDOUT: os::unix::io::RawFd = 1;
@@ -283,16 +282,16 @@ pub(crate) fn pretty_pid(
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub(crate) fn encrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	let mut output: [u8; 16] = unsafe { mem::uninitialized() };
-	let mut round_keys: [u32; 44] = unsafe { mem::uninitialized() };
-	aes_frast::aes_core::setkey_enc_k128(&key, &mut round_keys);
-	aes_frast::aes_core::block_enc_k128(&input, &mut output, &round_keys);
-	output
+	let key = key.into();
+	let mut block = input.into();
+	let cipher = Aes128::new(&key);
+	cipher.encrypt_block(&mut block);
+	block.into()
 }
 pub(crate) fn decrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	let mut output: [u8; 16] = unsafe { mem::uninitialized() };
-	let mut round_keys: [u32; 44] = unsafe { mem::uninitialized() };
-	aes_frast::aes_core::setkey_dec_k128(&key, &mut round_keys);
-	aes_frast::aes_core::block_dec_k128(&input, &mut output, &round_keys);
-	output
+	let key = key.into();
+	let mut block = input.into();
+	let cipher = Aes128::new(&key);
+	cipher.decrypt_block(&mut block);
+	block.into()
 }
