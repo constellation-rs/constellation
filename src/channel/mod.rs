@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{mpsc, Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread, time::{Duration, Instant}
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread
 };
 use tcp_typed::{Connection, Listener};
 
@@ -134,50 +134,86 @@ impl Reactor {
 						let inner = &inner.as_ref().unwrap().inner;
 						inner.valid() && !inner.closed()
 					}) {
-					let mut sender = None;
-					let mut catcher = None;
-					if let Some(ref sockets) = done {
-						struct Ptr<T: ?Sized>(T);
-						unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
-						unsafe impl<T: ?Sized> Sync for Ptr<T> {}
-						let (sender_, receiver) = mpsc::sync_channel(0);
-						sender = Some(sender_);
-						let sockets: Ptr<*const _> = Ptr(&**sockets);
-						catcher = Some(thread::spawn(move || {
-							use constellation_internal::PidInternal;
-							use std::io::Write;
-							let mut now = Instant::now();
-							let until = now + Duration::new(60, 0);
-							while now < until {
-								#[allow(clippy::match_same_arms)]
-								match receiver.recv_timeout(until - now) {
-									Ok(()) => return,
-									Err(mpsc::RecvTimeoutError::Timeout) => (),
-									Err(mpsc::RecvTimeoutError::Disconnected) => (), // panic!("omg")
-								}
-								now = Instant::now();
-							}
-							std::io::stderr()
-								.write_all(
-									format!(
-										"\n{}: {}: {}: sockets: {:?}\n",
-										super::pid(),
-										nix::unistd::getpid(),
-										super::pid().addr(),
-										unsafe { &*sockets.0 }
-									)
-									.as_bytes(),
-								)
-								.unwrap(); // called after rust runtime exited, not sure what trace does
-						}));
-					}
+					// use std::{sync::mpsc, time::{Duration, Instant}};
+					// let mut sender = None;
+					// let mut catcher = None;
+					// if let Some(ref sockets) = done {
+					// 	struct Ptr<T: ?Sized>(T);
+					// 	unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
+					// 	unsafe impl<T: ?Sized> Sync for Ptr<T> {}
+					// 	let (sender_, receiver) = mpsc::sync_channel(0);
+					// 	sender = Some(sender_);
+					// 	let sockets: Ptr<*const _> = Ptr(&**sockets);
+					// 	catcher = Some(thread::spawn(move || {
+					// 		use constellation_internal::PidInternal;
+					// 		use std::io::Write;
+					// 		let mut now = Instant::now();
+					// 		let until = now + Duration::new(10, 0);
+					// 		while now < until {
+					// 			#[allow(clippy::match_same_arms)]
+					// 			match receiver.recv_timeout(until - now) {
+					// 				Ok(()) => return,
+					// 				Err(mpsc::RecvTimeoutError::Timeout) => (),
+					// 				Err(mpsc::RecvTimeoutError::Disconnected) => (), // panic!("omg")
+					// 			}
+					// 			now = Instant::now();
+					// 		}
+					// 		std::io::stderr()
+					// 			.write_all(
+					// 				format!(
+					// 					"\n{}: {}: {}: sockets is_done: {:#?}\n",
+					// 					super::pid(),
+					// 					nix::unistd::getpid(),
+					// 					super::pid().addr(),
+					// 					unsafe { &*sockets.0 }
+					// 				)
+					// 				.as_bytes(),
+					// 			)
+					// 			.unwrap(); // called after rust runtime exited, not sure what trace does
+					// 	}));
+					// } else {
+					// 	let sockets = &*sockets.read().unwrap();
+					// 	struct Ptr<T: ?Sized>(T);
+					// 	unsafe impl<T: ?Sized> marker::Send for Ptr<T> {}
+					// 	unsafe impl<T: ?Sized> Sync for Ptr<T> {}
+					// 	let (sender_, receiver) = mpsc::sync_channel(0);
+					// 	sender = Some(sender_);
+					// 	let sockets: Ptr<*const _> = Ptr(&*sockets);
+					// 	catcher = Some(thread::spawn(move || {
+					// 		use constellation_internal::PidInternal;
+					// 		use std::io::Write;
+					// 		let mut now = Instant::now();
+					// 		let until = now + Duration::new(10, 0);
+					// 		while now < until {
+					// 			#[allow(clippy::match_same_arms)]
+					// 			match receiver.recv_timeout(until - now) {
+					// 				Ok(()) => return,
+					// 				Err(mpsc::RecvTimeoutError::Timeout) => (),
+					// 				Err(mpsc::RecvTimeoutError::Disconnected) => (), // panic!("omg")
+					// 			}
+					// 			now = Instant::now();
+					// 		}
+					// 		std::io::stderr()
+					// 			.write_all(
+					// 				format!(
+					// 					"\n{}: {}: {}: sockets !is_done: {:#?}\n",
+					// 					super::pid(),
+					// 					nix::unistd::getpid(),
+					// 					super::pid().addr(),
+					// 					unsafe { &*sockets.0 }
+					// 				)
+					// 				.as_bytes(),
+					// 			)
+					// 			.unwrap(); // called after rust runtime exited, not sure what trace does
+					// 	}));
+					// }
 					#[allow(clippy::cognitive_complexity)]
 					notifier.wait(|_events, data| {
-						if let Some(sender) = sender.take() {
-							let _ = sender.send(());
-							drop(sender);
-							catcher.take().unwrap().join().unwrap();
-						}
+						// if let Some(sender) = sender.take() {
+						// 	let _ = sender.send(());
+						// 	drop(sender);
+						// 	catcher.take().unwrap().join().unwrap();
+						// }
 						if data == Key(ptr::null()) {
 							for (remote, connection) in
 								listener.poll(&notifier.context(Key(ptr::null())), &mut accept_hook)
