@@ -365,12 +365,6 @@ fn main() {
 
 	let (mut succeeded, mut failed) = (0, 0);
 	for (src, bin) in products {
-		// if src != Path::new("tests/s.rs") {
-		// 	continue;
-		// }
-		// if src != Path::new("tests/x.rs") {
-		// 	continue;
-		// }
 		println!("{}", src.display());
 		let mut file: Result<OutputTest, _> = serde_json::from_str(
 			&BufReader::new(File::open(src).unwrap())
@@ -430,10 +424,21 @@ fn main() {
 	println!("killing");
 	fabric.kill().unwrap();
 	let _ = fabric.wait().unwrap();
-	let _stderr_empty = fabric_stderr.join().unwrap();
-	// assert!(stderr_empty);
-	let _stdout_empty = fabric_stdout.join().unwrap();
-	// assert!(stdout_empty);
+	#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+	{
+		let _stderr_empty = fabric_stderr.join().unwrap();
+		// assert!(stderr_empty);
+		let _stdout_empty = fabric_stdout.join().unwrap();
+		// assert!(stdout_empty);
+	}
+	#[cfg(any(target_os = "macos", target_os = "ios"))]
+	{
+		let _ = (fabric_stderr, fabric_stdout);
+		let _ = process::Command::new("killall")
+			.arg("constellation")
+			.output()
+			.unwrap();
+	}
 
 	println!(
 		"{}/{} succeeded in {:?}",

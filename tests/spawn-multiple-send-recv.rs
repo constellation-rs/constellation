@@ -154,8 +154,6 @@
 //=   "exit": "Success"
 //= }
 
-#![feature(async_await)]
-
 use constellation::*;
 use serde_closure::FnOnce;
 

@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use constellation::*;
 use futures::future::join;
 use serde_closure::FnOnce;

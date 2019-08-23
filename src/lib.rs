@@ -11,7 +11,6 @@
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.2")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
-#![feature(async_await)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
