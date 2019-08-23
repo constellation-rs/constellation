@@ -11,6 +11,7 @@
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.2")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
+#![feature(cfg_doctest)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -30,6 +31,9 @@
 	clippy::new_ret_no_self,
 	clippy::type_complexity
 )]
+
+#[cfg(doctest)]
+doc_comment::doctest!("../README.md");
 
 mod channel;
 

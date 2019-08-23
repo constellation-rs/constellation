@@ -188,7 +188,7 @@ fn main() {
     println!("Hello, world!");
 }
 ```
-```
+```text
 $ cargo run
 3fecd01:
     Hello, world!
@@ -229,7 +229,7 @@ mem = "100 GiB"
 cpu = 16
 ```
 Your laptop:
-```
+```text
 cargo install constellation-rs
 cargo deploy 10.0.0.1:8888 --release
 833d3de:

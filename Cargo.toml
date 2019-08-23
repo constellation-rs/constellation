@@ -61,7 +61,7 @@ nix = "0.15"
 winapi = "0.3"
 
 [dev-dependencies]
-escargot = "0.5"
+doc-comment = "0.3"
 hex = "0.3"
 itertools = "0.8"
 multiset = "0.0"
@@ -82,82 +82,109 @@ harness = false
 
 [[test]]
 name = "abort-sleep"
+test = false
 harness = false
 [[test]]
 name = "abort"
+test = false
 harness = false
 [[test]]
 name = "failure-sleep"
+test = false
 harness = false
 [[test]]
 name = "failure"
+test = false
 harness = false
 [[test]]
 name = "message-alltoall-sleep"
+test = false
 harness = false
 [[test]]
 name = "output-data"
+test = false
 harness = false
 [[test]]
 name = "resources"
+test = false
 harness = false
 [[test]]
 name = "sender-duplicate"
+test = false
 harness = false
 [[test]]
 name = "sender-self"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-futures-send-recv-stream"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-send-recv-recv-send-sleep"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-send-recv-recv-send"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-send-recv-stream"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-send-recv"
+test = false
 harness = false
 [[test]]
 name = "spawn-multiple-sleep"
+test = false
 harness = false
 [[test]]
 name = "spawn-receiver-sender"
+test = false
 harness = false
 [[test]]
 name = "spawn-receiver"
+test = false
 harness = false
 [[test]]
 name = "spawn-recv"
+test = false
 harness = false
 [[test]]
 name = "spawn-send-recv"
+test = false
 harness = false
 [[test]]
 name = "spawn-send"
+test = false
 harness = false
 [[test]]
 name = "spawn-sender-receiver"
+test = false
 harness = false
 [[test]]
 name = "spawn-sender"
+test = false
 harness = false
 [[test]]
 name = "spawn"
+test = false
 harness = false
 [[test]]
 name = "success-return-sleep"
+test = false
 harness = false
 [[test]]
 name = "success-return"
+test = false
 harness = false
 [[test]]
 name = "success-sleep"
+test = false
 harness = false
 [[test]]
 name = "success"
+test = false
 harness = false

@@ -26,7 +26,7 @@ mod ext;
 use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, fmt, fs::File, hash, io::{self, BufRead, BufReader}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
+	collections::HashMap, env, ffi::OsStr, fmt, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
@@ -235,17 +235,58 @@ fn main() {
 		.unwrap();
 	let current_dir = env::current_dir().unwrap();
 	let mut products = HashMap::new();
-	let mut args = env::args().skip(1);
-	let iterations = args
-		.next()
-		.and_then(|arg| arg.parse::<usize>().ok())
+	let iterations: usize = env::var("CONSTELLATION_TEST_ITERATIONS")
+		.map(|x| x.parse().unwrap())
 		.unwrap_or(10);
+	let tests = fs::read_dir(TESTS).unwrap().filter_map(|path| {
+		let path = path.ok()?.path();
+		if path.extension()? == "rs" {
+			Some(String::from(path.file_stem()?.to_str()?))
+		} else {
+			None
+		}
+	});
+	let target_dir = Path::new(env!("OUT_DIR"))
+		.ancestors()
+		.nth(4)
+		.and_then(Path::file_name);
+	debug_assert!(
+		target_dir.unwrap() == "target" || target_dir.unwrap() == env!("TARGET"),
+		"{:?}",
+		target_dir
+	);
+	// This is to avoid building twice, once with unset and once with set --target
+	let target = if target_dir != Some(OsStr::new("target")) {
+		Some(format!("--target={}", env!("TARGET")))
+	} else {
+		None
+	};
+	let tests = tests.flat_map(|test| iter::once(format!("--test={}", test)));
+	let profile = match env!("PROFILE") {
+		"debug" => None,
+		"release" => Some(String::from("--release")),
+		_ => unreachable!(),
+	};
+	let features = format!("--features={}", env!("FEATURES"));
 	let args = iter::once(String::from("build"))
-		.chain(iter::once(String::from("--tests")))
+		.chain(tests)
 		.chain(iter::once(String::from("--message-format=json")))
-		.chain(iter::once(format!("--target={}", escargot::CURRENT_TARGET)))
-		.chain(args)
+		.chain(target)
+		.chain(iter::once(String::from("--no-default-features")))
+		.chain(iter::once(features))
+		.chain(profile)
 		.collect::<Vec<_>>();
+	println!(
+		"Building with: cargo {}",
+		args.iter()
+			.map(|arg| if arg.contains('"') {
+				format!("\"{}\"", arg)
+			} else {
+				arg.to_owned()
+			})
+			.collect::<Vec<_>>()
+			.join(" ")
+	);
 	let output = process::Command::new("cargo")
 		.args(&args)
 		.stderr(process::Stdio::inherit())
