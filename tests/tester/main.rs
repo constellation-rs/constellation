@@ -248,24 +248,33 @@ fn main() {
 	});
 	let target_dir = Path::new(env!("OUT_DIR"))
 		.ancestors()
-		.nth(5)
+		.nth(4)
 		.and_then(Path::file_name);
-	debug_assert!(target_dir.unwrap() == "target" || target_dir.unwrap() == env!("TARGET"));
+	debug_assert!(
+		target_dir.unwrap() == "target" || target_dir.unwrap() == env!("TARGET"),
+		"{:?}",
+		target_dir
+	);
+	// This is to avoid building twice, once with unset and once with set --target
+	let target = if target_dir != Some(OsStr::new("target")) {
+		Some(format!("--target={}", env!("TARGET")))
+	} else {
+		None
+	};
+	let tests = tests.flat_map(|test| iter::once(format!("--test={}", test)));
+	let profile = match env!("PROFILE") {
+		"debug" => None,
+		"release" => Some(String::from("--release")),
+		_ => unreachable!(),
+	};
+	let features = format!("--features={}", env!("FEATURES"));
 	let args = iter::once(String::from("build"))
-		.chain(tests.flat_map(|test| iter::once(format!("--test={}", test))))
+		.chain(tests)
 		.chain(iter::once(String::from("--message-format=json")))
-		.chain(if target_dir == Some(OsStr::new("target")) {
-			None
-		} else {
-			Some(format!("--target={}", env!("TARGET")))
-		})
+		.chain(target)
 		.chain(iter::once(String::from("--no-default-features")))
-		.chain(iter::once(format!("--features={}", env!("FEATURES"))))
-		.chain(match env!("PROFILE") {
-			"debug" => None,
-			"release" => Some(String::from("--release")),
-			_ => unreachable!(),
-		})
+		.chain(iter::once(features))
+		.chain(profile)
 		.collect::<Vec<_>>();
 	println!(
 		"Building with: cargo {}",
