@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.rs/constellation-rs/0.1.2">Docs</a>
+    <a href="https://docs.rs/constellation-rs/0.1.3">Docs</a>
 </p>
 
 Constellation is a framework for Rust (nightly) that aides in the writing, debugging and deployment of distributed programs. It draws heavily from [Erlang/OTP](https://en.wikipedia.org/wiki/Erlang_(programming_language)), [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface), and [CSP](https://en.wikipedia.org/wiki/Communicating_sequential_processes); and leverages the Rust ecosystem where it can including [serde](https://serde.rs/) + [bincode](https://github.com/servo/bincode) for network serialization, and [mio](https://github.com/tokio-rs/mio) and [futures-rs](https://github.com/rust-lang-nursery/futures-rs) for asynchronous channels over TCP.
@@ -27,13 +27,13 @@ For leveraging Constellation directly, read on.
 
 ## Constellation framework
 
-* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.2/constellation/fn.init.html) at the beginning of your program.
-* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.2/constellation/fn.spawn.html) new processes, which run `closure`.
+* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.3/constellation/fn.init.html) at the beginning of your program.
+* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.3/constellation/fn.spawn.html) new processes, which run `closure`.
 * `spawn(closure)` returns the Pid of the new process.
-* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.2/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.2/constellation/struct.Receiver.html#method.new).
-* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.1.2/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.1.2/constellation/struct.Receiver.html#method.recv).
+* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.3/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.3/constellation/struct.Receiver.html#method.new).
+* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.1.3/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.1.3/constellation/struct.Receiver.html#method.recv).
 * [futures-rs](https://github.com/rust-lang-nursery/futures-rs) provides useful functions and adapters including `select()` and `join()` for working with channels.
-* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.1.2/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
+* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.1.3/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
 * For more information on asynchronous programming in Rust check out the [Async Book](https://rust-lang.github.io/async-book/index.html)!
 
 Here's a simple example recursively spawning processes to distribute the task of finding Fibonacci numbers:
@@ -173,7 +173,7 @@ It listens on a configurable address for binaries with resource requirements to 
 Rather than being invoked by a fork inside the user process, it is started automatically at constellation master-initialisation time. It listens on a configurable address for `cargo deploy`ments, at which point it runs the binary with special env vars that trigger `init()` to print resource requirements of the initial process and exit, before sending the binary with the determined resource requirements to the **constellation master**. Upon being successfully allocated, it is executed by a **constellation** instance. Inside `init()`, it connects back to the **bridge**, which dutifully forwards its output to `cargo deploy`.
 
 #### `cargo deploy`
-This is a command [added to](https://doc.rust-lang.org/book/second-edition/ch14-05-extending-cargo.html#extending-cargo-with-custom-commands) cargo that under the hood invokes `cargo run`, except that rather than the resulting binary being run locally, it is sent off to the **bridge**. The **bridge** then sends back any output, which is output formatted at the terminal.
+This is a command [added to](https://doc.rust-lang.org/book/ch14-05-extending-cargo.html) cargo that under the hood invokes `cargo run`, except that rather than the resulting binary being run locally, it is sent off to the **bridge**. The **bridge** then sends back any output, which is output formatted at the terminal.
 
 ## How to use it
 ```toml
@@ -198,7 +198,7 @@ $ cargo run
 Machine 2:
 ```bash
 cargo install constellation-rs
-constellation 10.0.0.2:9999
+constellation 10.0.0.2:9999 # local address to bind to
 ```
 Machine 3:
 ```bash
@@ -208,15 +208,15 @@ constellation 10.0.0.3:9999
 Machine 1:
 ```bash
 cargo install constellation-rs
-constellation 10.0.0.1:9999 nodex.toml
+constellation 10.0.0.1:9999 nodes.toml
 ```
 nodes.toml:
 ```toml
 [[nodes]]
-fabric_addr = "10.0.0.1:9999"
-bridge_bind = "10.0.0.1:8888"
-mem = "100 GiB"
-cpu = 16
+fabric_addr = "10.0.0.1:9999" # local address to bind to
+bridge_bind = "10.0.0.1:8888" # local address of the bridge to bind to
+mem = "100 GiB"               # resource capacity of the node
+cpu = 16                      # number of logical cores
 
 [[nodes]]
 fabric_addr = "10.0.0.2:9999"
@@ -231,7 +231,7 @@ cpu = 16
 Your laptop:
 ```text
 cargo install constellation-rs
-cargo deploy 10.0.0.1:8888 --release
+cargo deploy 10.0.0.1:8888 --release # address of the bridge
 833d3de:
     Hello, world!
     exited
@@ -248,7 +248,7 @@ Please file an issue if you experience any other requirements.
 
 ## API
 
-[see Rust doc](https://docs.rs/constellation-rs/0.1.2)
+[see Rust doc](https://docs.rs/constellation-rs/0.1.3)
 
 ## Testing
 
