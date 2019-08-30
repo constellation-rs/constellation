@@ -16,7 +16,7 @@ use super::Fd;
 pub use self::{inner::*, inner_states::*};
 pub use tcp_typed::{socket_forwarder, SocketForwardee, SocketForwarder};
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct Key(*const ());
 /// Because `*const ()`. Pointers aren't really not Send+Sync, it's more of a lint.
 unsafe impl marker::Send for Key {}
