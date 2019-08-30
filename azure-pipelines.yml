@@ -1,8 +1,5 @@
 trigger: ["master"]
-pr:
-  autoCancel: false
-  branches:
-    include: ["master"]
+pr: ["master"]
 
 resources:
   repositories:
