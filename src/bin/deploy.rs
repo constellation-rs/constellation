@@ -35,7 +35,7 @@ use std::{
 };
 
 use constellation_internal::{
-	map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport
+	abort_on_unwind_1, map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport
 };
 
 const USAGE: &str = "Run a binary on a constellation cluster.
@@ -112,7 +112,7 @@ fn main() {
 		panic!("Deploy failed due to not being able to allocate process to any of the nodes or constellation::init() not being called immediately inside main()")
 	}); // TODO get resources from bridge
 	crossbeam::scope(|scope| {
-		let _ = scope.spawn(|_scope| {
+		let _ = scope.spawn(abort_on_unwind_1(|_scope| {
 			let mut stdin = io::stdin();
 			loop {
 				let mut buf = MaybeUninit::<[u8; 1024]>::uninit();
@@ -130,7 +130,7 @@ fn main() {
 					break;
 				}
 			}
-		});
+		}));
 		let mut exit_code = ExitStatus::Success;
 		let mut ref_count = 1;
 		let mut pids = HashSet::new();

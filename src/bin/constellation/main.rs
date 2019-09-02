@@ -90,7 +90,7 @@ use std::{
 };
 
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
+	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -151,7 +151,7 @@ fn main() {
 				.set_port(fabric.local_addr().unwrap().port());
 			let _ = thread::Builder::new()
 				.name(String::from("master"))
-				.spawn(move || {
+				.spawn(abort_on_unwind(move || {
 					master::run(
 						SocketAddr::new(listen.ip(), master_addr.port()),
 						Pid::new(master_addr.ip(), master_addr.port()),
@@ -167,7 +167,7 @@ fn main() {
 							)
 							.collect::<HashMap<_, _>>(),
 					); // TODO: error on clash
-				})
+				}))
 				.unwrap();
 			(listen.ip(), fabric)
 		}
@@ -352,7 +352,7 @@ fn main() {
 				{
 					break;
 				}
-				let _ = scope.spawn(move |_scope| {
+				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
 					loop {
 						match wait::waitpid(child, None) {
 							Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
@@ -380,7 +380,7 @@ fn main() {
 						&Either::Right::<Pid, Pid>(process_id),
 					)
 					.map_err(map_bincode_err);
-				});
+				}));
 			}
 			for (&_job, &pid) in pending.read().unwrap().iter() {
 				// TODO: this is racey

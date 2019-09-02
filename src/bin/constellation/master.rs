@@ -5,7 +5,7 @@ use std::{
 };
 
 use constellation_internal::{
-	map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources
+	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources
 };
 
 #[derive(Debug)]
@@ -60,19 +60,19 @@ pub fn run(
 			let stream = TcpStream::connect(&fabric).unwrap();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
-				.spawn(move || {
+				.spawn(abort_on_unwind(move || {
 					let (receiver, sender) = (receiver_a, sender1);
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
 					let _ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
 					crossbeam::scope(|scope| {
-						let _ = scope.spawn(|_spawn| {
+						let _ = scope.spawn(abort_on_unwind_1(|_spawn| {
 							for request in receiver {
 								bincode::serialize_into(&mut stream_write.write(), &request)
 									.unwrap();
 							}
-						});
+						}));
 						while let Ok(done) =
 							bincode::deserialize_from::<_, Either<Pid, Pid>>(&mut stream_read)
 								.map_err(map_bincode_err)
@@ -81,11 +81,11 @@ pub fn run(
 						}
 					})
 					.unwrap();
-				})
+				}))
 				.unwrap();
 			let sender = sender.clone();
 			let _ = thread::Builder::new()
-				.spawn(move || {
+				.spawn(abort_on_unwind(move || {
 					#[cfg(feature = "distribute_binaries")]
 					let binary = {
 						let mut binary = Vec::new();
@@ -115,7 +115,7 @@ pub fn run(
 						.unwrap();
 					let _pid: Pid = receiver.recv().unwrap().unwrap();
 					// println!("bridge at {:?}", pid);
-				})
+				}))
 				.unwrap();
 			(sender_a, node, fabric.ip(), VecDeque::new())
 		})
@@ -123,13 +123,13 @@ pub fn run(
 
 	let listener = TcpListener::bind(bind_addr).unwrap();
 	let _ = thread::Builder::new()
-		.spawn(move || {
+		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
 				// println!("accepted");
 				let stream = stream.unwrap();
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
-					.spawn(move || {
+					.spawn(abort_on_unwind(move || {
 						let (mut stream_read, mut stream_write) =
 							(BufferedStream::new(&stream), &stream);
 						while let Ok(request) =
@@ -144,10 +144,10 @@ pub fn run(
 								break;
 							}
 						}
-					})
+					}))
 					.unwrap();
 			}
-		})
+		}))
 		.unwrap();
 
 	let mut processes: HashMap<(usize, Pid), Resources> = HashMap::new();
