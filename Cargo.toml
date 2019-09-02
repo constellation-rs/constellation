@@ -42,7 +42,7 @@ either = "1.5"
 futures-preview = "0.3.0-alpha.18"
 log = "0.4"
 notifier = { version = "0.1", features = ["tcp_typed"] }
-once_cell = { version = "0.2", default-features = false }
+once_cell = { version = "1.0", default-features = false }
 palaver = "0.2.8"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
