@@ -11,6 +11,8 @@ use std::{
 };
 use tcp_typed::{Connection, Listener};
 
+use constellation_internal::abort_on_unwind;
+
 use super::Fd;
 
 pub use self::{inner::*, inner_states::*};
@@ -114,7 +116,7 @@ impl Reactor {
 		let mut triggeree = Some(triggeree);
 		let tcp_thread = thread::Builder::new()
 			.name(String::from("tcp-thread"))
-			.spawn(move || {
+			.spawn(abort_on_unwind(move || {
 				let context = context();
 				let context = context.borrow();
 				let mut listener = context.listener.try_write().unwrap();
@@ -418,7 +420,7 @@ impl Reactor {
 					});
 				}
 				// trace!("/close"); // called after rust runtime exited, not sure what trace does
-			})
+			}))
 			.unwrap();
 		Handle {
 			triggerer: Some(triggerer),

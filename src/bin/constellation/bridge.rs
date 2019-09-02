@@ -36,7 +36,7 @@ use std::{
 
 use constellation::FutureExt1;
 use constellation_internal::{
-	forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -87,7 +87,9 @@ fn monitor_process(
 					let sender_ = sender_.clone();
 					let _ = thread::Builder::new()
 						.name(String::from("d"))
-						.spawn(move || monitor_process(new_pid, sender_, receiver1))
+						.spawn(abort_on_unwind(move || {
+							monitor_process(new_pid, sender_, receiver1)
+						}))
 						.unwrap();
 				}
 				ProcessOutputEvent::Output(fd, output) => {
@@ -207,10 +209,10 @@ fn recce(
 	nix::unistd::close(writer).unwrap();
 	// let _ = thread::Builder::new()
 	// 	.name(String::from(""))
-	// 	.spawn(move || {
+	// 	.spawn(abort_on_unwind(move || {
 	// 		thread::sleep(RECCE_TIMEOUT);
 	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-	// 	})
+	// 	}))
 	// 	.unwrap();
 	// TODO: do this without waitpid/kill race
 	loop {
@@ -307,12 +309,14 @@ fn manage_connection(
 		let (sender1, receiver1) = futures::channel::mpsc::channel(0);
 		let _ = thread::Builder::new()
 			.name(String::from("c"))
-			.spawn(move || monitor_process(pid, sender, receiver1))
+			.spawn(abort_on_unwind(move || {
+				monitor_process(pid, sender, receiver1)
+			}))
 			.unwrap();
 		let hashmap = &Mutex::new(HashMap::new());
 		let _ = hashmap.lock().unwrap().insert(pid, sender1);
 		crossbeam::scope(|scope| {
-			let _ = scope.spawn(move |_scope| {
+			let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
 				loop {
 					let event: Result<DeployInputEvent, _> =
 						bincode::deserialize_from(&mut stream_read).map_err(map_bincode_err);
@@ -340,7 +344,7 @@ fn manage_connection(
 				for (_, process) in x.iter_mut() {
 					let _unchecked_error = process.send(InputEventInt::Kill).block();
 				}
-			});
+			}));
 			for event in receiver.iter() {
 				let event = match event {
 					OutputEventInt::Spawn(pid, new_pid, sender) => {
@@ -387,16 +391,18 @@ pub fn main() {
 	let (sender, receiver) = mpsc::sync_channel(0);
 	let _ = thread::Builder::new()
 		.name(String::from("a"))
-		.spawn(move || {
+		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
 				trace!("BRIDGE: accepted");
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
 					.name(String::from("b"))
-					.spawn(|| manage_connection(stream.unwrap(), sender))
+					.spawn(abort_on_unwind(|| {
+						manage_connection(stream.unwrap(), sender)
+					}))
 					.unwrap();
 			}
-		})
+		}))
 		.unwrap();
 
 	for (request, sender) in receiver {

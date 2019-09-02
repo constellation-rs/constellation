@@ -60,7 +60,7 @@ use std::{
 };
 
 use constellation_internal::{
-	file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	abort_on_unwind, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 pub use channel::ChannelError;
@@ -898,7 +898,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 
 		let x = thread::Builder::new()
 			.name(String::from("bridge-waitpid"))
-			.spawn(|| {
+			.spawn(abort_on_unwind(|| {
 				loop {
 					match wait::waitpid(None, None) {
 						Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
@@ -910,7 +910,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 						}
 					}
 				}
-			})
+			}))
 			.unwrap();
 		let mut exit_code = ExitStatus::Success;
 		let (stdout, stderr) = (io::stdout(), io::stderr());
@@ -1109,7 +1109,7 @@ fn monitor_process(
 		let mut bridge_sender2 = bridge_outbound_sender.clone();
 		let x3 = thread::Builder::new()
 			.name(String::from("monitor-monitorfd-to-channel"))
-			.spawn(move || {
+			.spawn(abort_on_unwind(move || {
 				let file = unsafe { fs::File::from_raw_fd(monitor_reader) };
 				loop {
 					let event: Result<ProcessOutputEvent, _> =
@@ -1121,12 +1121,12 @@ fn monitor_process(
 					bridge_sender2.send(event).block().unwrap();
 				}
 				let _ = file.into_raw_fd();
-			})
+			}))
 			.unwrap();
 
 		let x = thread::Builder::new()
 			.name(String::from("monitor-channel-to-bridge"))
-			.spawn(move || {
+			.spawn(abort_on_unwind(move || {
 				loop {
 					let selected = match futures::future::select(
 						bridge_outbound_receiver.next(),
@@ -1168,7 +1168,7 @@ fn monitor_process(
 						}
 					}
 				}
-			})
+			}))
 			.unwrap();
 		unistd::close(writer).unwrap();
 
@@ -1284,16 +1284,6 @@ fn monitor_process(
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
 pub fn init(resources: Resources) {
-	std::env::set_var("RUST_BACKTRACE", "full");
-	std::panic::set_hook(Box::new(|info| {
-		eprintln!(
-			"thread '{}' {}",
-			thread::current().name().unwrap_or("<unnamed>"),
-			info
-		);
-		eprintln!("{:?}", backtrace::Backtrace::new());
-		std::process::abort();
-	}));
 	// simple_logging::log_to_file(
 	// 	format!("logs/{}.log", std::process::id()),
 	// 	log::LevelFilter::Trace,
@@ -1521,7 +1511,7 @@ fn forward_fd(
 ) -> thread::JoinHandle<()> {
 	thread::Builder::new()
 		.name(String::from("monitor-forward_fd"))
-		.spawn(move || {
+		.spawn(abort_on_unwind(move || {
 			let mut reader = unsafe { fs::File::from_raw_fd(reader) };
 			let _ = fcntl::fcntl(reader.as_raw_fd(), fcntl::FcntlArg::F_GETFD).unwrap();
 			loop {
@@ -1548,7 +1538,7 @@ fn forward_fd(
 					break;
 				}
 			}
-		})
+		}))
 		.unwrap()
 }
 
@@ -1557,7 +1547,7 @@ fn forward_input_fd(
 ) -> thread::JoinHandle<()> {
 	thread::Builder::new()
 		.name(String::from("monitor-forward_input_fd"))
-		.spawn(move || {
+		.spawn(abort_on_unwind(move || {
 			let mut writer = Some(unsafe { fs::File::from_raw_fd(writer) });
 			let _ = fcntl::fcntl(
 				writer.as_ref().unwrap().as_raw_fd(),
@@ -1582,7 +1572,7 @@ fn forward_input_fd(
 					_ => unreachable!(),
 				}
 			}
-		})
+		}))
 		.unwrap()
 }
 

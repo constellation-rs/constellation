@@ -26,13 +26,13 @@ mod format;
 pub mod msg;
 
 #[cfg(unix)]
-use nix::{fcntl, sys::signal, unistd};
+use nix::{fcntl, libc, sys::signal, unistd};
 use palaver::file::{copy, memfd_create};
 use serde::{Deserialize, Serialize};
 use std::{
-	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek}, net, ops, os::unix::{
-		ffi::OsStringExt, io::{AsRawFd, FromRawFd}
-	}, sync::{Arc, Mutex}
+	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net, ops, os::unix::{
+		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
+	}, process::abort, sync::{Arc, Mutex}
 };
 
 #[cfg(target_family = "unix")]
@@ -552,12 +552,12 @@ pub enum ProcessInputEvent {
 
 #[allow(missing_debug_implementations)]
 #[derive(Clone)]
-pub struct Trace<W: io::Write> {
+pub struct Trace<W: Write> {
 	stdout: Arc<Mutex<W>>,
 	format: Format,
 	verbose: bool,
 }
-impl<W: io::Write> Trace<W> {
+impl<W: Write> Trace<W> {
 	pub fn new(stdout: W, format: Format, verbose: bool) -> Self {
 		Self {
 			stdout: Arc::new(Mutex::new(stdout)),
@@ -634,6 +634,41 @@ where
 	{
 		f()
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct StdErr;
+impl Write for StdErr {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		let mut file = unsafe { File::from_raw_fd(libc::STDERR_FILENO) };
+		let ret = file.write(buf);
+		let _ = file.into_raw_fd();
+		ret
+	}
+	fn flush(&mut self) -> io::Result<()> {
+		Ok(())
+	}
+}
+
+#[inline]
+fn abort_on_unwind_<F: FnOnce() -> T, T>(f: F) -> T {
+	replace_with::on_unwind(f, || {
+		let _ = StdErr.write_all(b"Constellation: detected unexpected panic; aborting\n");
+		abort();
+	})
+}
+
+#[must_use]
+#[inline]
+pub fn abort_on_unwind<F: FnOnce() -> T, T>(f: F) -> impl FnOnce() -> T {
+	|| abort_on_unwind_(f)
+}
+
+#[must_use]
+#[inline]
+pub fn abort_on_unwind_1<F: FnOnce(&A) -> T, T, A>(f: F) -> impl FnOnce(&A) -> T {
+	|a| abort_on_unwind_(|| f(a))
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

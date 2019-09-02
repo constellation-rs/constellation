@@ -30,7 +30,7 @@ use std::{
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
-use constellation_internal::{ExitStatus, Fd};
+use constellation_internal::{abort_on_unwind, ExitStatus, Fd};
 use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -228,10 +228,10 @@ fn main() {
 		std::process::abort();
 	}));
 	let _ = thread::Builder::new()
-		.spawn(move || loop {
+		.spawn(abort_on_unwind(move || loop {
 			thread::sleep(time::Duration::new(10, 0));
 			println!("{:?}", start.elapsed());
-		})
+		}))
 		.unwrap();
 	let current_dir = env::current_dir().unwrap();
 	let mut products = HashMap::new();
@@ -346,7 +346,7 @@ fn main() {
 		.spawn()
 		.unwrap();
 	let mut fabric_stdout = fabric.stdout.take().unwrap();
-	let fabric_stdout = thread::spawn(move || {
+	let fabric_stdout = thread::spawn(abort_on_unwind(move || {
 		let mut none = true;
 		loop {
 			use std::io::Read;
@@ -362,9 +362,9 @@ fn main() {
 			println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
 		}
 		none
-	});
+	}));
 	let mut fabric_stderr = fabric.stderr.take().unwrap();
-	let fabric_stderr = thread::spawn(move || {
+	let fabric_stderr = thread::spawn(abort_on_unwind(move || {
 		let mut none = true;
 		loop {
 			use std::io::Read;
@@ -380,7 +380,7 @@ fn main() {
 			println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
 		}
 		none
-	});
+	}));
 	let start_ = time::Instant::now();
 	while TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
