@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use serde::Deserialize;
 use std::{error::Error, fs::File, io::Read, net::SocketAddr};
 
@@ -155,6 +157,10 @@ impl Args {
 		let format = format.unwrap_or(Format::Human);
 		let role: Role = match (&*args.next().unwrap(), args.peek()) {
 			("bridge", None) => Role::Bridge,
+			#[cfg(feature = "kubernetes")]
+			("kube", Some(bind)) if bind.parse::<SocketAddr>().is_ok() => {
+				Role::KubeMaster(args.next().unwrap().parse::<SocketAddr>().unwrap())
+			}
 			(bind, Some(_)) if bind.parse::<SocketAddr>().is_ok() => {
 				let bind = bind.parse().unwrap();
 				let mut nodes = Vec::new();

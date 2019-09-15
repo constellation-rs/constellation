@@ -20,7 +20,8 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 #![allow(
 	clippy::similar_names,
 	clippy::type_complexity,
-	clippy::shadow_unrelated
+	clippy::shadow_unrelated,
+	clippy::too_many_lines
 )]
 
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
@@ -393,6 +394,9 @@ pub fn main() {
 		.name(String::from("a"))
 		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
+				if stream.is_err() {
+					continue;
+				}
 				trace!("BRIDGE: accepted");
 				let sender = sender.clone();
 				let _ = thread::Builder::new()

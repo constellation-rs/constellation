@@ -847,7 +847,7 @@ pub fn bridge_init() -> TcpListener {
 				.unwrap();
 		}
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -885,7 +885,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
 		PID.set(bridge_pid).unwrap();
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, bridge_pid.addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -1073,7 +1073,7 @@ fn monitor_process(
 			.unwrap();
 		}
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -1387,13 +1387,13 @@ pub fn init(resources: Resources) {
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
 
-	let port = {
+	let bind = {
 		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 		let local_addr = listener.local_addr().unwrap();
 		let _ = listener.into_raw_fd();
-		local_addr.port()
+		local_addr
 	};
-	let our_pid = Pid::new(ip, port);
+	let our_pid = Pid::new(ip, bind.port());
 	PID.set(our_pid).unwrap();
 
 	trace!(
@@ -1456,7 +1456,7 @@ pub fn init(resources: Resources) {
 			.unwrap();
 	}
 
-	let reactor = channel::Reactor::with_forwardee(socket_forwardee, pid().addr());
+	let reactor = channel::Reactor::with_forwardee(socket_forwardee, bind, pid().addr());
 	*REACTOR.try_write().unwrap() = Some(reactor);
 	let handle = channel::Reactor::run(
 		|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),

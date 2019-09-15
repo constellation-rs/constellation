@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr}, pin::Pin, ptr, sync::{Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread
 };
 use tcp_typed::{Connection, Listener};
 
@@ -48,31 +48,34 @@ pub struct Reactor {
 	notifier: Notifier<Key>,
 	listener: RwLock<Option<Listener>>,
 	sockets: RwLock<HashMap<SocketAddr, Arc<RwLock<Option<Channel>>>>>,
+	bind: SocketAddr,
 	local: SocketAddr,
 }
 impl Reactor {
 	#[allow(dead_code)]
-	pub fn new(host: IpAddr) -> (Self, u16) {
+	pub fn new(host: IpAddr, local: IpAddr) -> (Self, u16) {
 		let notifier = Notifier::new();
 		let (listener, port) = Listener::new_ephemeral(&host, &notifier.context(Key(ptr::null())));
 		let sockets = RwLock::new(HashMap::new());
-		let local = SocketAddr::new(host, port);
+		let bind = SocketAddr::new(host, port);
+		let local = SocketAddr::new(local, port);
 		(
 			Self {
 				notifier,
 				listener: RwLock::new(Some(listener)),
 				sockets,
+				bind,
 				local,
 			},
 			port,
 		)
 	}
 
-	pub fn with_fd(fd: Fd) -> Self {
+	pub fn with_fd(fd: Fd, local: SocketAddr) -> Self {
 		let notifier = Notifier::new();
 		let listener = Listener::with_fd(fd, &notifier.context(Key(ptr::null())));
 		let sockets = RwLock::new(HashMap::new());
-		let local = if let socket::SockAddr::Inet(inet) = socket::getsockname(fd).unwrap() {
+		let bind = if let socket::SockAddr::Inet(inet) = socket::getsockname(fd).unwrap() {
 			inet.to_std()
 		} else {
 			panic!()
@@ -81,11 +84,14 @@ impl Reactor {
 			notifier,
 			listener: RwLock::new(Some(listener)),
 			sockets,
+			bind,
 			local,
 		}
 	}
 
-	pub fn with_forwardee(socket_forwardee: SocketForwardee, local: SocketAddr) -> Self {
+	pub fn with_forwardee(
+		socket_forwardee: SocketForwardee, bind: SocketAddr, local: SocketAddr,
+	) -> Self {
 		let notifier = Notifier::new();
 		let listener =
 			Listener::with_socket_forwardee(socket_forwardee, &notifier.context(Key(ptr::null())));
@@ -94,6 +100,7 @@ impl Reactor {
 			notifier,
 			listener: RwLock::new(Some(listener)),
 			sockets,
+			bind,
 			local,
 		}
 	}
@@ -120,10 +127,11 @@ impl Reactor {
 				let context = context();
 				let context = context.borrow();
 				let mut listener = context.listener.try_write().unwrap();
-				let (notifier, listener, sockets, local) = (
+				let (notifier, listener, sockets, bind, local) = (
 					&context.notifier,
 					listener.as_mut().unwrap(),
 					&context.sockets,
+					&context.bind,
 					&context.local,
 				);
 				let mut done: Option<
@@ -251,6 +259,7 @@ impl Reactor {
 											);
 										} else if channel.inner.closed() {
 											let mut inner = Inner::connect(
+												*bind,
 												*local,
 												remote,
 												Some(connectee),
@@ -304,6 +313,7 @@ impl Reactor {
 											&notifier.context(Key(notifier_key as *const ()));
 										let connectee: Connection = connection(notifier).into();
 										let mut inner = Inner::connect(
+											*bind,
 											*local,
 											remote,
 											Some(connectee),
@@ -488,14 +498,19 @@ pub struct Sender<T: Serialize> {
 }
 impl<T: Serialize> Sender<T> {
 	pub fn new(remote: SocketAddr, context: &Reactor) -> Option<Self> {
-		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
+		let (notifier, sockets, bind, local) = (
+			&context.notifier,
+			&context.sockets,
+			&context.bind,
+			&context.local,
+		);
 		let sockets = &mut *sockets.write().unwrap();
 		let channel = match sockets.entry(remote) {
 			hash_map::Entry::Vacant(vacant) => {
 				let channel = Arc::new(RwLock::new(None));
 				let notifier_key: *const RwLock<Option<Channel>> = &*channel;
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
-				let mut inner = Channel::new(Inner::connect(*local, remote, None, notifier));
+				let mut inner = Channel::new(Inner::connect(*bind, *local, remote, None, notifier));
 				inner.senders_count += 1;
 				*channel.try_write().unwrap() = Some(inner);
 				let _ = vacant.insert(channel.clone());
@@ -693,14 +708,19 @@ pub struct Receiver<T: DeserializeOwned> {
 }
 impl<T: DeserializeOwned> Receiver<T> {
 	pub fn new(remote: SocketAddr, context: &Reactor) -> Option<Self> {
-		let (notifier, sockets, local) = (&context.notifier, &context.sockets, &context.local);
+		let (notifier, sockets, bind, local) = (
+			&context.notifier,
+			&context.sockets,
+			&context.bind,
+			&context.local,
+		);
 		let sockets = &mut *sockets.write().unwrap();
 		let channel = match sockets.entry(remote) {
 			hash_map::Entry::Vacant(vacant) => {
 				let channel = Arc::new(RwLock::new(None));
 				let notifier_key: *const RwLock<Option<Channel>> = &*channel;
 				let notifier = &notifier.context(Key(notifier_key as *const ()));
-				let mut inner = Channel::new(Inner::connect(*local, remote, None, notifier));
+				let mut inner = Channel::new(Inner::connect(*bind, *local, remote, None, notifier));
 				inner.receivers_count += 1;
 				*channel.try_write().unwrap() = Some(inner);
 				let _ = vacant.insert(channel.clone());

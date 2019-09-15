@@ -39,12 +39,12 @@ pub enum InnerConnecting {
 }
 impl InnerConnecting {
 	pub fn new(
-		local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
+		bind: SocketAddr, local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
 		notifier: &impl Notifier,
 	) -> InnerConnectingPoll {
 		if ord(&local, &remote) {
 			assert!(incoming.is_none());
-			Self::Outgoing(Some(Connection::connect(local, remote, notifier)))
+			Self::Outgoing(Some(Connection::connect(bind, remote, notifier)))
 		} else {
 			Self::Incoming(incoming)
 		}

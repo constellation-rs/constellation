@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use either::Either;
 use serde::Serialize;
 use std::{
@@ -57,7 +59,8 @@ pub fn run(
 		.map(|(i, (fabric, (bridge, mem, cpu)))| {
 			let node = Node { mem, cpu };
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = TcpStream::connect(&fabric).unwrap();
+			let stream = TcpStream::connect(&fabric)
+				.unwrap_or_else(|e| panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e));
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(abort_on_unwind(move || {
@@ -83,40 +86,42 @@ pub fn run(
 					.unwrap();
 				}))
 				.unwrap();
-			let sender = sender.clone();
-			let _ = thread::Builder::new()
-				.spawn(abort_on_unwind(move || {
-					#[cfg(feature = "distribute_binaries")]
-					let binary = {
-						let mut binary = Vec::new();
-						let mut file_in = palaver::env::exe().unwrap();
-						let _ = std::io::Read::read_to_end(&mut file_in, &mut binary).unwrap();
-						binary
-					};
-					#[cfg(not(feature = "distribute_binaries"))]
-					let binary = std::marker::PhantomData;
-					let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-					sender
-						.send(Either::Left((
-							FabricRequest {
-								resources: Resources { mem: 0, cpu: 0 },
-								bind: bridge.into_iter().collect(),
-								args: vec![
-									OsString::from(env::current_exe().unwrap()),
-									OsString::from("bridge"),
-								],
-								vars: Vec::new(),
-								binary,
-								arg: Vec::new(),
-							},
-							sender_,
-							Some(i),
-						)))
-						.unwrap();
-					let _pid: Pid = receiver.recv().unwrap().unwrap();
-					// println!("bridge at {:?}", pid);
-				}))
-				.unwrap();
+			if let Some(bridge) = bridge {
+				let sender = sender.clone();
+				let _ = thread::Builder::new()
+					.spawn(abort_on_unwind(move || {
+						#[cfg(feature = "distribute_binaries")]
+						let binary = {
+							let mut binary = Vec::new();
+							let mut file_in = palaver::env::exe().unwrap();
+							let _ = std::io::Read::read_to_end(&mut file_in, &mut binary).unwrap();
+							binary
+						};
+						#[cfg(not(feature = "distribute_binaries"))]
+						let binary = std::marker::PhantomData;
+						let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
+						sender
+							.send(Either::Left((
+								FabricRequest {
+									resources: Resources { mem: 0, cpu: 0 },
+									bind: vec![bridge],
+									args: vec![
+										OsString::from(env::current_exe().unwrap()),
+										OsString::from("bridge"),
+									],
+									vars: Vec::new(),
+									binary,
+									arg: Vec::new(),
+								},
+								sender_,
+								Some(i),
+							)))
+							.unwrap();
+						let _pid: Pid = receiver.recv().unwrap().unwrap();
+						// println!("bridge at {:?}", pid);
+					}))
+					.unwrap();
+			}
 			(sender_a, node, fabric.ip(), VecDeque::new())
 		})
 		.collect::<Vec<_>>();
@@ -126,6 +131,9 @@ pub fn run(
 		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
 				// println!("accepted");
+				if stream.is_err() {
+					continue;
+				}
 				let stream = stream.unwrap();
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
