@@ -15,7 +15,7 @@ COPY Cargo.toml ./
 RUN sed -i '/^###$/q' Cargo.toml
 COPY constellation-internal/Cargo.toml ./constellation-internal/
 RUN cargo generate-lockfile
-RUN cargo build --features kubernetes --target x86_64-unknown-linux-musl --release
+RUN cargo build --bins --features kubernetes --target x86_64-unknown-linux-musl --release
 
 # Copy the source and build the application.
 COPY . ./

@@ -1,3 +1,3 @@
 sut:
   build: .
-  command: "true"
+  command: "-V"
