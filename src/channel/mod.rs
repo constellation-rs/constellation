@@ -7,7 +7,7 @@ use nix::sys::socket;
 use notifier::{Notifier, Triggerer};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, Ipv4Addr, SocketAddr}, pin::Pin, ptr, sync::{Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread
+	borrow::Borrow, collections::{hash_map, HashMap}, convert::Infallible, error::Error, fmt, marker, mem, net::{IpAddr, SocketAddr}, pin::Pin, ptr, sync::{Arc, RwLock, RwLockWriteGuard}, task::{Context, Poll, Waker}, thread
 };
 use tcp_typed::{Connection, Listener};
 
