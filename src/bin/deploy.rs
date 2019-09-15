@@ -60,6 +60,7 @@ struct Args {
 	arg_args: Vec<String>, // ffi::OsString
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
 	let envs = Envs::from_env();
 	let args: Args = docopt::Docopt::new(USAGE)

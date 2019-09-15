@@ -489,6 +489,7 @@ pub fn resources() -> Resources {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[allow(clippy::too_many_lines)]
 fn spawn_native(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
 	_block: bool,
@@ -1004,6 +1005,7 @@ fn native_process_listener() -> (Fd, u16) {
 	(process_listener, process_id.port())
 }
 
+#[allow(clippy::too_many_lines)]
 fn monitor_process(
 	bridge: Pid, deployed: bool,
 ) -> (channel::SocketForwardee, Fd, Fd, Option<Fd>, Fd) {
@@ -1283,6 +1285,7 @@ fn monitor_process(
 /// Initialise the [constellation](self) runtime. This must be called immediately inside your application's `main()` function.
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
+#[allow(clippy::too_many_lines)]
 pub fn init(resources: Resources) {
 	// simple_logging::log_to_file(
 	// 	format!("logs/{}.log", std::process::id()),

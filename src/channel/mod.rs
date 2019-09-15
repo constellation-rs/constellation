@@ -105,6 +105,7 @@ impl Reactor {
 		}
 	}
 
+	#[allow(clippy::too_many_lines)]
 	pub fn run<
 		F: FnMut() -> C + marker::Send + 'static,
 		C: Borrow<Self>,
