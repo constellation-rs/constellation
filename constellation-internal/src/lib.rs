@@ -310,7 +310,7 @@ pub const RESOURCES_DEFAULT: Resources = Resources {
 
 /// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrySpawnError {
 	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
 	NoCapacity,
@@ -324,7 +324,7 @@ pub enum TrySpawnError {
 
 /// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpawnError {
 	/// [`spawn()`](spawn) failed because `constellation::init()` is not called immediately inside main().
 	Recce,
@@ -370,6 +370,11 @@ impl Display for TrySpawnError {
 		}
 	}
 }
+impl Debug for TrySpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		Display::fmt(self, f)
+	}
+}
 impl Display for SpawnError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
@@ -380,6 +385,11 @@ impl Display for SpawnError {
 			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
 			Self::__Nonexhaustive => unreachable!(),
 		}
+	}
+}
+impl Debug for SpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		Display::fmt(self, f)
 	}
 }
 impl Error for TrySpawnError {}

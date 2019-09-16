@@ -112,6 +112,7 @@ enum Role {
 		bridge_bind: SocketAddr,
 		mem: u64,
 		cpu: u32,
+		replicas: u32,
 	},
 	Master(SocketAddr, Vec<Node>),
 	Worker(SocketAddr),
@@ -161,6 +162,7 @@ fn main() {
 			bridge_bind,
 			mem,
 			cpu,
+			replicas,
 		} => {
 			let fabric = TcpListener::bind(SocketAddr::new(master_bind.ip(), 0)).unwrap();
 			kube_master(
@@ -169,6 +171,7 @@ fn main() {
 				bridge_bind,
 				mem,
 				cpu,
+				replicas,
 			);
 			(master_bind.ip(), fabric)
 		}

@@ -13,6 +13,7 @@ use constellation_internal::{abort_on_unwind, Pid, PidInternal};
 
 pub fn kube_master(
 	master_bind: SocketAddr, fabric_port: u16, bridge_bind: SocketAddr, mem: u64, cpu: u32,
+	replicas: u32,
 ) {
 	let namespace =
 		read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace").unwrap();
@@ -22,7 +23,7 @@ pub fn kube_master(
 
 	let jobs = Api::v1ReplicaSet(client.clone()).within(&namespace); //.group("extensions").version("v1beta1");
 
-	let replicas = 0; //10;
+	let replicas = replicas - 1; // one is this master
 
 	let fs = json!({
 		"spec": { "replicas": replicas }
@@ -49,7 +50,7 @@ pub fn kube_master(
 			.into_iter()
 			.filter_map(|pod| Some(pod.status?.pod_ip?.parse().unwrap()))
 			.collect();
-		if ips.len() == replicas {
+		if ips.len() == replicas as usize {
 			break ips;
 		}
 		std::thread::sleep(std::time::Duration::from_secs(2));

@@ -34,6 +34,7 @@ spec:
             - 0.0.0.0:12321
             - "1GiB"
             - "1"
+            - "1"
           env:
             - name: CONSTELLATION_IP
               valueFrom:
