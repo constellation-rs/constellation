@@ -68,11 +68,14 @@
 	clippy::similar_names,
 	clippy::type_complexity,
 	clippy::non_ascii_literal,
-	clippy::shadow_unrelated
+	clippy::shadow_unrelated,
+	clippy::too_many_lines
 )]
 
 mod args;
 mod bridge;
+#[cfg(feature = "kubernetes")]
+mod kube;
 mod master;
 
 use either::Either;
@@ -89,6 +92,8 @@ use std::{
 	ffi::{CStr, CString}, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
 };
 
+#[cfg(feature = "kubernetes")]
+use self::kube::kube_master;
 use constellation_internal::{
 	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
 };
@@ -101,6 +106,14 @@ struct Args {
 }
 #[derive(PartialEq, Debug)]
 enum Role {
+	#[cfg(feature = "kubernetes")]
+	KubeMaster {
+		master_bind: SocketAddr,
+		bridge_bind: SocketAddr,
+		mem: u64,
+		cpu: u32,
+		replicas: u32,
+	},
 	Master(SocketAddr, Vec<Node>),
 	Worker(SocketAddr),
 	Bridge,
@@ -143,30 +156,51 @@ fn main() {
 	let stdout = io::stdout();
 	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
+		#[cfg(feature = "kubernetes")]
+		Role::KubeMaster {
+			master_bind,
+			bridge_bind,
+			mem,
+			cpu,
+			replicas,
+		} => {
+			let fabric = TcpListener::bind(SocketAddr::new(master_bind.ip(), 0)).unwrap();
+			kube_master(
+				master_bind,
+				fabric.local_addr().unwrap().port(),
+				bridge_bind,
+				mem,
+				cpu,
+				replicas,
+			);
+			(master_bind.ip(), fabric)
+		}
 		Role::Master(listen, mut nodes) => {
 			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();
 			let master_addr = nodes[0].fabric;
 			nodes[0]
 				.fabric
 				.set_port(fabric.local_addr().unwrap().port());
+			let nodes = nodes
+				.into_iter()
+				.map(
+					|Node {
+					     fabric,
+					     bridge,
+					     mem,
+					     cpu,
+					 }| { (fabric, (bridge, mem, cpu)) },
+				)
+				.collect::<HashMap<_, _>>(); // TODO: error on clash
 			let _ = thread::Builder::new()
 				.name(String::from("master"))
 				.spawn(abort_on_unwind(move || {
+					std::thread::sleep(std::time::Duration::from_secs(1));
 					master::run(
 						SocketAddr::new(listen.ip(), master_addr.port()),
 						Pid::new(master_addr.ip(), master_addr.port()),
-						nodes
-							.into_iter()
-							.map(
-								|Node {
-								     fabric,
-								     bridge,
-								     mem,
-								     cpu,
-								 }| { (fabric, (bridge, mem, cpu)) },
-							)
-							.collect::<HashMap<_, _>>(),
-					); // TODO: error on clash
+						nodes,
+					)
 				}))
 				.unwrap();
 			(listen.ip(), fabric)
@@ -176,15 +210,25 @@ fn main() {
 	};
 
 	loop {
-		let (stream, addr) = listener.accept().unwrap();
-		println!("accepted");
+		let accepted = listener.accept();
+		if accepted.is_err() {
+			continue;
+		}
+		let (stream, addr) = accepted.unwrap();
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		let (mut stream_read, stream_write) =
 			(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
-		bincode::serialize_into::<_, IpAddr>(&mut *stream_write.lock().unwrap(), &addr.ip())
-			.unwrap();
-		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
+		if bincode::serialize_into::<_, IpAddr>(&mut *stream_write.try_lock().unwrap(), &addr.ip())
+			.is_err()
+		{
+			continue;
+		}
+		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
+		if ip.is_err() {
+			continue;
+		}
+		let ip = ip.unwrap();
 		crossbeam::scope(|scope| {
 			while let Ok(request) =
 				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)

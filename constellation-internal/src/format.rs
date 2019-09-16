@@ -82,6 +82,7 @@ impl<A: Write, B: Write> Formatter<A, B> {
 		}
 	}
 
+	#[allow(clippy::too_many_lines)]
 	pub fn write(&mut self, event: &DeployOutputEvent) {
 		match *event {
 			DeployOutputEvent::Spawn(pid_, new_pid) => {

@@ -18,10 +18,10 @@ pub enum Inner {
 }
 impl Inner {
 	pub fn connect(
-		local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
+		bind: SocketAddr, local: SocketAddr, remote: SocketAddr, incoming: Option<Connection>,
 		notifier: &impl Notifier,
 	) -> Self {
-		InnerConnecting::new(local, remote, incoming, notifier).into()
+		InnerConnecting::new(bind, local, remote, incoming, notifier).into()
 	}
 
 	pub fn poll(&mut self, notifier: &impl Notifier) {

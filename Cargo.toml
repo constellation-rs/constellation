@@ -2,7 +2,7 @@
 
 [package]
 name = "constellation-rs"
-version = "0.1.5"
+version = "0.1.6"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous","command-line-utilities"]
@@ -12,13 +12,10 @@ Constellation is a framework for Rust (nightly) that aides in the writing, debug
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation-rs/0.1.5"
+documentation = "https://docs.rs/constellation-rs/0.1.6"
 readme = "README.md"
 edition = "2018"
 autotests = true
-
-[lib]
-name = "constellation"
 
 [badges]
 azure-devops = { project = "alecmocatta/constellation", pipeline = "tests" }
@@ -30,9 +27,10 @@ nightly = ["palaver/nightly", "relative/nightly"]
 distribute_binaries = ["constellation-internal/distribute_binaries"]
 fringe = ["serde_pipe/fringe"]
 no_alloc = ["constellation-internal/no_alloc"]
+kubernetes = ["distribute_binaries", "kube", "openssl"]
 
 [dependencies]
-constellation-internal = { path = "constellation-internal", version = "=0.1.5" }
+constellation-internal = { path = "constellation-internal", version = "=0.1.6" }
 atty = "0.2"
 backtrace = "0.3"
 bincode = "1.0"
@@ -40,6 +38,7 @@ crossbeam = "0.7"
 docopt = "1.0"
 either = "1.5"
 futures-preview = "0.3.0-alpha.18"
+kube = { version = "0.16", features = ["openapi"], optional = true }
 log = "0.4"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = "1.0"
@@ -53,6 +52,9 @@ serde_json = "1.0"
 serde_pipe = "0.1"
 tcp_typed = "0.1"
 toml = "0.5"
+
+# dependency of kube; ensure it's vendored to simplify cross-compilation
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.15"
@@ -72,6 +74,11 @@ systemstat = "0.1"
 
 [patch.crates-io]
 systemstat = { git = "https://github.com/alecmocatta/systemstat" }
+
+###
+
+[lib]
+name = "constellation"
 
 # Hopefully we won't need to exhaustively list in future:
 # https://github.com/rust-lang/cargo/issues/5766 or https://github.com/rust-lang/rust/issues/50297

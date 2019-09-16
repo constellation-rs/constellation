@@ -215,6 +215,7 @@ fn treeize(
 	}
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
 	let start = time::Instant::now();
 	std::env::set_var("RUST_BACKTRACE", "full");

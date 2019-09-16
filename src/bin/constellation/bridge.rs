@@ -20,7 +20,8 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 #![allow(
 	clippy::similar_names,
 	clippy::type_complexity,
-	clippy::shadow_unrelated
+	clippy::shadow_unrelated,
+	clippy::too_many_lines
 )]
 
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
@@ -36,7 +37,7 @@ use std::{
 
 use constellation::FutureExt1;
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources
+	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, TrySpawnError
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -239,7 +240,10 @@ fn recce(
 
 fn manage_connection(
 	stream: TcpStream,
-	sender: mpsc::SyncSender<(FabricRequest<Vec<u8>, File>, mpsc::SyncSender<Option<Pid>>)>,
+	sender: mpsc::SyncSender<(
+		FabricRequest<Vec<u8>, File>,
+		mpsc::SyncSender<Result<Pid, TrySpawnError>>,
+	)>,
 ) -> Result<(), ()> {
 	#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 	nix::sys::socket::setsockopt(
@@ -275,20 +279,24 @@ fn manage_connection(
 		.map_err(drop)?;
 	assert_eq!(request.arg.len(), 0);
 	bincode::serialize_into(&mut request.arg, &constellation::pid()).unwrap();
-	let resources = request.resources.or_else(|| {
-		recce(
-			#[cfg(feature = "distribute_binaries")]
-			&request.binary,
-			&request.args,
-			&request.vars,
-		)
-		.ok()
-	});
-	let pid: Option<Pid> = resources.and_then(|resources| {
+	let resources = request
+		.resources
+		.or_else(|| {
+			recce(
+				#[cfg(feature = "distribute_binaries")]
+				&request.binary,
+				&request.args,
+				&request.vars,
+			)
+			.ok()
+		})
+		.ok_or(TrySpawnError::Recce);
+	let pid: Result<Pid, TrySpawnError> = resources.and_then(|resources| {
 		let (sender_, receiver) = mpsc::sync_channel(0);
 		sender
 			.send((
 				FabricRequest {
+					block: true, // use cases for false?
 					resources,
 					bind: vec![],
 					args: request.args,
@@ -302,7 +310,7 @@ fn manage_connection(
 		receiver.recv().unwrap()
 	});
 	bincode::serialize_into(&mut stream_write, &pid).map_err(drop)?;
-	if let Some(pid) = pid {
+	if let Ok(pid) = pid {
 		let x = PROCESS_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 		trace!("BRIDGE: SPAWN ({})", x);
 		let (sender, receiver) = mpsc::sync_channel(0);
@@ -393,6 +401,9 @@ pub fn main() {
 		.name(String::from("a"))
 		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
+				if stream.is_err() {
+					continue;
+				}
 				trace!("BRIDGE: accepted");
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
@@ -414,7 +425,7 @@ pub fn main() {
 
 		bincode_serialize_into(&mut scheduler_write.write(), &request).unwrap();
 
-		let pid: Option<Pid> = bincode::deserialize_from(&mut scheduler_read)
+		let pid: Result<Pid, TrySpawnError> = bincode::deserialize_from(&mut scheduler_read)
 			.map_err(map_bincode_err)
 			.unwrap();
 		sender.send(pid).unwrap();

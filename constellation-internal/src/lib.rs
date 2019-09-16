@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.5")]
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.6")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -30,7 +30,7 @@ use nix::{fcntl, libc, sys::signal, unistd};
 use palaver::file::{copy, memfd_create};
 use serde::{Deserialize, Serialize};
 use std::{
-	convert::TryInto, env, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net, ops, os::unix::{
+	convert::{TryFrom, TryInto}, env, error::Error, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, process::abort, sync::{Arc, Mutex}
 };
@@ -278,8 +278,8 @@ pub enum Format {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-/// 	mem: 1024 * 1024 * 1024, // 1 GiB
-/// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
+/// 	mem: 100 * 1024 * 1024, // 100 MiB
+/// 	cpu: 65536 / 16,        // 1/16th of a logical CPU core
 /// };
 /// ```
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -299,14 +299,101 @@ impl Default for Resources {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-/// 	mem: 1024 * 1024 * 1024, // 1 GiB
-/// 	cpu: 65536 / 16,         // 1/16th of a logical CPU core
+/// 	mem: 100 * 1024 * 1024, // 100 MiB
+/// 	cpu: 65536 / 16,        // 1/16th of a logical CPU core
 /// };
 /// ```
 pub const RESOURCES_DEFAULT: Resources = Resources {
-	mem: 1024 * 1024 * 1024, // 1 GiB
-	cpu: 65536 / 16,         // 1/16th of a logical CPU core
+	mem: 100 * 1024 * 1024, // 100 MiB
+	cpu: 65536 / 16,        // 1/16th of a logical CPU core
 };
+
+/// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrySpawnError {
+	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
+	NoCapacity,
+	/// [`try_spawn()`](try_spawn) failed because `constellation::init()` is not called immediately inside main().
+	Recce,
+	/// [`try_spawn()`](try_spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive, // https://github.com/rust-lang/rust/issues/44109
+}
+
+/// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
+#[allow(missing_copy_implementations)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpawnError {
+	/// [`spawn()`](spawn) failed because `constellation::init()` is not called immediately inside main().
+	Recce,
+	/// [`spawn()`](spawn) failed for unknown reasons.
+	Unknown,
+	#[doc(hidden)]
+	__Nonexhaustive,
+}
+impl From<SpawnError> for TrySpawnError {
+	fn from(error: SpawnError) -> Self {
+		match error {
+			SpawnError::Recce => Self::Recce,
+			SpawnError::Unknown => Self::Unknown,
+			SpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl TryFrom<TrySpawnError> for SpawnError {
+	type Error = ();
+
+	fn try_from(error: TrySpawnError) -> Result<Self, Self::Error> {
+		match error {
+			TrySpawnError::NoCapacity => Err(()),
+			TrySpawnError::Recce => Ok(Self::Recce),
+			TrySpawnError::Unknown => Ok(Self::Unknown),
+			TrySpawnError::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl Display for TrySpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::NoCapacity => write!(
+				f,
+				"try_spawn() failed because the new process couldn't be allocated"
+			),
+			Self::Recce => write!(
+				f,
+				"try_spawn() because constellation::init() is not called immediately inside main()"
+			),
+			Self::Unknown => write!(f, "try_spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl Debug for TrySpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		Display::fmt(self, f)
+	}
+}
+impl Display for SpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Recce => write!(
+				f,
+				"spawn() because constellation::init() is not called immediately inside main()"
+			),
+			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
+			Self::__Nonexhaustive => unreachable!(),
+		}
+	}
+}
+impl Debug for SpawnError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		Display::fmt(self, f)
+	}
+}
+impl Error for TrySpawnError {}
+impl Error for SpawnError {}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(/*tag = "event", */rename_all = "lowercase")]

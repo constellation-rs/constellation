@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.5")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.6")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![feature(cfg_doctest)]
 #![warn(
@@ -54,7 +54,7 @@ use palaver::{
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, convert::{Infallible, TryFrom, TryInto}, error::Error, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -63,8 +63,10 @@ use constellation_internal::{
 	abort_on_unwind, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
+#[doc(inline)]
 pub use channel::ChannelError;
-pub use constellation_internal::{Pid, Resources, RESOURCES_DEFAULT};
+#[doc(inline)]
+pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -489,6 +491,7 @@ pub fn resources() -> Resources {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[allow(clippy::too_many_lines)]
 fn spawn_native(
 	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
 	_block: bool,
@@ -643,8 +646,7 @@ fn spawn_native(
 }
 
 fn spawn_deployed(
-	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
-	_block: bool,
+	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>, block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_deployed");
 	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
@@ -673,6 +675,7 @@ fn spawn_deployed(
 	#[cfg(not(feature = "distribute_binaries"))]
 	let binary = std::marker::PhantomData::<fs::File>;
 	let request = FabricRequest {
+		block,
 		resources,
 		bind: vec![],
 		args: env::args_os().expect("Couldn't get argv"),
@@ -683,82 +686,19 @@ fn spawn_deployed(
 	bincode_serialize_into(&mut stream_write.write(), &request)
 		.map_err(map_bincode_err)
 		.unwrap();
-	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
+	let pid: Result<Pid, TrySpawnError> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap();
 	drop(stream_read);
-	trace!("{} spawned? {}", self::pid(), pid.unwrap());
-	if let Some(pid) = pid {
+	trace!("{} spawned? {}", self::pid(), pid.as_ref().unwrap());
+	if let Ok(pid) = pid {
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
 		bincode::serialize_into(&mut &file, &ProcessOutputEvent::Spawn(pid)).unwrap();
 		let _ = file.into_raw_fd();
 	}
 	let _ = stream.into_raw_fd();
-	pid.ok_or(TrySpawnError::NoCapacity)
+	pid
 }
-
-/// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
-#[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub enum TrySpawnError {
-	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
-	NoCapacity,
-	/// [`try_spawn()`](try_spawn) failed for unknown reasons.
-	Unknown,
-	#[doc(hidden)]
-	__Nonexhaustive, // https://github.com/rust-lang/rust/issues/44109
-}
-
-/// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
-#[allow(missing_copy_implementations)]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub enum SpawnError {
-	/// [`spawn()`](spawn) failed for unknown reasons.
-	Unknown,
-	#[doc(hidden)]
-	__Nonexhaustive,
-}
-impl From<SpawnError> for TrySpawnError {
-	fn from(error: SpawnError) -> Self {
-		match error {
-			SpawnError::Unknown => Self::Unknown,
-			SpawnError::__Nonexhaustive => unreachable!(),
-		}
-	}
-}
-impl TryFrom<TrySpawnError> for SpawnError {
-	type Error = ();
-
-	fn try_from(error: TrySpawnError) -> Result<Self, Self::Error> {
-		match error {
-			TrySpawnError::NoCapacity => Err(()),
-			TrySpawnError::Unknown => Ok(Self::Unknown),
-			TrySpawnError::__Nonexhaustive => unreachable!(),
-		}
-	}
-}
-impl fmt::Display for TrySpawnError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::NoCapacity => write!(
-				f,
-				"try_spawn() failed because the new process couldn't be allocated"
-			),
-			Self::Unknown => write!(f, "try_spawn() failed for unknown reasons"),
-			Self::__Nonexhaustive => unreachable!(),
-		}
-	}
-}
-impl fmt::Display for SpawnError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
-			Self::__Nonexhaustive => unreachable!(),
-		}
-	}
-}
-impl Error for TrySpawnError {}
-impl Error for SpawnError {}
 
 async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T, block: bool,
@@ -847,7 +787,7 @@ pub fn bridge_init() -> TcpListener {
 				.unwrap();
 		}
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -885,7 +825,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
 		PID.set(bridge_pid).unwrap();
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, bridge_pid.addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -1004,6 +944,7 @@ fn native_process_listener() -> (Fd, u16) {
 	(process_listener, process_id.port())
 }
 
+#[allow(clippy::too_many_lines)]
 fn monitor_process(
 	bridge: Pid, deployed: bool,
 ) -> (channel::SocketForwardee, Fd, Fd, Option<Fd>, Fd) {
@@ -1073,7 +1014,7 @@ fn monitor_process(
 			.unwrap();
 		}
 
-		let reactor = channel::Reactor::with_fd(LISTENER_FD);
+		let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
 		*REACTOR.try_write().unwrap() = Some(reactor);
 		let handle = channel::Reactor::run(
 			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
@@ -1283,6 +1224,7 @@ fn monitor_process(
 /// Initialise the [constellation](self) runtime. This must be called immediately inside your application's `main()` function.
 ///
 /// The `resources` argument describes memory and CPU requirements for the initial process.
+#[allow(clippy::too_many_lines)]
 pub fn init(resources: Resources) {
 	// simple_logging::log_to_file(
 	// 	format!("logs/{}.log", std::process::id()),
@@ -1387,13 +1329,13 @@ pub fn init(resources: Resources) {
 		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 	});
 
-	let port = {
+	let bind = {
 		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
 		let local_addr = listener.local_addr().unwrap();
 		let _ = listener.into_raw_fd();
-		local_addr.port()
+		local_addr
 	};
-	let our_pid = Pid::new(ip, port);
+	let our_pid = Pid::new(ip, bind.port());
 	PID.set(our_pid).unwrap();
 
 	trace!(
@@ -1456,7 +1398,7 @@ pub fn init(resources: Resources) {
 			.unwrap();
 	}
 
-	let reactor = channel::Reactor::with_forwardee(socket_forwardee, pid().addr());
+	let reactor = channel::Reactor::with_forwardee(socket_forwardee, bind, pid().addr());
 	*REACTOR.try_write().unwrap() = Some(reactor);
 	let handle = channel::Reactor::run(
 		|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),

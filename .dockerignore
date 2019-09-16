@@ -1,0 +1,8 @@
+/*
+/*/
+!/constellation-internal/
+!/examples/
+!/src/
+!/tests/
+!/Cargo.toml
+!/build.rs

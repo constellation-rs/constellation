@@ -35,7 +35,7 @@ use std::{
 };
 
 use constellation_internal::{
-	abort_on_unwind_1, map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport
+	abort_on_unwind_1, map_bincode_err, msg::{bincode_serialize_into, BridgeRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, Envs, ExitStatus, Format, Formatter, Pid, StyleSupport, TrySpawnError
 };
 
 const USAGE: &str = "Run a binary on a constellation cluster.
@@ -60,6 +60,7 @@ struct Args {
 	arg_args: Vec<String>, // ffi::OsString
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
 	let envs = Envs::from_env();
 	let args: Args = docopt::Docopt::new(USAGE)
@@ -105,12 +106,10 @@ fn main() {
 	bincode_serialize_into(&mut stream_write.write(), &request)
 		.map_err(map_bincode_err)
 		.unwrap_or_else(|e| panic!("Couldn't communicate with bridge: {:?}", e));
-	let pid: Option<Pid> = bincode::deserialize_from(&mut stream_read)
+	let pid: Result<Pid, TrySpawnError> = bincode::deserialize_from(&mut stream_read)
 		.map_err(map_bincode_err)
 		.unwrap_or_else(|e| panic!("Couldn't communicate with bridge: {:?}", e));
-	let pid = pid.unwrap_or_else(|| {
-		panic!("Deploy failed due to not being able to allocate process to any of the nodes or constellation::init() not being called immediately inside main()")
-	}); // TODO get resources from bridge
+	let pid = pid.unwrap_or_else(|e| panic!("Deploy failed due to {}", e)); // TODO get resources from bridge
 	crossbeam::scope(|scope| {
 		let _ = scope.spawn(abort_on_unwind_1(|_scope| {
 			let mut stdin = io::stdin();

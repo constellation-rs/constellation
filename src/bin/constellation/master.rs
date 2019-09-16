@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use either::Either;
 use serde::Serialize;
 use std::{
@@ -5,7 +7,7 @@ use std::{
 };
 
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources
+	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources, TrySpawnError
 };
 
 #[derive(Debug)]
@@ -44,7 +46,7 @@ pub fn run(
 		Either<
 			(
 				FabricRequest<Vec<u8>, Vec<u8>>,
-				SyncSender<Option<Pid>>,
+				SyncSender<Result<Pid, TrySpawnError>>,
 				Option<usize>,
 			),
 			(usize, Either<Pid, Pid>),
@@ -57,7 +59,8 @@ pub fn run(
 		.map(|(i, (fabric, (bridge, mem, cpu)))| {
 			let node = Node { mem, cpu };
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = TcpStream::connect(&fabric).unwrap();
+			let stream = TcpStream::connect(&fabric)
+				.unwrap_or_else(|e| panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e));
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(abort_on_unwind(move || {
@@ -83,40 +86,43 @@ pub fn run(
 					.unwrap();
 				}))
 				.unwrap();
-			let sender = sender.clone();
-			let _ = thread::Builder::new()
-				.spawn(abort_on_unwind(move || {
-					#[cfg(feature = "distribute_binaries")]
-					let binary = {
-						let mut binary = Vec::new();
-						let mut file_in = palaver::env::exe().unwrap();
-						let _ = std::io::Read::read_to_end(&mut file_in, &mut binary).unwrap();
-						binary
-					};
-					#[cfg(not(feature = "distribute_binaries"))]
-					let binary = std::marker::PhantomData;
-					let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
-					sender
-						.send(Either::Left((
-							FabricRequest {
-								resources: Resources { mem: 0, cpu: 0 },
-								bind: bridge.into_iter().collect(),
-								args: vec![
-									OsString::from(env::current_exe().unwrap()),
-									OsString::from("bridge"),
-								],
-								vars: Vec::new(),
-								binary,
-								arg: Vec::new(),
-							},
-							sender_,
-							Some(i),
-						)))
-						.unwrap();
-					let _pid: Pid = receiver.recv().unwrap().unwrap();
-					// println!("bridge at {:?}", pid);
-				}))
-				.unwrap();
+			if let Some(bridge) = bridge {
+				let sender = sender.clone();
+				let _ = thread::Builder::new()
+					.spawn(abort_on_unwind(move || {
+						#[cfg(feature = "distribute_binaries")]
+						let binary = {
+							let mut binary = Vec::new();
+							let mut file_in = palaver::env::exe().unwrap();
+							let _ = std::io::Read::read_to_end(&mut file_in, &mut binary).unwrap();
+							binary
+						};
+						#[cfg(not(feature = "distribute_binaries"))]
+						let binary = std::marker::PhantomData;
+						let (sender_, receiver) = sync_channel::<Result<Pid, TrySpawnError>>(0);
+						sender
+							.send(Either::Left((
+								FabricRequest {
+									block: false,
+									resources: Resources { mem: 0, cpu: 0 },
+									bind: vec![bridge],
+									args: vec![
+										OsString::from(env::current_exe().unwrap()),
+										OsString::from("bridge"),
+									],
+									vars: Vec::new(),
+									binary,
+									arg: Vec::new(),
+								},
+								sender_,
+								Some(i),
+							)))
+							.unwrap();
+						let _pid: Pid = receiver.recv().unwrap().unwrap();
+						// println!("bridge at {:?}", pid);
+					}))
+					.unwrap();
+			}
 			(sender_a, node, fabric.ip(), VecDeque::new())
 		})
 		.collect::<Vec<_>>();
@@ -126,6 +132,9 @@ pub fn run(
 		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {
 				// println!("accepted");
+				if stream.is_err() {
+					continue;
+				}
 				let stream = stream.unwrap();
 				let sender = sender.clone();
 				let _ = thread::Builder::new()
@@ -136,9 +145,9 @@ pub fn run(
 							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							// println!("parsed");
-							let (sender_, receiver) = sync_channel::<Option<Pid>>(0);
+							let (sender_, receiver) = sync_channel::<Result<Pid, TrySpawnError>>(0);
 							sender.send(Either::Left((request, sender_, None))).unwrap();
-							let pid: Option<Pid> = receiver.recv().unwrap();
+							let pid: Result<Pid, TrySpawnError> = receiver.recv().unwrap();
 							// let mut stream_write = stream_write.write();
 							if bincode::serialize_into(&mut stream_write, &pid).is_err() {
 								break;
@@ -183,7 +192,12 @@ pub fn run(
 					// 	"Failing a spawn! Cannot allocate process {:#?} to nodes {:#?}",
 					// 	resources, nodes
 					// );
-					sender.send(None).unwrap();
+					if request.block {
+						// TODO!
+						sender.send(Err(TrySpawnError::Unknown)).unwrap();
+					} else {
+						sender.send(Err(TrySpawnError::NoCapacity)).unwrap();
+					}
 				}
 			}
 			Either::Right((node_, Either::Left(pid))) => {
@@ -192,7 +206,7 @@ pub fn run(
 				let (sender, process) = node.3.pop_front().unwrap();
 				let x = processes.insert((node_, pid), process);
 				assert!(x.is_none());
-				sender.send(Some(pid)).unwrap();
+				sender.send(Ok(pid)).unwrap();
 			}
 			Either::Right((node, Either::Right(pid))) => {
 				let process = processes.remove(&(node, pid)).unwrap();

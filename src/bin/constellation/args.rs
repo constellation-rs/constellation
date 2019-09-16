@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use serde::Deserialize;
 use std::{error::Error, fs::File, io::Read, net::SocketAddr};
 
@@ -155,6 +157,34 @@ impl Args {
 		let format = format.unwrap_or(Format::Human);
 		let role: Role = match (&*args.next().unwrap(), args.peek()) {
 			("bridge", None) => Role::Bridge,
+			#[cfg(feature = "kubernetes")]
+			("kube", _) => {
+				if let (
+					Some(Ok(master_bind)),
+					Some(Ok(bridge_bind)),
+					Some(Ok(mem)),
+					Some(Ok(cpu)),
+					Some(Ok(replicas)),
+					None,
+				) = (
+					args.next().map(|x| x.parse::<SocketAddr>()),
+					args.next().map(|x| x.parse::<SocketAddr>()),
+					args.next().map(|x| parse_mem_size(&x)),
+					args.next().map(|x| parse_cpu_size(&x)),
+					args.next().map(|x| x.parse::<u32>()),
+					args.next(),
+				) {
+					Role::KubeMaster {
+						master_bind,
+						bridge_bind,
+						mem,
+						cpu,
+						replicas,
+					}
+				} else {
+					return Err((format!("Invalid kubernetes master options, expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
+				}
+			}
 			(bind, Some(_)) if bind.parse::<SocketAddr>().is_ok() => {
 				let bind = bind.parse().unwrap();
 				let mut nodes = Vec::new();
