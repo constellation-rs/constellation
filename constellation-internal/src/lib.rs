@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.5")]
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.6")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
