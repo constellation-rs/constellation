@@ -5,13 +5,15 @@ use ::kube::{
 };
 use serde_json::json;
 use std::{
-	collections::HashMap, env, fs::read_to_string, net::{IpAddr, Ipv4Addr, SocketAddr}, thread
+	collections::HashMap, env, fs::read_to_string, net::{IpAddr, SocketAddr}, thread
 };
 
 use super::master;
 use constellation_internal::{abort_on_unwind, Pid, PidInternal};
 
-pub fn kube_master(listen: SocketAddr, fabric_port: u16) {
+pub fn kube_master(
+	master_bind: SocketAddr, fabric_port: u16, bridge_bind: SocketAddr, mem: u64, cpu: u32,
+) {
 	let namespace =
 		read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace").unwrap();
 
@@ -20,8 +22,10 @@ pub fn kube_master(listen: SocketAddr, fabric_port: u16) {
 
 	let jobs = Api::v1ReplicaSet(client.clone()).within(&namespace); //.group("extensions").version("v1beta1");
 
+	let replicas = 0; //10;
+
 	let fs = json!({
-		"spec": { "replicas": 10 }
+		"spec": { "replicas": replicas }
 	});
 	let _ = jobs
 		.patch_scale(
@@ -45,7 +49,7 @@ pub fn kube_master(listen: SocketAddr, fabric_port: u16) {
 			.into_iter()
 			.filter_map(|pod| Some(pod.status?.pod_ip?.parse().unwrap()))
 			.collect();
-		if ips.len() == 10 {
+		if ips.len() == replicas {
 			break ips;
 		}
 		std::thread::sleep(std::time::Duration::from_secs(2));
@@ -58,31 +62,24 @@ pub fn kube_master(listen: SocketAddr, fabric_port: u16) {
 
 			let master_addr = SocketAddr::new(
 				env::var("CONSTELLATION_IP").unwrap().parse().unwrap(),
-				12322,
+				master_bind.port(),
 			);
-
-			let mem = constellation_internal::RESOURCES_DEFAULT.mem * 100;
-			let cpu = constellation_internal::RESOURCES_DEFAULT.cpu * 100;
 
 			let mut nodes = ips
 				.into_iter()
 				.map(|ip| {
-					let fabric = SocketAddr::new(ip, 32123);
+					let fabric = SocketAddr::new(ip, master_bind.port());
 					let bridge = None;
 					(fabric, (bridge, mem, cpu))
 				})
 				.collect::<HashMap<_, _>>(); // TODO: error on clash
 			let _ = nodes.insert(
 				SocketAddr::new(master_addr.ip(), fabric_port),
-				(
-					Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 12323)),
-					mem,
-					cpu,
-				),
+				(Some(bridge_bind), mem, cpu),
 			);
 
 			master::run(
-				SocketAddr::new(listen.ip(), master_addr.port()),
+				SocketAddr::new(master_bind.ip(), master_addr.port()),
 				Pid::new(master_addr.ip(), master_addr.port()),
 				nodes,
 			)

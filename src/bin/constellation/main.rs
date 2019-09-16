@@ -107,7 +107,12 @@ struct Args {
 #[derive(PartialEq, Debug)]
 enum Role {
 	#[cfg(feature = "kubernetes")]
-	KubeMaster(SocketAddr),
+	KubeMaster {
+		master_bind: SocketAddr,
+		bridge_bind: SocketAddr,
+		mem: u64,
+		cpu: u32,
+	},
 	Master(SocketAddr, Vec<Node>),
 	Worker(SocketAddr),
 	Bridge,
@@ -151,10 +156,21 @@ fn main() {
 	let trace = &Trace::new(stdout, args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		#[cfg(feature = "kubernetes")]
-		Role::KubeMaster(listen) => {
-			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();
-			kube_master(listen, fabric.local_addr().unwrap().port());
-			(listen.ip(), fabric)
+		Role::KubeMaster {
+			master_bind,
+			bridge_bind,
+			mem,
+			cpu,
+		} => {
+			let fabric = TcpListener::bind(SocketAddr::new(master_bind.ip(), 0)).unwrap();
+			kube_master(
+				master_bind,
+				fabric.local_addr().unwrap().port(),
+				bridge_bind,
+				mem,
+				cpu,
+			);
+			(master_bind.ip(), fabric)
 		}
 		Role::Master(listen, mut nodes) => {
 			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();

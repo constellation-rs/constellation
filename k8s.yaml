@@ -8,8 +8,8 @@ spec:
   ports:
     - name: constellation
       protocol: TCP
-      port: 12323
-      targetPort: 12323
+      port: 12321
+      targetPort: 12321
   type: LoadBalancer
 ---
 apiVersion: apps/v1
@@ -30,7 +30,10 @@ spec:
           image: constellationrs/constellation:0.1.6
           args:
             - kube
+            - 0.0.0.0:32123
             - 0.0.0.0:12321
+            - "1GiB"
+            - "1"
           env:
             - name: CONSTELLATION_IP
               valueFrom:
@@ -38,11 +41,13 @@ spec:
                   fieldPath: status.podIP
           ports:
             - name: constellation
-              containerPort: 12321
-            - name: constellation-m
-              containerPort: 12322
+              containerPort: 32123
             - name: constellation-b
-              containerPort: 12323
+              containerPort: 12321
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1"
       serviceAccountName: constellation-service-account
       terminationGracePeriodSeconds: 1
 ---
@@ -73,6 +78,10 @@ spec:
           ports:
             - name: constellation
               containerPort: 32123
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1"
       serviceAccountName: constellation-service-account
       terminationGracePeriodSeconds: 1
 ---

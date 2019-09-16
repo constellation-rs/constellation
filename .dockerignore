@@ -1,5 +1,8 @@
-/target
-**/*.rs.bk
-Cargo.lock
-.git
-Dockerfile
+/*
+/*/
+!/constellation-internal/
+!/examples/
+!/src/
+!/tests/
+!/Cargo.toml
+!/build.rs

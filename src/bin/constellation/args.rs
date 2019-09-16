@@ -158,8 +158,27 @@ impl Args {
 		let role: Role = match (&*args.next().unwrap(), args.peek()) {
 			("bridge", None) => Role::Bridge,
 			#[cfg(feature = "kubernetes")]
-			("kube", Some(bind)) if bind.parse::<SocketAddr>().is_ok() => {
-				Role::KubeMaster(args.next().unwrap().parse::<SocketAddr>().unwrap())
+			("kube", _) => {
+				if let (
+					Some(Ok(master_bind)),
+					Some(Ok(bridge_bind)),
+					Some(Ok(mem)),
+					Some(Ok(cpu)),
+				) = (
+					args.next().map(|x| x.parse::<SocketAddr>()),
+					args.next().map(|x| x.parse::<SocketAddr>()),
+					args.next().map(|x| parse_mem_size(&x)),
+					args.next().map(|x| parse_cpu_size(&x)),
+				) {
+					Role::KubeMaster {
+						master_bind,
+						bridge_bind,
+						mem,
+						cpu,
+					}
+				} else {
+					return Err((format!("Invalid kubernetes master options, expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
+				}
 			}
 			(bind, Some(_)) if bind.parse::<SocketAddr>().is_ok() => {
 				let bind = bind.parse().unwrap();

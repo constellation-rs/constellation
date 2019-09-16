@@ -9,6 +9,8 @@ where
 	A: FileOrVec,
 	B: FileOrVec,
 {
+	/// Whether to wait for space to allocate the process, or just bail.
+	pub block: bool,
 	/// The resources required for this process.
 	pub resources: Resources,
 	/// The socket addresses required to bind to for this process.
@@ -148,7 +150,8 @@ mod serde {
 		where
 			S: Serializer,
 		{
-			let mut state = serializer.serialize_tuple(6)?;
+			let mut state = serializer.serialize_tuple(7)?;
+			state.serialize_element(&self.block)?;
 			state.serialize_element(&self.resources)?;
 			state.serialize_element(&self.bind)?;
 			state.serialize_element(&self.args)?;
@@ -193,7 +196,8 @@ mod serde {
 		where
 			S: Serializer,
 		{
-			let mut state = serializer.serialize_tuple(6)?;
+			let mut state = serializer.serialize_tuple(7)?;
+			state.serialize_element(&self.value.block)?;
 			state.serialize_element(&self.value.resources)?;
 			state.serialize_element(&self.value.bind)?;
 			state.serialize_element(&self.value.args)?;
@@ -274,7 +278,7 @@ mod serde {
 	// 	where
 	// 		D: Deserializer<'de>,
 	// 	{
-	// 		deserializer.deserialize_tuple(6, FabricRequestVisitor)
+	// 		deserializer.deserialize_tuple(7, FabricRequestVisitor)
 	// 	}
 	// }
 	// struct FabricRequestVisitor;
@@ -288,27 +292,31 @@ mod serde {
 	// 	where
 	// 		V: SeqAccess<'de>,
 	// 	{
-	// 		let resources = seq
+	// 		let block = seq
 	// 			.next_element()?
 	// 			.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-	// 		let bind = seq
+	// 		let resources = seq
 	// 			.next_element()?
 	// 			.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-	// 		let args: Vec<OsString> = seq
+	// 		let bind = seq
 	// 			.next_element()?
 	// 			.ok_or_else(|| de::Error::invalid_length(2, &self))?;
-	// 		let vars = seq
+	// 		let args: Vec<OsString> = seq
 	// 			.next_element()?
 	// 			.ok_or_else(|| de::Error::invalid_length(3, &self))?;
+	// 		let vars = seq
+	// 			.next_element()?
+	// 			.ok_or_else(|| de::Error::invalid_length(4, &self))?;
 	// 		let arg = seq
-	// 			.next_element::<serde_bytes::ByteBuf>()?
-	// 			.ok_or_else(|| de::Error::invalid_length(4, &self))?
-	// 			.into_vec();
-	// 		let binary = seq
 	// 			.next_element::<serde_bytes::ByteBuf>()?
 	// 			.ok_or_else(|| de::Error::invalid_length(5, &self))?
 	// 			.into_vec();
+	// 		let binary = seq
+	// 			.next_element::<serde_bytes::ByteBuf>()?
+	// 			.ok_or_else(|| de::Error::invalid_length(6, &self))?
+	// 			.into_vec();
 	// 		Ok(FabricRequest {
+	// 			block,
 	// 			resources,
 	// 			bind,
 	// 			args,
@@ -390,7 +398,7 @@ mod serde {
 		{
 			READER.with(|reader| {
 				deserializer.deserialize_tuple(
-					6,
+					7,
 					FabricRequestSeed::new(unsafe { &mut **reader.borrow_mut().as_mut().unwrap() }),
 				)
 			})
@@ -411,18 +419,21 @@ mod serde {
 		where
 			V: SeqAccess<'de>,
 		{
-			let resources = seq
+			let block = seq
 				.next_element()?
 				.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-			let bind = seq
+			let resources = seq
 				.next_element()?
 				.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-			let args: Vec<OsString> = seq
+			let bind = seq
 				.next_element()?
 				.ok_or_else(|| de::Error::invalid_length(2, &self))?;
-			let vars = seq
+			let args: Vec<OsString> = seq
 				.next_element()?
 				.ok_or_else(|| de::Error::invalid_length(3, &self))?;
+			let vars = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(4, &self))?;
 			let arg = A::next_element_seed(
 				&mut seq,
 				FileSeed {
@@ -432,7 +443,7 @@ mod serde {
 					seal: false,
 				},
 			)?
-			.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			.ok_or_else(|| de::Error::invalid_length(5, &self))?;
 			#[cfg(feature = "distribute_binaries")]
 			let binary = B::next_element_seed(
 				&mut seq,
@@ -443,11 +454,12 @@ mod serde {
 					seal: true,
 				},
 			)?
-			.ok_or_else(|| de::Error::invalid_length(5, &self))?;
+			.ok_or_else(|| de::Error::invalid_length(6, &self))?;
 			#[cfg(not(feature = "distribute_binaries"))]
 			let binary = seq.next_element()?
-				.ok_or_else(|| de::Error::invalid_length(5, &self))?;
+				.ok_or_else(|| de::Error::invalid_length(6, &self))?;
 			Ok(FabricRequest {
+				block,
 				resources,
 				bind,
 				args,
