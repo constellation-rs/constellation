@@ -64,7 +64,7 @@ winapi = "0.3"
 
 [dev-dependencies]
 doc-comment = "0.3"
-hex = "0.3"
+hex = "0.4"
 itertools = "0.8"
 multiset = "0.0"
 regex = "1.0"
