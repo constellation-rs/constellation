@@ -273,107 +273,107 @@ mod serde {
 		}
 	}
 
-	// impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
-	// 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-	// 	where
-	// 		D: Deserializer<'de>,
-	// 	{
-	// 		deserializer.deserialize_tuple(7, FabricRequestVisitor)
-	// 	}
-	// }
-	// struct FabricRequestVisitor;
-	// impl<'de> Visitor<'de> for FabricRequestVisitor {
-	// 	type Value = FabricRequest<Vec<u8>, Vec<u8>>;
-	// 	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-	// 		formatter.write_str("a byte array")
-	// 	}
+	impl<'de> Deserialize<'de> for FabricRequest<Vec<u8>, Vec<u8>> {
+		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+		where
+			D: Deserializer<'de>,
+		{
+			deserializer.deserialize_tuple(7, FabricRequestVisitor)
+		}
+	}
+	struct FabricRequestVisitor;
+	impl<'de> Visitor<'de> for FabricRequestVisitor {
+		type Value = FabricRequest<Vec<u8>, Vec<u8>>;
+		fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+			formatter.write_str("a byte array")
+		}
 
-	// 	fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
-	// 	where
-	// 		V: SeqAccess<'de>,
-	// 	{
-	// 		let block = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-	// 		let resources = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-	// 		let bind = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(2, &self))?;
-	// 		let args: Vec<OsString> = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(3, &self))?;
-	// 		let vars = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(4, &self))?;
-	// 		let arg = seq
-	// 			.next_element::<serde_bytes::ByteBuf>()?
-	// 			.ok_or_else(|| de::Error::invalid_length(5, &self))?
-	// 			.into_vec();
-	// 		let binary = seq
-	// 			.next_element::<serde_bytes::ByteBuf>()?
-	// 			.ok_or_else(|| de::Error::invalid_length(6, &self))?
-	// 			.into_vec();
-	// 		Ok(FabricRequest {
-	// 			block,
-	// 			resources,
-	// 			bind,
-	// 			args,
-	// 			vars,
-	// 			arg,
-	// 			binary,
-	// 		})
-	// 	}
-	// }
+		fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+		where
+			V: SeqAccess<'de>,
+		{
+			let block = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+			let resources = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(1, &self))?;
+			let bind = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+			let args: Vec<OsString> = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(3, &self))?;
+			let vars = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			let arg = seq
+				.next_element::<serde_bytes::ByteBuf>()?
+				.ok_or_else(|| de::Error::invalid_length(5, &self))?
+				.into_vec();
+			let binary = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(6, &self))?;
+			#[cfg(feature = "distribute_binaries")]
+			let binary = serde_bytes::ByteBuf::into_vec(binary);
+			Ok(FabricRequest {
+				block,
+				resources,
+				bind,
+				args,
+				vars,
+				arg,
+				binary,
+			})
+		}
+	}
 
-	// impl<'de> Deserialize<'de> for BridgeRequest<Vec<u8>, Vec<u8>> {
-	// 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-	// 	where
-	// 		D: Deserializer<'de>,
-	// 	{
-	// 		deserializer.deserialize_tuple(6, BridgeRequestVisitor)
-	// 	}
-	// }
-	// struct BridgeRequestVisitor;
-	// impl<'de> Visitor<'de> for BridgeRequestVisitor {
-	// 	type Value = BridgeRequest<Vec<u8>, Vec<u8>>;
-	// 	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-	// 		formatter.write_str("a byte array")
-	// 	}
+	impl<'de> Deserialize<'de> for BridgeRequest<Vec<u8>, Vec<u8>> {
+		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+		where
+			D: Deserializer<'de>,
+		{
+			deserializer.deserialize_tuple(6, BridgeRequestVisitor)
+		}
+	}
+	struct BridgeRequestVisitor;
+	impl<'de> Visitor<'de> for BridgeRequestVisitor {
+		type Value = BridgeRequest<Vec<u8>, Vec<u8>>;
+		fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+			formatter.write_str("a byte array")
+		}
 
-	// 	fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
-	// 	where
-	// 		V: SeqAccess<'de>,
-	// 	{
-	// 		let resources = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(0, &self))?;
-	// 		let args: Vec<OsString> = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(1, &self))?;
-	// 		let vars = seq
-	// 			.next_element()?
-	// 			.ok_or_else(|| de::Error::invalid_length(2, &self))?;
-	// 		let arg = seq
-	// 			.next_element::<serde_bytes::ByteBuf>()?
-	// 			.ok_or_else(|| de::Error::invalid_length(3, &self))?
-	// 			.into_vec();
-	// 		let binary = seq
-	// 			.next_element::<serde_bytes::ByteBuf>()?
-	// 			.ok_or_else(|| de::Error::invalid_length(4, &self))?
-	// 			.into_vec();
-	// 		Ok(BridgeRequest {
-	// 			resources,
-	// 			args,
-	// 			vars,
-	// 			arg,
-	// 			binary,
-	// 		})
-	// 	}
-	// }
-
-	thread_local!(static READER: std::cell::RefCell<Option<*mut dyn Read>> = std::cell::RefCell::new(None));
+		fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+		where
+			V: SeqAccess<'de>,
+		{
+			let resources = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+			let args: Vec<OsString> = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(1, &self))?;
+			let vars = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(2, &self))?;
+			let arg = seq
+				.next_element::<serde_bytes::ByteBuf>()?
+				.ok_or_else(|| de::Error::invalid_length(3, &self))?
+				.into_vec();
+			let binary = seq
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			#[cfg(feature = "distribute_binaries")]
+			let binary = serde_bytes::ByteBuf::into_vec(binary);
+			Ok(BridgeRequest {
+				resources,
+				args,
+				vars,
+				arg,
+				binary,
+			})
+		}
+	}
 
 	struct FabricRequestSeed<R, A, B> {
 		reader: R,
@@ -387,21 +387,19 @@ mod serde {
 			}
 		}
 	}
-	impl<'de, A, B> Deserialize<'de> for FabricRequest<A, B>
+	impl<'de, R, A, B> DeserializeSeed<'de> for FabricRequestSeed<R, A, B>
 	where
+		R: Read,
 		A: FileOrVec,
 		B: FileOrVec,
 	{
-		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+		type Value = FabricRequest<A, B>;
+
+		fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
 		where
 			D: Deserializer<'de>,
 		{
-			READER.with(|reader| {
-				deserializer.deserialize_tuple(
-					7,
-					FabricRequestSeed::new(unsafe { &mut **reader.borrow_mut().as_mut().unwrap() }),
-				)
-			})
+			deserializer.deserialize_tuple(7, self)
 		}
 	}
 	impl<'de, R, A, B> Visitor<'de> for FabricRequestSeed<R, A, B>
@@ -482,21 +480,19 @@ mod serde {
 			}
 		}
 	}
-	impl<'de, A, B> Deserialize<'de> for BridgeRequest<A, B>
+	impl<'de, R, A, B> DeserializeSeed<'de> for BridgeRequestSeed<R, A, B>
 	where
+		R: Read,
 		A: FileOrVec,
 		B: FileOrVec,
 	{
-		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+		type Value = BridgeRequest<A, B>;
+
+		fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
 		where
 			D: Deserializer<'de>,
 		{
-			READER.with(|reader| {
-				deserializer.deserialize_tuple(
-					6,
-					BridgeRequestSeed::new(unsafe { &mut **reader.borrow_mut().as_mut().unwrap() }),
-				)
-			})
+			deserializer.deserialize_tuple(6, self)
 		}
 	}
 	impl<'de, R, A, B> Visitor<'de> for BridgeRequestSeed<R, A, B>
@@ -653,29 +649,13 @@ mod serde {
 	impl<A: FileOrVec, B: FileOrVec> BincodeDeserializeFrom for FabricRequest<A, B> {
 		fn bincode_deserialize_from<R: Read>(stream: &mut R) -> Result<Self, bincode::Error> {
 			let reader = UnsafeCellReaderWriter::new(stream);
-			READER.with(|reader_| {
-				let to: *mut dyn Read = &mut &reader;
-				#[allow(clippy::transmute_ptr_to_ptr)]
-				let to: *mut dyn Read = unsafe { std::mem::transmute(to) };
-				*reader_.borrow_mut() = Some(to);
-				let ret = bincode::config().deserialize_from(&reader);
-				let _ = reader_.borrow_mut().take().unwrap();
-				ret
-			})
+			bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 		}
 	}
 	impl<A: FileOrVec, B: FileOrVec> BincodeDeserializeFrom for BridgeRequest<A, B> {
 		fn bincode_deserialize_from<R: Read>(stream: &mut R) -> Result<Self, bincode::Error> {
 			let reader = UnsafeCellReaderWriter::new(stream);
-			READER.with(|reader_| {
-				let to: *mut dyn Read = &mut &reader;
-				#[allow(clippy::transmute_ptr_to_ptr)]
-				let to: *mut dyn Read = unsafe { std::mem::transmute(to) };
-				*reader_.borrow_mut() = Some(to);
-				let ret = bincode::config().deserialize_from(&reader);
-				let _ = reader_.borrow_mut().take().unwrap();
-				ret
-			})
+			bincode::config().deserialize_from_seed(BridgeRequestSeed::new(&reader), &reader)
 		}
 	}
 	pub fn bincode_serialize_into<W: Write, S: BincodeSerializeInto>(

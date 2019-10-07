@@ -51,7 +51,6 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
-#![feature(param_attrs)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
