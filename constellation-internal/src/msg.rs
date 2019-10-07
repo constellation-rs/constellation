@@ -312,9 +312,10 @@ mod serde {
 				.ok_or_else(|| de::Error::invalid_length(5, &self))?
 				.into_vec();
 			let binary = seq
-				.next_element::<serde_bytes::ByteBuf>()?
-				.ok_or_else(|| de::Error::invalid_length(6, &self))?
-				.into_vec();
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(6, &self))?;
+			#[cfg(feature = "distribute_binaries")]
+			let binary = serde_bytes::ByteBuf::into_vec(binary);
 			Ok(FabricRequest {
 				block,
 				resources,
@@ -360,9 +361,10 @@ mod serde {
 				.ok_or_else(|| de::Error::invalid_length(3, &self))?
 				.into_vec();
 			let binary = seq
-				.next_element::<serde_bytes::ByteBuf>()?
-				.ok_or_else(|| de::Error::invalid_length(4, &self))?
-				.into_vec();
+				.next_element()?
+				.ok_or_else(|| de::Error::invalid_length(4, &self))?;
+			#[cfg(feature = "distribute_binaries")]
+			let binary = serde_bytes::ByteBuf::into_vec(binary);
 			Ok(BridgeRequest {
 				resources,
 				args,
