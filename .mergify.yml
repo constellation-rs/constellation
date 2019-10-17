@@ -7,7 +7,6 @@ pull_request_rules:
       - "#approved-reviews-by>=1"
       - "#review-requested=0"
       - "#changes-requested-reviews-by=0"
-      - "#commented-reviews-by=0"
     actions:
       merge:
         method: merge
@@ -21,7 +20,6 @@ pull_request_rules:
       - author=alecmocatta # https://github.com/Mergifyio/mergify-engine/issues/451
       - "#review-requested=0"
       - "#changes-requested-reviews-by=0"
-      - "#commented-reviews-by=0"
     actions:
       merge:
         method: merge
