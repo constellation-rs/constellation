@@ -18,7 +18,9 @@
 	clippy::needless_pass_by_value,
 	clippy::large_enum_variant,
 	clippy::if_not_else,
-	clippy::inline_always
+	clippy::inline_always,
+	clippy::must_use_candidate,
+	clippy::double_must_use
 )]
 
 mod ext;

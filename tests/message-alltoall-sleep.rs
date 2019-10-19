@@ -131,9 +131,7 @@ fn sub2<
 				mem: 20 * 1024 * 1024,
 				..Resources::default()
 			},
-			FnOnce!([arg] move |parent| {
-				sub2(parent, arg)
-			}),
+			FnOnce!(move |parent| sub2(parent, arg)),
 		)
 		.block()
 		.expect("spawn() failed to allocate process");
@@ -185,7 +183,7 @@ fn main() {
 					mem: 20 * 1024 * 1024,
 					..Resources::default()
 				},
-				FnOnce!([arg] move |parent| {
+				FnOnce!(move |parent| {
 					println!("! sub1");
 					let receiver = Receiver::new(parent);
 					let hi: String = receiver.recv().block().unwrap();
@@ -219,9 +217,7 @@ fn main() {
 				mem: 20 * 1024 * 1024,
 				..Resources::default()
 			},
-			FnOnce!([arg] move |parent| {
-				sub2(parent, arg)
-			}),
+			FnOnce!(move |parent| sub2(parent, arg)),
 		)
 		.block()
 		.expect("spawn() failed to allocate process");
@@ -237,14 +233,16 @@ fn main() {
 						mem: 20 * 1024 * 1024,
 						..Resources::default()
 					},
-					FnOnce!([arg] move |parent| {
+					FnOnce!(move |parent| {
 						println!("! sub3");
 						let receiver = Receiver::<Vec<Pid>>::new(parent);
 						let pids = receiver.recv().block().unwrap();
 						// println!("{:?}", pids);
 						assert_eq!(pids[arg], pid());
-						let mut senders: Vec<Option<Sender<usize>>> = Vec::with_capacity(pids.len());
-						let mut receivers: Vec<Option<Receiver<usize>>> = Vec::with_capacity(pids.len());
+						let mut senders: Vec<Option<Sender<usize>>> =
+							Vec::with_capacity(pids.len());
+						let mut receivers: Vec<Option<Receiver<usize>>> =
+							Vec::with_capacity(pids.len());
 						for i in 0..pids.len() {
 							for j in 0..pids.len() {
 								if i == arg {
@@ -266,8 +264,8 @@ fn main() {
 						assert_eq!(senders.len(), pids.len());
 						assert_eq!(receivers.len(), pids.len());
 						println!("done");
-						for (i,receiver) in receivers.iter().enumerate() {
-							for (j,sender) in senders.iter().enumerate() {
+						for (i, receiver) in receivers.iter().enumerate() {
+							for (j, sender) in senders.iter().enumerate() {
 								if i == j {
 									continue;
 								}

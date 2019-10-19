@@ -169,7 +169,7 @@ fn main() {
 					mem: 20 * 1024 * 1024,
 					..Resources::default()
 				},
-				FnOnce!([i] move |parent| {
+				FnOnce!(move |parent| {
 					println!("hi {}", i);
 					let receiver = Receiver::<Option<String>>::new(parent);
 					let sender = Sender::<Option<String>>::new(parent);

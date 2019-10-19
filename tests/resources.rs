@@ -85,7 +85,7 @@ fn main() {
 				mem: 20 * 1024 * 1024 + i,
 				cpu: 65536 / 1000,
 			},
-			FnOnce!([i] move |_parent| {
+			FnOnce!(move |_parent| {
 				assert_eq!(resources().mem, 20 * 1024 * 1024 + i);
 				println!("hi {:?}", resources());
 			}),

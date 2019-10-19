@@ -169,15 +169,16 @@ fn main() {
 				mem: 20 * 1024 * 1024,
 				..Resources::default()
 			},
-			FnOnce!([i] move |parent| {
+			FnOnce!(move |parent| {
 				println!("hi {}", i);
 				let (receiver, sender) = (
 					Receiver::<Option<String>>::new(parent),
 					Sender::<Option<String>>::new(parent),
 				);
 				futures::executor::block_on(
-					receiver.forward(sender.sink_map_err(|_|unreachable!()))
-				).unwrap();
+					receiver.forward(sender.sink_map_err(|_| unreachable!())),
+				)
+				.unwrap();
 				println!("done {}", i);
 			}),
 		)

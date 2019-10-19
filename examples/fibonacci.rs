@@ -20,7 +20,7 @@ fn fib_processes(x: usize) -> usize {
 	}
 	let left_pid = spawn(
 		Resources::default(),
-		FnOnce!([x] move |parent_pid| {
+		FnOnce!(move |parent_pid| {
 			Sender::<usize>::new(parent_pid)
 				.send(fib_processes(x - 1))
 				.block()
@@ -31,7 +31,7 @@ fn fib_processes(x: usize) -> usize {
 
 	let right_pid = spawn(
 		Resources::default(),
-		FnOnce!([x] move |parent_pid| {
+		FnOnce!(move |parent_pid| {
 			Sender::<usize>::new(parent_pid)
 				.send(fib_processes(x - 2))
 				.block()
@@ -52,7 +52,7 @@ fn fib_processes_async(x: usize) -> Result<usize, Box<dyn st::Error>> {
 	let left = async {
 		let pid = spawn(
 			Resources::default(),
-			FnOnce!([x] move |parent| {
+			FnOnce!(move |parent| {
 				Sender::<Msg>::new(parent)
 					.send(fib_processes_async(x - 1))
 					.block()
@@ -66,7 +66,7 @@ fn fib_processes_async(x: usize) -> Result<usize, Box<dyn st::Error>> {
 	let right = async {
 		let pid = spawn(
 			Resources::default(),
-			FnOnce!([x] move |parent| {
+			FnOnce!(move |parent| {
 				Sender::<Msg>::new(parent)
 					.send(fib_processes_async(x - 2))
 					.block()

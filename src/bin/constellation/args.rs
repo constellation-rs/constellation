@@ -33,8 +33,7 @@ list of all the nodes:
 For more information, see the documentation at
 https://github.com/alecmocatta/constellation/ or run again with --help -v
 "#;
-const VERBOSE_HELP: &str =
-	r#"A constellation cluster consists of one or more nodes. A node is started like
+const VERBOSE_HELP: &str = r#"A constellation cluster consists of one or more nodes. A node is started like
 this:
 
     constellation 10.0.0.2:9999
