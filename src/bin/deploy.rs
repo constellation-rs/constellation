@@ -83,7 +83,7 @@ fn main() {
 	}
 	let bridge_address: net::SocketAddr = args.arg_host.parse().unwrap();
 	let path = args.arg_binary;
-	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(path.clone()))
+	let args: Vec<ffi::OsString> = iter::once(ffi::OsString::from(&path))
 		.chain(args.arg_args.into_iter().map(ffi::OsString::from))
 		.collect();
 	let vars: Vec<(ffi::OsString, ffi::OsString)> = env::vars_os().collect();

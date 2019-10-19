@@ -169,7 +169,7 @@ fn main() {
 				mem: 20 * 1024 * 1024,
 				..Resources::default()
 			},
-			FnOnce!([i] move |_parent| {
+			FnOnce!(move |_parent| {
 				thread::sleep(time::Duration::new(0, 10_000_000) * i);
 				println!("hi {}", i);
 			}),

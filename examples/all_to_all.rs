@@ -52,12 +52,13 @@ fn main() {
 					mem: 20 * 1024 * 1024,
 					..Resources::default()
 				},
-				serde_closure::FnOnce!([process_index] move |parent| {
+				FnOnce!(move |parent| {
 					let receiver = Receiver::<Vec<Pid>>::new(parent);
 					let pids = receiver.recv().block().unwrap();
 					assert_eq!(pids[process_index], pid());
 					let mut senders: Vec<Option<Sender<usize>>> = Vec::with_capacity(pids.len());
-					let mut receivers: Vec<Option<Receiver<usize>>> = Vec::with_capacity(pids.len());
+					let mut receivers: Vec<Option<Receiver<usize>>> =
+						Vec::with_capacity(pids.len());
 					for i in 0..pids.len() {
 						for j in 0..pids.len() {
 							if i == process_index {
@@ -76,8 +77,8 @@ fn main() {
 							}
 						}
 					}
-					for (i,receiver) in receivers.iter().enumerate() {
-						for (j,sender) in senders.iter().enumerate() {
+					for (i, receiver) in receivers.iter().enumerate() {
+						for (j, sender) in senders.iter().enumerate() {
 							if i == j {
 								continue;
 							}

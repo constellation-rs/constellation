@@ -84,7 +84,7 @@ impl ProcessPool {
 					resources,
 					// Make this closure serializable by wrapping with serde_closure's
 					// FnOnce!() macro, which requires explicitly listing captured variables.
-					serde_closure::FnOnce!([] move |parent| {
+					FnOnce!(move |parent| {
 						// println!("process {}: awaiting work", i);
 
 						// Create a `Sender` half of a channel to our parent
@@ -136,7 +136,7 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		process
 			.sender
-			.send(Some(st::Box::new(serde_closure::FnOnce!([work] move || {
+			.send(Some(st::Box::new(FnOnce!(move || {
 				let work: F = work;
 				st::Box::new(work()) as Response
 			})) as Request))
@@ -188,8 +188,11 @@ fn main() {
 
 	let handles = (0..processes * 3)
 		.map(|i| {
-			pool.spawn(serde_closure::FnOnce!([i] move || -> String {
-				thread::sleep(rand::thread_rng().gen_range(time::Duration::new(0,0),time::Duration::new(5,0)));
+			pool.spawn(FnOnce!(move || -> String {
+				thread::sleep(
+					rand::thread_rng()
+						.gen_range(time::Duration::new(0, 0), time::Duration::new(5, 0)),
+				);
 				format!("warm greetings from job {}", i)
 			}))
 		})

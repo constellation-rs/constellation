@@ -109,8 +109,8 @@ fn monitor_process(
 }
 
 fn recce(
-	#[cfg(feature = "distribute_binaries")] /* https://github.com/rust-lang/rustfmt/issues/3623 */
-	binary: &File, args: &[OsString], vars: &[(OsString, OsString)],
+	#[cfg(feature = "distribute_binaries")] binary: &File, args: &[OsString],
+	vars: &[(OsString, OsString)],
 ) -> Result<Resources, ()> {
 	let (reader, writer) = nix::unistd::pipe().unwrap();
 

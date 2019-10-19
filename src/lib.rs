@@ -29,7 +29,8 @@
 	clippy::if_not_else,
 	clippy::module_name_repetitions,
 	clippy::new_ret_no_self,
-	clippy::type_complexity
+	clippy::type_complexity,
+	clippy::must_use_candidate
 )]
 
 #[cfg(doctest)]
@@ -67,6 +68,8 @@ use constellation_internal::{
 pub use channel::ChannelError;
 #[doc(inline)]
 pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
+#[doc(inline)]
+pub use serde_closure::{Fn, FnMut, FnOnce};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -177,7 +180,7 @@ impl<T: Serialize> Sender<T> {
 
 	/// Nonblocking send.
 	///
-	/// If sending would not block, `Some` is returned with a FnOnce that accepts a `T` to send.
+	/// If sending would not block, `Some` is returned with a `FnOnce` that accepts a `T` to send.
 	/// If sending would block, `None` is returned.
 	pub fn try_send<'a>(&'a self) -> Option<impl FnOnce(T) + 'a>
 	where
@@ -349,7 +352,7 @@ impl<T: DeserializeOwned> Receiver<T> {
 
 	/// Nonblocking recv.
 	///
-	/// If receiving would not block, `Some` is returned with a FnOnce that returns a `Result<T, ChannelError>`.
+	/// If receiving would not block, `Some` is returned with a `FnOnce` that returns a `Result<T, ChannelError>`.
 	/// If receiving would block, `None` is returned.
 	pub fn try_recv<'a>(&'a self) -> Option<impl FnOnce() -> Result<T, ChannelError> + 'a>
 	where
@@ -493,7 +496,7 @@ pub fn resources() -> Resources {
 
 #[allow(clippy::too_many_lines)]
 fn spawn_native(
-	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>,
+	resources: Resources, f: &(dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static),
 	_block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_native");
@@ -646,7 +649,8 @@ fn spawn_native(
 }
 
 fn spawn_deployed(
-	resources: Resources, f: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))>, block: bool,
+	resources: Resources, f: &(dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static),
+	block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_deployed");
 	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
@@ -709,15 +713,15 @@ async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	});
 	let arg: Vec<u8> = bincode::serialize(&start).unwrap();
 
-	let start: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))> = serde_closure::FnOnce!([arg]move|parent|{
+	let start = FnOnce!(move |parent| {
 		let arg: Vec<u8> = arg;
 		let closure: T = bincode::deserialize(&arg).unwrap();
 		closure(parent)
 	});
 	if !deployed {
-		spawn_native(resources, start, block)
+		spawn_native(resources, &start, block)
 	} else {
-		spawn_deployed(resources, start, block)
+		spawn_deployed(resources, &start, block)
 	}
 }
 
@@ -1435,7 +1439,7 @@ pub fn init(resources: Resources) {
 			let parent: Pid = bincode::deserialize_from(&mut argument)
 				.map_err(map_bincode_err)
 				.unwrap();
-			let start: serde_closure::FnOnce<(Vec<u8>,), fn((Vec<u8>,), (Pid,))> =
+			let start: Box<dyn serde_traitobject::FnOnce<(Pid,), Output = ()>> =
 				bincode::deserialize_from(&mut argument)
 					.map_err(map_bincode_err)
 					.unwrap();
