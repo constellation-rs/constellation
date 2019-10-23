@@ -15,6 +15,7 @@ RUN mkdir -p src constellation-internal/src && touch src/lib.rs constellation-in
 COPY Cargo.toml ./
 RUN sed -i '/^###$/q' Cargo.toml
 COPY constellation-internal/Cargo.toml ./constellation-internal/
+RUN ls -alR
 RUN cargo generate-lockfile
 RUN cargo build --bins --features kubernetes --target x86_64-unknown-linux-musl --release
 
