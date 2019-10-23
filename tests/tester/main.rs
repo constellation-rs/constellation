@@ -385,16 +385,15 @@ fn main() {
 	let start_ = time::Instant::now();
 	while TcpStream::connect(FABRIC_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
-		if start_.elapsed() > time::Duration::new(2, 0) {
-			panic!("Fabric not up within 2s");
+		if start_.elapsed() > time::Duration::new(5, 0) {
+			panic!("Fabric not up within 5s");
 		}
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
-	let start_ = time::Instant::now();
 	while TcpStream::connect(BRIDGE_ADDR).is_err() {
 		// TODO: parse output rather than this loop and timeout
-		if start_.elapsed() > time::Duration::new(10, 0) {
-			panic!("Bridge not up within 10s");
+		if start_.elapsed() > time::Duration::new(15, 0) {
+			panic!("Bridge not up within 15s");
 		}
 		thread::sleep(std::time::Duration::new(0, 1_000_000));
 	}
