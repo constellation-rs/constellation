@@ -1,5 +1,5 @@
 FROM rustlang/rust:nightly as build
-WORKDIR /usr/local/src
+WORKDIR /usr/local/src/build
 
 # Install musl-gcc
 RUN apt-get update && apt-get install -y --no-install-recommends musl-tools
@@ -10,8 +10,8 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Create a dummy project and build the app's dependencies.
 # If the Cargo.toml and Cargo.lock files have not changed,
 # we can use the docker build cache and skip this slow step.
-RUN USER=root cargo new --name cache-dependencies -- build && cd build && USER=root cargo new --lib constellation-internal
-WORKDIR /usr/local/src/build
+# RUN USER=root cargo init && USER=root cargo new --lib constellation-internal
+RUN mkdir -p src constellation-internal/src && touch src/lib.rs constellation-internal/src/lib.rs
 COPY Cargo.toml ./
 RUN sed -i '/^###$/q' Cargo.toml
 COPY constellation-internal/Cargo.toml ./constellation-internal/
