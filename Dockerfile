@@ -1,5 +1,5 @@
 FROM rustlang/rust:nightly as build
-WORKDIR /usr/src
+WORKDIR /usr/local/src/build
 
 # Install musl-gcc
 RUN apt-get update && apt-get install -y --no-install-recommends musl-tools
