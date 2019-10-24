@@ -23,7 +23,7 @@ maintenance = { status = "actively-developed" }
 
 [features]
 default = ["distribute_binaries"]
-nightly = ["palaver/nightly", "relative/nightly"]
+nightly = ["palaver/nightly"]
 distribute_binaries = ["constellation-internal/distribute_binaries"]
 fringe = ["serde_pipe/fringe"]
 no_alloc = ["constellation-internal/no_alloc"]
@@ -45,7 +45,6 @@ once_cell = "1.0"
 palaver = "0.2.8"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
-relative = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.2"
 serde_traitobject = "0.2"
