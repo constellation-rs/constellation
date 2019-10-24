@@ -5,7 +5,7 @@ use ::kube::{
 };
 use serde_json::json;
 use std::{
-	collections::HashMap, env, fs::read_to_string, net::{IpAddr, SocketAddr}, thread
+	collections::HashMap, env, net::{IpAddr, SocketAddr}, thread
 };
 
 use super::master;
@@ -15,10 +15,8 @@ pub fn kube_master(
 	master_bind: SocketAddr, fabric_port: u16, bridge_bind: SocketAddr, mem: u64, cpu: u32,
 	replicas: u32,
 ) {
-	let namespace =
-		read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace").unwrap();
-
 	let config = config::incluster_config().expect("failed to load in-cluster kubeconfig");
+	let namespace = config.default_ns.clone();
 	let client = APIClient::new(config);
 
 	let jobs = Api::v1ReplicaSet(client.clone()).within(&namespace); //.group("extensions").version("v1beta1");
