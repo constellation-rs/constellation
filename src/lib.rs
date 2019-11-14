@@ -11,7 +11,6 @@
 
 #![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.7")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
-#![feature(cfg_doctest)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -55,7 +54,7 @@ use palaver::{
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	any::type_name, borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -70,19 +69,6 @@ pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
 #[doc(inline)]
 pub use serde_closure::{Fn, FnMut, FnOnce};
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-fn type_name<T: ?Sized>() -> &'static str {
-	#[cfg(feature = "nightly")]
-	{
-		std::any::type_name::<T>()
-	}
-	#[cfg(not(feature = "nightly"))]
-	{
-		"<unknown>"
-	}
-}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
