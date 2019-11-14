@@ -14,7 +14,7 @@ jobs:
     endpoint: alecmocatta
     default:
       rust_toolchain: nightly
-      rust_lint_toolchain: nightly-2019-10-17
+      rust_lint_toolchain: nightly-2019-11-14
       rust_flags: ''
       rust_features: 'no_alloc;no_alloc distribute_binaries'
       rust_target_check: ''
