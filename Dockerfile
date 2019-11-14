@@ -11,7 +11,7 @@ RUN rustup target add x86_64-unknown-linux-musl
 # If the Cargo.toml and Cargo.lock files have not changed,
 # we can use the docker build cache and skip this slow step.
 RUN USER=root cargo init && USER=root cargo new --lib constellation-internal
-COPY Cargo.toml ./
+COPY Cargo.toml build.rs ./
 RUN sed -i '/^###$/q' Cargo.toml
 COPY constellation-internal/Cargo.toml ./constellation-internal/
 RUN cargo generate-lockfile
