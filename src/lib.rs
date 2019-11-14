@@ -797,11 +797,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	// No threads spawned between init and here so we're good
 	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
 	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
-		#[cfg(any(target_os = "android", target_os = "linux"))]
-		{
-			let err = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
-			assert_eq!(err, 0);
-		}
 		// trace!("parent");
 
 		palaver::file::move_fd(
