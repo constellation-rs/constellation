@@ -9,9 +9,8 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.7")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.8")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
-#![feature(cfg_doctest)]
 #![warn(
 	missing_copy_implementations,
 	// missing_debug_implementations,
@@ -55,7 +54,7 @@ use palaver::{
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-	borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
+	any::type_name, borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
@@ -70,19 +69,6 @@ pub use channel::ChannelError;
 pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
 #[doc(inline)]
 pub use serde_closure::{Fn, FnMut, FnOnce};
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-fn type_name<T: ?Sized>() -> &'static str {
-	#[cfg(feature = "nightly")]
-	{
-		std::any::type_name::<T>()
-	}
-	#[cfg(not(feature = "nightly"))]
-	{
-		"<unknown>"
-	}
-}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -811,11 +797,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	// No threads spawned between init and here so we're good
 	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
 	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
-		#[cfg(any(target_os = "android", target_os = "linux"))]
-		{
-			let err = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
-			assert_eq!(err, 0);
-		}
 		// trace!("parent");
 
 		palaver::file::move_fd(
