@@ -15,6 +15,7 @@ homepage = "https://github.com/alecmocatta/constellation"
 documentation = "https://docs.rs/constellation-rs/0.1.8"
 readme = "README.md"
 links = "constellation"
+build = "build.rs"
 edition = "2018"
 autotests = true
 
