@@ -29,7 +29,7 @@ nightly = ["palaver/nightly"]
 distribute_binaries = ["constellation-internal/distribute_binaries"]
 fringe = ["serde_pipe/fringe"]
 no_alloc = ["constellation-internal/no_alloc"]
-kubernetes = ["distribute_binaries", "kube", "openssl"]
+kubernetes = ["distribute_binaries", "k8s-openapi", "kube", "openssl", "tokio"]
 
 [dependencies]
 constellation-internal = { path = "constellation-internal", version = "=0.1.8" }
@@ -40,6 +40,7 @@ crossbeam = "0.7"
 docopt = "1.0"
 either = "1.5"
 futures = "0.3"
+k8s-openapi = { version = "0.6", default-features = false, features = ["v1_15"], optional = true }
 kube = { version = "0.20", features = ["openapi"], optional = true }
 log = "0.4"
 notifier = { version = "0.1", features = ["tcp_typed"] }
@@ -53,6 +54,7 @@ serde_traitobject = "0.2"
 serde_json = "1.0"
 serde_pipe = "0.1"
 tcp_typed = "0.1"
+tokio = { version = "0.2.0-alpha.6", optional = true }
 toml = "0.5"
 
 # dependency of kube; ensure it's vendored to simplify cross-compilation
