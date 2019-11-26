@@ -26,22 +26,24 @@ pub fn kube_master(
 	let fs = json!({
 		"spec": { "replicas": replicas }
 	});
-	let _ = jobs
-		.patch_scale(
+	let _ = tokio::runtime::Runtime::new()
+		.unwrap()
+		.block_on(jobs.patch_scale(
 			"constellation",
 			&PatchParams::default(),
 			serde_json::to_vec(&fs).unwrap(),
-		)
+		))
 		.unwrap();
 
 	let pods = Api::v1Pod(client).within(&namespace);
 
 	let ips = loop {
-		let pods = pods
-			.list(&ListParams {
+		let pods = tokio::runtime::Runtime::new()
+			.unwrap()
+			.block_on(pods.list(&ListParams {
 				label_selector: Some(format!("{}={}", "constellation", "node")),
 				..ListParams::default()
-			})
+			}))
 			.expect("failed to list pods")
 			.items;
 		let ips: Vec<IpAddr> = pods
