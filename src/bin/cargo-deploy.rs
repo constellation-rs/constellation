@@ -3,7 +3,7 @@
 //!
 //! ## Usage
 //! ```text
-//! cargo deploy [options] <host> [--] [args]...
+//! cargo deploy [options] <host> [--] [<args>]...
 //! ```
 //!
 //! ## Options

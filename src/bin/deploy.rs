@@ -3,7 +3,7 @@
 //!
 //! ## Usage
 //! ```text
-//! deploy [options] <host> <binary> [--] [args]...
+//! deploy [options] <host> <binary> [--] [<args>]...
 //! ```
 //!
 //! ## Options
@@ -41,7 +41,7 @@ use constellation_internal::{
 const USAGE: &str = "Run a binary on a constellation cluster.
 
 USAGE:
-    deploy [options] <host> <binary> [--] [args]...
+    deploy [options] <host> <binary> [--] [<args>]...
 
 OPTIONS:
     -h --help          Show this screen.
