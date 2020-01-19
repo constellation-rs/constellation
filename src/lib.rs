@@ -36,6 +36,7 @@
 doc_comment::doctest!("../README.md");
 
 mod channel;
+mod deploy;
 
 use either::Either;
 use futures::{
@@ -67,6 +68,8 @@ use constellation_internal::{
 pub use channel::ChannelError;
 #[doc(inline)]
 pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
+#[doc(inline)]
+pub use deploy::deploy;
 #[doc(inline)]
 pub use serde_closure::{Fn, FnMut, FnOnce};
 

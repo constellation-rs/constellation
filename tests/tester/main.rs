@@ -296,16 +296,13 @@ fn main() {
 	if !output.status.success() {
 		panic!("cargo build failed");
 	}
-	for message in serde_json::Deserializer::from_slice(&output.stdout)
-		.into_iter::<constellation_internal::cargo_metadata::Message>()
-	{
-		if let constellation_internal::cargo_metadata::Message::CompilerArtifact { artifact } =
-			message.unwrap_or_else(|_| {
-				panic!(
-					"Failed to parse output of cargo {}",
-					itertools::join(args.iter(), " ")
-				)
-			}) {
+	for message in serde_json::Deserializer::from_slice(&output.stdout).into_iter() {
+		if let cargo_metadata::Message::CompilerArtifact(artifact) = message.unwrap_or_else(|_| {
+			panic!(
+				"Failed to parse output of cargo {}",
+				itertools::join(args.iter(), " ")
+			)
+		}) {
 			if let Ok(path) = PathBuf::from(&artifact.target.src_path).strip_prefix(&current_dir) {
 				if (artifact.target.kind == vec![String::from("bin")] && !artifact.profile.test)
 					|| artifact.target.kind == vec![String::from("test")]

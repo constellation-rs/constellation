@@ -22,7 +22,6 @@ aes = "0.3"
 alloc_counter = { optional = true, version = "0.0", default-features = false, features = ["std", "no_alloc"] }
 ansi_term = "0.12"
 bincode = "1.0"
-cargo_metadata = { version = "0.9", default-features = false }
 either = { version = "1.5", features = ["serde"] }
 palaver = "0.2"
 rand = { version = "0.7", features = ["small_rng"] }
