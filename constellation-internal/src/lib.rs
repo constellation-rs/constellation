@@ -20,7 +20,8 @@
 	clippy::if_not_else,
 	clippy::inline_always,
 	clippy::must_use_candidate,
-	clippy::double_must_use
+	clippy::double_must_use,
+	clippy::missing_errors_doc
 )]
 
 mod ext;
@@ -280,8 +281,8 @@ pub enum Format {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-/// 	mem: 100 * 1024 * 1024, // 100 MiB
-/// 	cpu: 65536 / 16,        // 1/16th of a logical CPU core
+///     mem: 100 * 1024 * 1024, // 100 MiB
+///     cpu: 65536 / 16,        // 1/16th of a logical CPU core
 /// };
 /// ```
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -301,8 +302,8 @@ impl Default for Resources {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-/// 	mem: 100 * 1024 * 1024, // 100 MiB
-/// 	cpu: 65536 / 16,        // 1/16th of a logical CPU core
+///     mem: 100 * 1024 * 1024, // 100 MiB
+///     cpu: 65536 / 16,        // 1/16th of a logical CPU core
 /// };
 /// ```
 pub const RESOURCES_DEFAULT: Resources = Resources {

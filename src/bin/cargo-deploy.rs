@@ -53,7 +53,7 @@ fn main() {
 			if artifact.target.kind == vec![String::from("bin")] {
 				assert_eq!(artifact.filenames.len(), 1);
 				assert!(bin.is_none());
-				bin = Some(artifact.filenames.into_iter().nth(0).unwrap());
+				bin = Some(artifact.filenames.into_iter().next().unwrap());
 			}
 		}
 	}
