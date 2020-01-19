@@ -127,6 +127,10 @@ name = "sender-self"
 test = false
 harness = false
 [[test]]
+name = "spawn-env"
+test = false
+harness = false
+[[test]]
 name = "spawn-multiple-futures-send-recv-stream"
 test = false
 harness = false
