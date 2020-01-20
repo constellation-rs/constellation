@@ -153,7 +153,7 @@ pub fn parse_mem_size(input: &str) -> Result<u64, ()> {
 	if index == input.len() {
 		return Ok(a);
 	}
-	let (b, b1): (u64, u32) = if input[index..=index].chars().nth(0).ok_or(())? == '.' {
+	let (b, b1): (u64, u32) = if input[index..=index].chars().next().ok_or(())? == '.' {
 		index += 1;
 		let index1 = index;
 		index = index
@@ -172,7 +172,7 @@ pub fn parse_mem_size(input: &str) -> Result<u64, ()> {
 	} else {
 		(0, 0)
 	};
-	if index + 1 < input.len() && input[index..=index].chars().nth(0).ok_or(())? == ' ' {
+	if index + 1 < input.len() && input[index..=index].chars().next().ok_or(())? == ' ' {
 		index += 1;
 	}
 	let c: u64 = match &input[index..] {
@@ -203,7 +203,7 @@ pub fn parse_cpu_size(input: &str) -> Result<u32, ()> {
 	if index == input.len() {
 		return Ok(a * 65536);
 	}
-	let (b, b1): (u64, u32) = if input[index..=index].chars().nth(0).ok_or(())? == '.' {
+	let (b, b1): (u64, u32) = if input[index..=index].chars().next().ok_or(())? == '.' {
 		index += 1;
 		let index1 = index;
 		index = index

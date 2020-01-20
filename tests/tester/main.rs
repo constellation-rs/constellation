@@ -314,7 +314,7 @@ fn main() {
 					// assert_eq!(artifact.filenames.len(), 1, "{:?}", artifact);
 					let x = products.insert(
 						path.to_owned(),
-						artifact.filenames.into_iter().nth(0).unwrap(),
+						artifact.filenames.into_iter().next().unwrap(),
 					);
 					assert!(x.is_none());
 				}

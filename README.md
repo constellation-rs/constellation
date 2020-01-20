@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.rs/constellation-rs/0.1.8">Docs</a>
+    <a href="https://docs.rs/constellation-rs/0.1.9">Docs</a>
 </p>
 
 Constellation is a framework for Rust (nightly) that aides in the writing, debugging and deployment of distributed programs. It draws heavily from [Erlang/OTP](https://en.wikipedia.org/wiki/Erlang_(programming_language)), [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface), and [CSP](https://en.wikipedia.org/wiki/Communicating_sequential_processes); and leverages the Rust ecosystem where it can including [serde](https://serde.rs/) + [bincode](https://github.com/servo/bincode) for network serialization, and [mio](https://github.com/tokio-rs/mio) and [futures-rs](https://github.com/rust-lang-nursery/futures-rs) for asynchronous channels over TCP.
@@ -27,13 +27,13 @@ For leveraging Constellation directly, read on.
 
 ## Constellation framework
 
-* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.8/constellation/fn.init.html) at the beginning of your program.
-* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.8/constellation/fn.spawn.html) new processes, which run `closure`.
+* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1.9/constellation/fn.init.html) at the beginning of your program.
+* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1.9/constellation/fn.spawn.html) new processes, which run `closure`.
 * `spawn(closure)` returns the Pid of the new process.
-* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.8/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.8/constellation/struct.Receiver.html#method.new).
-* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.1.8/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.1.8/constellation/struct.Receiver.html#method.recv).
+* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.9/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1.9/constellation/struct.Receiver.html#method.new).
+* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.1.9/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.1.9/constellation/struct.Receiver.html#method.recv).
 * [futures-rs](https://github.com/rust-lang-nursery/futures-rs) provides useful functions and adapters including `select()` and `join()` for working with channels.
-* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.1.8/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
+* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.1.9/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
 * For more information on asynchronous programming in Rust check out the [Async Book](https://rust-lang.github.io/async-book/index.html)!
 
 Here's a simple example recursively spawning processes to distribute the task of finding Fibonacci numbers:
@@ -248,7 +248,7 @@ Please file an issue if you experience any other requirements.
 
 ## API
 
-[see Rust doc](https://docs.rs/constellation-rs/0.1.8)
+[see Rust doc](https://docs.rs/constellation-rs/0.1.9)
 
 ## Testing
 

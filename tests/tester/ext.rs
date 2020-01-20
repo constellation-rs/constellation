@@ -69,8 +69,8 @@ pub mod serde_regex {
 		S: Serializer,
 	{
 		let x = value.as_str();
-		assert_eq!(x.chars().nth(0).unwrap(), '^');
-		assert_eq!(x.chars().rev().nth(0).unwrap(), '$');
+		assert_eq!(x.chars().next().unwrap(), '^');
+		assert_eq!(x.chars().rev().next().unwrap(), '$');
 		serializer.serialize_str(&x[1..x.len() - 1])
 	}
 	pub fn deserialize<'de, D>(deserializer: D) -> Result<Regex, D::Error>
