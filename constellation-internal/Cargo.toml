@@ -1,6 +1,6 @@
 [package]
 name = "constellation-internal"
-version = "0.1.9"
+version = "0.1.10"
 license = "Apache-2.0"
 authors = ["Alec Mocatta <alec@mocatta.net>"]
 categories = ["development-tools","network-programming","concurrency","asynchronous"]
@@ -10,7 +10,7 @@ Common components for the `constellation` framework.
 """
 repository = "https://github.com/alecmocatta/constellation"
 homepage = "https://github.com/alecmocatta/constellation"
-documentation = "https://docs.rs/constellation-internal/0.1.9"
+documentation = "https://docs.rs/constellation-internal/0.1.10"
 edition = "2018"
 
 [features]

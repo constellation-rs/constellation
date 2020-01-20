@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.9")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.10")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![warn(
 	missing_copy_implementations,
