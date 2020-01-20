@@ -9,7 +9,7 @@
 //!
 //! The only requirement to use is that [`init()`](init) must be called immediately inside your application's `main()` function.
 
-#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.9")]
+#![doc(html_root_url = "https://docs.rs/constellation-rs/0.1.10")]
 #![cfg_attr(feature = "nightly", feature(read_initializer))]
 #![warn(
 	missing_copy_implementations,
@@ -36,6 +36,7 @@
 doc_comment::doctest!("../README.md");
 
 mod channel;
+mod deploy;
 
 use either::Either;
 use futures::{
@@ -67,6 +68,8 @@ use constellation_internal::{
 pub use channel::ChannelError;
 #[doc(inline)]
 pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
+#[doc(inline)]
+pub use deploy::deploy;
 #[doc(inline)]
 pub use serde_closure::{Fn, FnMut, FnOnce};
 

@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: constellation
-          image: constellationrs/constellation:0.1.9
+          image: constellationrs/constellation:0.1.10
           args:
             - kube
             - 0.0.0.0:32123
@@ -68,7 +68,7 @@ spec:
     spec:
       containers:
         - name: constellation
-          image: constellationrs/constellation:0.1.9
+          image: constellationrs/constellation:0.1.10
           args:
             - 0.0.0.0:32123
           env:

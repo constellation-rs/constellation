@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.9")]
+#![doc(html_root_url = "https://docs.rs/constellation-internal/0.1.10")]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -759,44 +759,4 @@ pub fn abort_on_unwind<F: FnOnce() -> T, T>(f: F) -> impl FnOnce() -> T {
 #[inline]
 pub fn abort_on_unwind_1<F: FnOnce(&A) -> T, T, A>(f: F) -> impl FnOnce(&A) -> T {
 	|a| abort_on_unwind_(|| f(a))
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-pub mod cargo_metadata {
-	use cargo_metadata::Target;
-	use serde::Deserialize;
-	use std::path::PathBuf;
-
-	// https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/util/machine_message.rs
-	#[derive(Deserialize, Debug)]
-	#[serde(tag = "reason", rename_all = "kebab-case")]
-	#[allow(clippy::pub_enum_variant_names)]
-	pub enum Message {
-		CompilerArtifact {
-			#[serde(flatten)]
-			artifact: Artifact,
-		},
-		CompilerMessage {},
-		BuildScriptExecuted {},
-		#[serde(skip)]
-		Unknown, // TODO https://github.com/serde-rs/serde/issues/912
-	}
-	#[derive(Deserialize, Debug)]
-	pub struct Artifact {
-		pub package_id: String,
-		pub target: Target, // https://github.com/rust-lang/cargo/blob/c24a09772c2c1cb315970dbc721f2a42d4515f21/src/cargo/core/manifest.rs#L188
-		pub profile: ArtifactProfile,
-		pub features: Vec<String>,
-		pub filenames: Vec<PathBuf>,
-		pub fresh: bool,
-	}
-	#[derive(Deserialize, Debug)]
-	pub struct ArtifactProfile {
-		pub opt_level: String,
-		pub debuginfo: Option<u32>,
-		pub debug_assertions: bool,
-		pub overflow_checks: bool,
-		pub test: bool,
-	}
 }
