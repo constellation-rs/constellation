@@ -20,6 +20,7 @@ pub fn deploy(
 	#[cfg(feature = "distribute_binaries")]
 	let binary =
 		fs::File::open(path).unwrap_or_else(|e| panic!("Couldn't open file {:?}: {:?}", path, e));
+	let _ = path;
 	#[cfg(not(feature = "distribute_binaries"))]
 	let binary = std::marker::PhantomData::<fs::File>;
 	let request = BridgeRequest {
