@@ -21,7 +21,7 @@ edition = "2018"
 autotests = true
 
 [badges]
-azure-devops = { project = "alecmocatta/constellation", pipeline = "tests" }
+azure-devops = { project = "alecmocatta/constellation", pipeline = "tests", build = "25" }
 maintenance = { status = "actively-developed" }
 
 [features]
