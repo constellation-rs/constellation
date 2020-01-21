@@ -53,15 +53,15 @@ use palaver::{
 	env, file::{execve, fd_path, fexecve}, socket::{socket as palaver_socket, SockFlag}, valgrind
 };
 use pin_utils::pin_mut;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
 	any::type_name, borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, path, pin::Pin, process, str, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
+	}, path, pin::Pin, process, sync::{mpsc, Arc, Mutex, RwLock}, task::{Context, Poll}, thread::{self, Thread}
 };
 
 use constellation_internal::{
-	abort_on_unwind, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
+	abort_on_unwind, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_serialize_into, FabricRequest, SchedulerArg, SpawnArg, SpawnArgSub}, BufferedStream, Deploy, DeployOutputEvent, Envs, ExitStatus, Fd, Format, Formatter, OwningOrRef, PidInternal, ProcessInputEvent, ProcessOutputEvent, StyleSupport
 };
 
 #[doc(inline)]
@@ -112,16 +112,13 @@ impl<T: ?Sized> FutureExt1 for T where T: Future {}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+type Start<'a> = OwningOrRef<'a, Box<dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static>>;
+
+const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const LISTENER_FD: Fd = 3; // from fabric
 const ARG_FD: Fd = 4; // from fabric
 const SCHEDULER_FD: Fd = 4;
 const MONITOR_FD: Fd = 5;
-
-#[derive(Clone, Deserialize, Debug)]
-struct SchedulerArg {
-	ip: IpAddr,
-	scheduler: Pid,
-}
 
 static PID: OnceCell<Pid> = OnceCell::new();
 static BRIDGE: OnceCell<Pid> = OnceCell::new();
@@ -519,19 +516,23 @@ fn spawn_native(
 		.collect(); //vars.split('\0').map(|x|{let (a,b) = x.split_at(x.chars().position(|x|x=='=').unwrap_or_else(||panic!("invalid vars {:?}", x)));(CString::new(a).unwrap(),CString::new(&b[1..]).unwrap())}).collect();
 	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
-	let our_pid = pid();
+	let (process_listener, new_pid) = native_process_listener();
 
-	let (process_listener, process_id) = native_process_listener();
-
-	let mut spawn_arg: Vec<u8> = Vec::new();
+	let mut arg: Vec<u8> = Vec::new();
 	let bridge_pid: Pid = *BRIDGE.get().unwrap();
-	bincode::serialize_into(&mut spawn_arg, &bridge_pid).unwrap();
-	bincode::serialize_into(&mut spawn_arg, &our_pid).unwrap();
-	bincode::serialize_into(&mut spawn_arg, &f).unwrap();
+	let spawn_arg = SpawnArg::<Start> {
+		bridge: bridge_pid,
+		spawn: Some(SpawnArgSub {
+			parent: pid(),
+			f: OwningOrRef::Ref(f),
+		}),
+	};
+	bincode::serialize_into(&mut arg, &spawn_arg).unwrap();
+	bincode::serialize_into(&mut arg, &new_pid).unwrap();
 
 	let arg = file_from_reader(
-		&mut &*spawn_arg,
-		spawn_arg.len().try_into().unwrap(),
+		&mut &*arg,
+		arg.len().try_into().unwrap(),
 		&env::args_os().unwrap()[0],
 		false,
 	)
@@ -627,7 +628,6 @@ fn spawn_native(
 	};
 	unistd::close(process_listener).unwrap();
 	drop(arg);
-	let new_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), process_id);
 	// *BRIDGE.get().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
 	{
 		let file = unsafe { fs::File::from_raw_fd(MONITOR_FD) };
@@ -647,9 +647,14 @@ fn spawn_deployed(
 		(BufferedStream::new(&stream), BufferedStream::new(&stream));
 	let mut arg: Vec<u8> = Vec::new();
 	let bridge_pid: Pid = *BRIDGE.get().unwrap();
-	bincode::serialize_into(&mut arg, &bridge_pid).unwrap();
-	bincode::serialize_into(&mut arg, &pid()).unwrap();
-	bincode::serialize_into(&mut arg, &f).unwrap();
+	let spawn_arg = SpawnArg::<Start> {
+		bridge: bridge_pid,
+		spawn: Some(SpawnArgSub {
+			parent: pid(),
+			f: OwningOrRef::Ref(f),
+		}),
+	};
+	bincode::serialize_into(&mut arg, &spawn_arg).unwrap();
 	#[cfg(feature = "distribute_binaries")]
 	let binary = if !valgrind::is().unwrap_or(false) {
 		env::exe().unwrap()
@@ -762,15 +767,14 @@ pub fn bridge_init() -> TcpListener {
 	let listener = unsafe { TcpListener::from_raw_fd(BOUND_FD) };
 	{
 		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
-		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
+		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg)
+			.map_err(map_bincode_err)
+			.unwrap();
+		let our_pid: Pid = bincode::deserialize_from(&mut &arg)
+			.map_err(map_bincode_err)
+			.unwrap();
+		assert_eq!((&arg).read(&mut [0]).unwrap(), 0);
 		drop(arg);
-		let port = {
-			let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
-			let local_addr = listener.local_addr().unwrap();
-			let _ = listener.into_raw_fd();
-			local_addr.port()
-		};
-		let our_pid = Pid::new(sched_arg.ip, port);
 		PID.set(our_pid).unwrap();
 		let scheduler = TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
@@ -795,7 +799,7 @@ pub fn bridge_init() -> TcpListener {
 }
 
 fn native_bridge(format: Format, our_pid: Pid) -> Pid {
-	let (bridge_process_listener, bridge_process_id) = native_process_listener();
+	let (bridge_process_listener, bridge_pid) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
 	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
@@ -810,7 +814,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		)
 		.unwrap();
 
-		let bridge_pid = Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id);
 		PID.set(bridge_pid).unwrap();
 
 		let reactor = channel::Reactor::with_fd(LISTENER_FD, bridge_pid.addr());
@@ -900,10 +903,10 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		process::exit(exit_code.into());
 	}
 	unistd::close(bridge_process_listener).unwrap();
-	Pid::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bridge_process_id)
+	bridge_pid
 }
 
-fn native_process_listener() -> (Fd, u16) {
+fn native_process_listener() -> (Fd, Pid) {
 	let process_listener = palaver_socket(
 		socket::AddressFamily::Inet,
 		socket::SockType::Stream,
@@ -914,10 +917,7 @@ fn native_process_listener() -> (Fd, u16) {
 	socket::setsockopt(process_listener, sockopt::ReuseAddr, &true).unwrap();
 	socket::bind(
 		process_listener,
-		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
-			IpAddr::V4(Ipv4Addr::LOCALHOST),
-			0,
-		))),
+		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(LOCALHOST, 0))),
 	)
 	.unwrap();
 	socket::setsockopt(process_listener, sockopt::ReusePort, &true).unwrap();
@@ -927,9 +927,9 @@ fn native_process_listener() -> (Fd, u16) {
 		} else {
 			panic!()
 		};
-	assert_eq!(process_id.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+	assert_eq!(process_id.ip(), LOCALHOST);
 
-	(process_listener, process_id.port())
+	(process_listener, Pid::new(LOCALHOST, process_id.port()))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1245,50 +1245,57 @@ pub fn init(resources: Resources) {
 		drop(file);
 		process::exit(0);
 	}
-	let (subprocess, resources, argument, bridge, scheduler, ip) = {
+	let (resources, argument, scheduler, our_pid) = {
 		if !deployed {
-			if envs.resources.is_none() {
-				(
-					false,
-					resources,
-					vec![],
-					None,
-					None,
-					IpAddr::V4(Ipv4Addr::LOCALHOST),
-				)
+			let (resources, spawn_arg, our_pid) = if envs.resources.is_none() {
+				// We're in native topprocess
+				let (our_process_listener, our_pid) = native_process_listener();
+				if our_process_listener != LISTENER_FD {
+					palaver::file::move_fd(
+						our_process_listener,
+						LISTENER_FD,
+						Some(fcntl::FdFlag::empty()),
+						true,
+					)
+					.unwrap();
+				}
+				let bridge = native_bridge(format, our_pid);
+				// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
+				let spawn_arg = SpawnArg {
+					bridge,
+					spawn: None,
+				};
+				(resources, spawn_arg, our_pid)
 			} else {
+				// native subprocess
 				let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
-				let bridge = bincode::deserialize_from(&mut &arg)
+				let spawn_arg: SpawnArg<Start> = bincode::deserialize_from(&mut &arg)
 					.map_err(map_bincode_err)
 					.unwrap();
-				let mut prog_arg = Vec::new();
-				let _ = (&arg).read_to_end(&mut prog_arg).unwrap();
-				(
-					true,
-					envs.resources.unwrap().unwrap(),
-					prog_arg,
-					Some(bridge),
-					None,
-					IpAddr::V4(Ipv4Addr::LOCALHOST),
-				)
-			}
+				let our_pid: Pid = bincode::deserialize_from(&mut &arg)
+					.map_err(map_bincode_err)
+					.unwrap();
+				assert_eq!((&arg).read(&mut [0]).unwrap(), 0);
+				(envs.resources.unwrap().unwrap(), spawn_arg, our_pid)
+			};
+			(resources, spawn_arg, None, our_pid)
 		} else {
 			let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
-			let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg).unwrap();
-			let bridge: Pid = bincode::deserialize_from(&mut &arg).unwrap();
-			let mut prog_arg = Vec::new();
-			let _ = (&arg).read_to_end(&mut prog_arg).unwrap();
-			let subprocess = !prog_arg.is_empty();
-			if !subprocess {
-				assert_eq!(resources, envs.resources.unwrap().unwrap());
-			}
+			let spawn_arg: SpawnArg<Start> = bincode::deserialize_from(&mut &arg)
+				.map_err(map_bincode_err)
+				.unwrap();
+			let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg)
+				.map_err(map_bincode_err)
+				.unwrap();
+			let our_pid: Pid = bincode::deserialize_from(&mut &arg)
+				.map_err(map_bincode_err)
+				.unwrap();
+			assert_eq!((&arg).read(&mut [0]).unwrap(), 0);
 			(
-				subprocess,
 				envs.resources.unwrap().unwrap(),
-				prog_arg,
-				Some(bridge),
+				spawn_arg,
 				Some(sched_arg.scheduler),
-				sched_arg.ip,
+				our_pid,
 			)
 		}
 	};
@@ -1300,30 +1307,6 @@ pub fn init(resources: Resources) {
 	// 	pid()
 	// );
 
-	let bridge = bridge.unwrap_or_else(|| {
-		// We're in native topprocess
-		let (our_process_listener, our_process_id) = native_process_listener();
-		if our_process_listener != LISTENER_FD {
-			palaver::file::move_fd(
-				our_process_listener,
-				LISTENER_FD,
-				Some(fcntl::FdFlag::empty()),
-				true,
-			)
-			.unwrap();
-		}
-		let our_pid = Pid::new(ip, our_process_id);
-		native_bridge(format, our_pid)
-		// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
-	});
-
-	let bind = {
-		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
-		let local_addr = listener.local_addr().unwrap();
-		let _ = listener.into_raw_fd();
-		local_addr
-	};
-	let our_pid = Pid::new(ip, bind.port());
 	PID.set(our_pid).unwrap();
 
 	trace!(
@@ -1335,7 +1318,7 @@ pub fn init(resources: Resources) {
 
 	DEPLOYED.set(deployed).unwrap();
 	RESOURCES.set(resources).unwrap();
-	BRIDGE.set(bridge).unwrap();
+	BRIDGE.set(argument.bridge).unwrap();
 
 	let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
 	if fd != SCHEDULER_FD {
@@ -1344,7 +1327,7 @@ pub fn init(resources: Resources) {
 	palaver::file::copy_fd(SCHEDULER_FD, MONITOR_FD, Some(fcntl::FdFlag::empty()), true).unwrap();
 
 	let (socket_forwardee, monitor_writer, stdout_writer, stderr_writer, stdin_reader) =
-		monitor_process(bridge, deployed);
+		monitor_process(argument.bridge, deployed);
 	assert_ne!(monitor_writer, MONITOR_FD);
 	palaver::file::move_fd(
 		monitor_writer,
@@ -1386,6 +1369,12 @@ pub fn init(resources: Resources) {
 			.unwrap();
 	}
 
+	let bind = {
+		let listener = unsafe { TcpListener::from_raw_fd(LISTENER_FD) };
+		let local_addr = listener.local_addr().unwrap();
+		let _ = listener.into_raw_fd();
+		local_addr
+	};
 	let reactor = channel::Reactor::with_forwardee(socket_forwardee, bind, pid().addr());
 	*REACTOR.try_write().unwrap() = Some(reactor);
 	let handle = channel::Reactor::run(
@@ -1414,22 +1403,11 @@ pub fn init(resources: Resources) {
 		unistd::getppid(),
 		pid().addr().port(),
 		pid(),
-		bridge
+		argument.bridge
 	);
 
-	if subprocess {
-		let (start, parent) = {
-			let mut argument = io::Cursor::new(&argument);
-			let parent: Pid = bincode::deserialize_from(&mut argument)
-				.map_err(map_bincode_err)
-				.unwrap();
-			let start: Box<dyn serde_traitobject::FnOnce<(Pid,), Output = ()>> =
-				bincode::deserialize_from(&mut argument)
-					.map_err(map_bincode_err)
-					.unwrap();
-			(start, parent)
-		};
-		start(parent);
+	if let Some(SpawnArgSub { parent, f }) = argument.spawn {
+		f.into_inner().unwrap()(parent);
 		process::exit(0);
 	}
 }

@@ -1,7 +1,28 @@
-use crate::Resources;
+use ::serde::{Deserialize, Serialize};
 #[cfg(not(feature = "distribute_binaries"))]
 use std::marker::PhantomData;
-use std::{ffi::OsString, net::SocketAddr};
+use std::{
+	ffi::OsString, net::{IpAddr, SocketAddr}
+};
+
+use crate::{Pid, Resources};
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SchedulerArg {
+	pub ip: IpAddr,
+	pub scheduler: Pid,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SpawnArg<T> {
+	pub bridge: Pid,
+	pub spawn: Option<SpawnArgSub<T>>,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SpawnArgSub<T> {
+	pub parent: Pid,
+	pub f: T,
+}
 
 #[derive(Debug)]
 pub struct FabricRequest<A, B>

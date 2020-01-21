@@ -1,13 +1,12 @@
 #![allow(clippy::too_many_lines)]
 
 use either::Either;
-use serde::Serialize;
 use std::{
 	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread
 };
 
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Pid, Resources, TrySpawnError
+	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Pid, Resources, TrySpawnError
 };
 
 #[derive(Debug)]
@@ -30,12 +29,6 @@ impl Node {
 		self.mem += process.mem;
 		self.cpu += process.cpu;
 	}
-}
-
-#[derive(Serialize)]
-struct SchedulerArg {
-	ip: IpAddr,
-	scheduler: Pid,
 }
 
 pub fn run(
@@ -68,7 +61,9 @@ pub fn run(
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
-					let _ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read).unwrap();
+					let _ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
+						.map_err(map_bincode_err)
+						.unwrap();
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(abort_on_unwind_1(|_spawn| {
 							for request in receiver {
@@ -174,17 +169,14 @@ pub fn run(
 					let node = &mut nodes[node];
 					node.1.alloc(&request.resources);
 
-					let mut arg = Vec::new();
 					bincode::serialize_into(
-						&mut arg,
+						&mut request.arg,
 						&SchedulerArg {
 							ip: node.2,
 							scheduler: master_pid,
 						},
 					)
 					.unwrap();
-					arg.extend(request.arg);
-					request.arg = arg;
 					node.3.push_back((sender, request.resources));
 					node.0.send(request).unwrap();
 				} else {
