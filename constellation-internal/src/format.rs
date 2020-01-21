@@ -1,9 +1,9 @@
-use super::{DeployOutputEvent, Pid, ToHex};
-use aes::{block_cipher_trait::BlockCipher, Aes128};
 use rand::{self, Rng, SeedableRng};
 use std::{
 	borrow, fmt, fs, io::{self, Write}, os::{self, unix::io::IntoRawFd}
 };
+
+use super::{DeployOutputEvent, Pid, ToHex};
 
 const STDOUT: os::unix::io::RawFd = 1;
 const STDERR: os::unix::io::RawFd = 2;
@@ -252,14 +252,8 @@ impl Style {
 
 pub(crate) fn pretty_pid(
 	pid: &Pid, bold: bool, style_support: StyleSupport,
-) -> ansi_term::ANSIGenericString<str> {
-	// impl std::fmt::Display + 'a {
-	let key: [u8; 16] = [0; 16];
-
-	let bytes = encrypt(pid.0, key);
-	let decrypted_data = decrypt(bytes, key);
-	assert_eq!(&pid.0, &decrypted_data);
-
+) -> impl std::fmt::Display {
+	let bytes = pid.key.to_le_bytes();
 	let x = bytes.to_hex().take(7).collect::<String>();
 	let mut rng = rand::rngs::SmallRng::from_seed([
 		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
@@ -278,21 +272,4 @@ pub(crate) fn pretty_pid(
 		color = color.bold();
 	}
 	color.paint(x)
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-pub(crate) fn encrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	let key = key.into();
-	let mut block = input.into();
-	let cipher = Aes128::new(&key);
-	cipher.encrypt_block(&mut block);
-	block.into()
-}
-pub(crate) fn decrypt(input: [u8; 16], key: [u8; 16]) -> [u8; 16] {
-	let key = key.into();
-	let mut block = input.into();
-	let cipher = Aes128::new(&key);
-	cipher.decrypt_block(&mut block);
-	block.into()
 }
