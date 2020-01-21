@@ -76,23 +76,24 @@ impl Pid {
 		SocketAddr::new(self.ip, self.port)
 	}
 
-	fn format<'a>(&'a self) -> impl Iterator<Item = char> + 'a {
+	fn format<'a>(&'a self) -> impl Iterator<Item = char> + Clone + 'a {
 		self.key
 			.to_le_bytes()
 			.to_hex()
+			.take(7)
 			.collect::<Vec<_>>()
 			.into_iter()
 	}
 }
 impl Display for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.format().take(7).collect::<String>())
+		write!(f, "{}", self.format().collect::<String>())
 	}
 }
 impl Debug for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_tuple("Pid")
-			.field(&self.format().take(7).collect::<String>())
+			.field(&self.format().collect::<String>())
 			.finish()
 	}
 }

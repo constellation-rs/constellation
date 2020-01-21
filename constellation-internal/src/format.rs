@@ -1,9 +1,9 @@
 use rand::{self, Rng, SeedableRng};
 use std::{
-	borrow, fmt, fs, io::{self, Write}, os::{self, unix::io::IntoRawFd}
+	borrow, convert::TryInto, fmt, fs, io::{self, Write}, os::{self, unix::io::IntoRawFd}
 };
 
-use super::{DeployOutputEvent, Pid, ToHex};
+use super::{DeployOutputEvent, Pid};
 
 const STDOUT: os::unix::io::RawFd = 1;
 const STDERR: os::unix::io::RawFd = 2;
@@ -253,12 +253,15 @@ impl Style {
 pub(crate) fn pretty_pid(
 	pid: &Pid, bold: bool, style_support: StyleSupport,
 ) -> impl std::fmt::Display {
-	let bytes = pid.key.to_le_bytes();
-	let x = bytes.to_hex().take(7).collect::<String>();
-	let mut rng = rand::rngs::SmallRng::from_seed([
-		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
-		bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-	]);
+	let mut format = pid.format();
+	let x = format.clone().collect::<String>();
+	let mut rng = rand::rngs::SmallRng::from_seed(
+		(0..16)
+			.map(|_| format.next().map_or(0, |x| (x as u32).try_into().unwrap()))
+			.collect::<Vec<u8>>()[..]
+			.try_into()
+			.unwrap(),
+	);
 	let (r, g, b) = loop {
 		let (r_, g_, b_): (u8, u8, u8) = rng.gen();
 		let (r, g, b) = (u16::from(r_), u16::from(g_), u16::from(b_));
