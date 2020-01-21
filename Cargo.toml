@@ -80,6 +80,7 @@ systemstat = "0.1"
 
 [patch.crates-io]
 systemstat = { git = "https://github.com/alecmocatta/systemstat" }
+palaver = { git = "https://github.com/alecmocatta/palaver", branch = "fork2" }
 
 ###
 

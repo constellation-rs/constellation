@@ -79,7 +79,7 @@ mod master;
 
 use either::Either;
 #[cfg(unix)]
-use nix::{fcntl, sys::signal, sys::socket, sys::wait, unistd};
+use nix::{fcntl, sys::signal, sys::socket, unistd};
 use palaver::{
 	file::{copy_fd, execve, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
@@ -305,21 +305,14 @@ fn main() {
 				let arg = request.arg;
 				let bind = request.bind;
 
-				let child = match unistd::fork().expect("Fork failed") {
-					unistd::ForkResult::Child => {
+				let child = match palaver::process::fork(false).expect("Fork failed") {
+					palaver::process::ForkResult::Child => {
 						forbid_alloc(|| {
 							// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
 							// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
 							// Including malloc.
 
 							// println!("{:?}", args[0]);
-							#[cfg(any(target_os = "android", target_os = "linux"))]
-							{
-								use nix::libc;
-								let err =
-									unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-								assert_eq!(err, 0);
-							}
 							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
 								.unwrap();
 							#[cfg(feature = "distribute_binaries")]
@@ -380,14 +373,15 @@ fn main() {
 							unreachable!()
 						})
 					}
-					unistd::ForkResult::Parent { child, .. } => child,
+					palaver::process::ForkResult::Parent(child) => child,
 				};
 				unistd::close(process_listener).unwrap();
-				let x = pending.write().unwrap().insert(process_id, child);
+				let child = std::sync::Arc::new(child);
+				let x = pending.write().unwrap().insert(process_id, child.clone());
 				assert!(x.is_none());
 				trace.fabric(FabricOutputEvent::Init {
 					pid: process_id,
-					system_pid: nix::libc::pid_t::from(child).try_into().unwrap(),
+					system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
 				});
 				if bincode::serialize_into(
 					*stream_write.lock().unwrap(),
@@ -399,27 +393,18 @@ fn main() {
 					break;
 				}
 				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
-					loop {
-						match wait::waitpid(child, None) {
-							Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-							Ok(wait::WaitStatus::Exited(pid, code)) if code == 0 => {
-								assert_eq!(pid, child);
-								break;
-							}
-							Ok(wait::WaitStatus::Signaled(pid, signal, _))
-								if signal == signal::Signal::SIGKILL =>
-							{
-								assert_eq!(pid, child);
-								break;
-							}
-							wait_status => panic!("{:?}", wait_status),
-						}
+					match child.wait() {
+						Ok(palaver::process::WaitStatus::Exited(0))
+						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
+						wait_status => panic!("{:?}", wait_status),
 					}
 					let x = pending.write().unwrap().remove(&process_id).unwrap();
-					assert_eq!(x, child);
+					assert!(std::sync::Arc::ptr_eq(&child, &x));
+					drop(x);
+					let child = std::sync::Arc::try_unwrap(child).unwrap();
 					trace.fabric(FabricOutputEvent::Exit {
 						pid: process_id,
-						system_pid: nix::libc::pid_t::from(child).try_into().unwrap(),
+						system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
 					});
 					let _unchecked_error = bincode::serialize_into(
 						*stream_write.lock().unwrap(),
@@ -428,9 +413,9 @@ fn main() {
 					.map_err(map_bincode_err);
 				}));
 			}
-			for (&_job, &pid) in pending.read().unwrap().iter() {
+			for (&_job, pid) in pending.read().unwrap().iter() {
 				// TODO: this is racey
-				let _unchecked_error = signal::kill(pid, signal::Signal::SIGKILL);
+				let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
 			}
 		})
 		.unwrap();

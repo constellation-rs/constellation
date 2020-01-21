@@ -147,8 +147,8 @@ fn recce(
 	let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
 	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
-	let child = if let nix::unistd::ForkResult::Parent { child, .. } =
-		nix::unistd::fork().expect("Fork failed")
+	let child = if let palaver::process::ForkResult::Parent(child) =
+		palaver::process::fork(false).expect("Fork failed")
 	{
 		child
 	} else {
@@ -158,12 +158,6 @@ fn recce(
 			// Including malloc.
 
 			// println!("{:?}", args[0]);
-			#[cfg(any(target_os = "android", target_os = "linux"))]
-			{
-				let err =
-					unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
-				assert_eq!(err, 0);
-			}
 			nix::unistd::close(reader).unwrap();
 			// FdIter::new().unwrap()
 			for fd in (0..1024).filter(|&fd| {
@@ -214,25 +208,14 @@ fn recce(
 	// 	.name(String::from(""))
 	// 	.spawn(abort_on_unwind(move || {
 	// 		thread::sleep(RECCE_TIMEOUT);
-	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+	// 		let _ = child.signal(nix::sys::signal::Signal::SIGKILL);
 	// 	}))
 	// 	.unwrap();
 	// TODO: do this without waitpid/kill race
-	loop {
-		match nix::sys::wait::waitpid(child, None) {
-			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-			Ok(nix::sys::wait::WaitStatus::Exited(pid, code)) if code == 0 => {
-				assert_eq!(pid, child);
-				break;
-			}
-			Ok(nix::sys::wait::WaitStatus::Signaled(pid, signal, _))
-				if signal == nix::sys::signal::Signal::SIGKILL =>
-			{
-				assert_eq!(pid, child);
-				break;
-			}
-			wait_status => panic!("{:?}", wait_status),
-		}
+	match child.wait() {
+		Ok(palaver::process::WaitStatus::Exited(0))
+		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
+		wait_status => panic!("{:?}", wait_status),
 	}
 	let reader = unsafe { File::from_raw_fd(reader) };
 	bincode::deserialize_from(&mut &reader)
