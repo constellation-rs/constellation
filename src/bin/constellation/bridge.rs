@@ -37,7 +37,9 @@ use std::{
 
 use constellation::FutureExt1;
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, TrySpawnError
+	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{
+		bincode_deserialize_from, bincode_serialize_into, BridgeRequest, FabricRequest, SpawnArg
+	}, BufferedStream, DeployInputEvent, DeployOutputEvent, ExitStatus, Fd, Pid, ProcessInputEvent, ProcessOutputEvent, Resources, TrySpawnError
 };
 
 const SCHEDULER_FD: Fd = 4;
@@ -278,7 +280,11 @@ fn manage_connection(
 		.map_err(map_bincode_err)
 		.map_err(drop)?;
 	assert_eq!(request.arg.len(), 0);
-	bincode::serialize_into(&mut request.arg, &constellation::pid()).unwrap();
+	let spawn_arg = SpawnArg::<()> {
+		bridge: constellation::pid(),
+		spawn: None,
+	};
+	bincode::serialize_into(&mut request.arg, &spawn_arg).unwrap();
 	let resources = request
 		.resources
 		.or_else(|| {

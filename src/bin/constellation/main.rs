@@ -84,7 +84,7 @@ use palaver::{
 	file::{copy_fd, execve, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, net::{IpAddr, SocketAddr, TcpListener}, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, thread
 };
 #[cfg(unix)]
 use std::{
@@ -258,6 +258,9 @@ fn main() {
 				}
 				.port();
 				let process_id = Pid::new(ip, port);
+				let _ = (&request.arg).seek(std::io::SeekFrom::End(0)).unwrap();
+				bincode::serialize_into(&request.arg, &process_id).unwrap();
+				let _ = (&request.arg).seek(std::io::SeekFrom::Start(0)).unwrap();
 
 				let args = request
 					.args

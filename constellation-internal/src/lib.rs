@@ -33,7 +33,7 @@ use nix::{fcntl, libc, sys::signal, unistd};
 use palaver::file::{copy, memfd_create};
 use serde::{Deserialize, Serialize};
 use std::{
-	convert::{TryFrom, TryInto}, env, error::Error, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net, ops, os::unix::{
+	convert::{TryFrom, TryInto}, env, error::Error, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net::{IpAddr, SocketAddr}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, process::abort, sync::{Arc, Mutex}
 };
@@ -60,53 +60,34 @@ pub use format::*;
 ///
 /// All inter-process communication occurs after [Sender](Sender)s and [Receiver](Receiver)s have been created with their remotes' `Pid`s. Thus `Pid`s are the primary form of addressing in a `constellation` cluster.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct Pid([u8; 16]);
+pub struct Pid {
+	ip: IpAddr,
+	port: u16,
+	key: u128,
+}
 impl Pid {
-	pub(crate) fn new(ip: net::IpAddr, port: u16) -> Self {
-		match ip {
-			net::IpAddr::V4(ip) => {
-				let ip = ip.octets();
-				Self([
-					ip[0],
-					ip[1],
-					ip[2],
-					ip[3],
-					(port >> 8).try_into().unwrap(),
-					(port & 0xff).try_into().unwrap(),
-					0,
-					0,
-					0,
-					0,
-					0,
-					0,
-					0,
-					0,
-					0,
-					0,
-				])
-			}
-			_ => unimplemented!(),
-		}
+	pub(crate) fn new(ip: IpAddr, port: u16) -> Self {
+		assert_ne!(port, 0);
+		let key = rand::random();
+		Self { ip, port, key }
 	}
 
-	pub(crate) fn addr(&self) -> net::SocketAddr {
-		net::SocketAddr::new(
-			[self.0[0], self.0[1], self.0[2], self.0[3]].into(),
-			((u16::from(self.0[4])) << 8) | (u16::from(self.0[5])),
-		)
+	pub(crate) fn addr(&self) -> SocketAddr {
+		SocketAddr::new(self.ip, self.port)
 	}
 
-	fn format<'a>(&'a self) -> impl Iterator<Item = char> + 'a {
-		let key: [u8; 16] = [0; 16];
-		encrypt(self.0, key)
+	fn format<'a>(&'a self) -> impl Iterator<Item = char> + Clone + 'a {
+		self.key
+			.to_le_bytes()
 			.to_hex()
+			.take(7)
 			.collect::<Vec<_>>()
 			.into_iter()
 	}
 }
 impl Display for Pid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.format().take(7).collect::<String>())
+		write!(f, "{}", self.format().collect::<String>())
 	}
 }
 impl Debug for Pid {
@@ -117,16 +98,16 @@ impl Debug for Pid {
 	}
 }
 pub trait PidInternal {
-	fn new(ip: net::IpAddr, port: u16) -> Pid;
-	fn addr(&self) -> net::SocketAddr;
+	fn new(ip: IpAddr, port: u16) -> Pid;
+	fn addr(&self) -> SocketAddr;
 }
 #[doc(hidden)]
 impl PidInternal for Pid {
-	fn new(ip: net::IpAddr, port: u16) -> Self {
+	fn new(ip: IpAddr, port: u16) -> Self {
 		Self::new(ip, port)
 	}
 
-	fn addr(&self) -> net::SocketAddr {
+	fn addr(&self) -> SocketAddr {
 		Self::addr(self)
 	}
 }

@@ -1,3 +1,97 @@
+mod owningorref {
+	use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
+	use std::{
+		fmt::{self, Debug}, ops::Deref
+	};
+
+	pub enum OwningOrRef<'a, T>
+	where
+		T: Deref,
+	{
+		Owning(T),
+		Ref(&'a T::Target),
+	}
+
+	impl<'a, T> OwningOrRef<'a, T>
+	where
+		T: Deref,
+	{
+		pub fn into_inner(self) -> Option<T> {
+			match self {
+				Self::Owning(a) => Some(a),
+				Self::Ref(_) => None,
+			}
+		}
+	}
+
+	impl<'a, T> Clone for OwningOrRef<'a, T>
+	where
+		T: Deref + Clone,
+	{
+		fn clone(&self) -> Self {
+			match self {
+				Self::Owning(a) => Self::Owning(a.clone()),
+				Self::Ref(a) => Self::Ref(Clone::clone(a)),
+			}
+		}
+	}
+	impl<'a, T> Copy for OwningOrRef<'a, T> where T: Deref + Copy {}
+
+	impl<'a, T> Debug for OwningOrRef<'a, T>
+	where
+		T: Deref + Debug,
+		T::Target: Debug,
+	{
+		fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+			match self {
+				Self::Owning(a) => a.fmt(f),
+				Self::Ref(a) => a.fmt(f),
+			}
+		}
+	}
+
+	impl<'a, T> Deref for OwningOrRef<'a, T>
+	where
+		T: Deref,
+	{
+		type Target = T::Target;
+
+		fn deref(&self) -> &Self::Target {
+			match self {
+				Self::Owning(a) => &**a,
+				Self::Ref(a) => a,
+			}
+		}
+	}
+
+	impl<'a, T> Serialize for OwningOrRef<'a, T>
+	where
+		T: Deref,
+		T::Target: Serialize,
+	{
+		fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+			(**self).serialize(serializer)
+		}
+	}
+	impl<'de, 'a, T> Deserialize<'de> for OwningOrRef<'a, T>
+	where
+		T: Deref + Deserialize<'de>,
+	{
+		fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+		where
+			D: Deserializer<'de>,
+		{
+			T::deserialize(deserializer).map(Self::Owning)
+		}
+	}
+}
+pub use self::owningorref::OwningOrRef;
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 mod bufferedstream {
 	use std::io::{self, Read, Write};
 	#[derive(Debug)]
