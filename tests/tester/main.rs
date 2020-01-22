@@ -461,11 +461,14 @@ fn main() {
 
 	println!("killing");
 	fabric.kill().unwrap();
+	println!("waiting");
 	let _ = fabric.wait().unwrap();
 	#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 	{
+		println!("waiting stderr");
 		let _stderr_empty = fabric_stderr.join().unwrap();
 		// assert!(stderr_empty);
+		println!("waiting stdout");
 		let _stdout_empty = fabric_stdout.join().unwrap();
 		// assert!(stdout_empty);
 	}

@@ -213,7 +213,6 @@ fn recce(
 			let _ = child1.signal(nix::sys::signal::Signal::SIGKILL);
 		}))
 		.unwrap();
-	// TODO: do this without waitpid/kill race
 	match child.wait() {
 		Ok(palaver::process::WaitStatus::Exited(0))
 		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
