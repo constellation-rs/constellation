@@ -31,7 +31,7 @@ use std::{
 	collections::HashMap, ffi::{CStr, CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{
-		atomic::{self, AtomicUsize}, mpsc, Mutex
+		atomic::{self, AtomicUsize}, mpsc, Arc, Mutex
 	}, thread, time::Duration
 };
 
@@ -43,7 +43,7 @@ use constellation_internal::{
 };
 
 const SCHEDULER_FD: Fd = 4;
-const _RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
+const RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
@@ -204,19 +204,23 @@ fn recce(
 		})
 	};
 	nix::unistd::close(writer).unwrap();
-	// let _ = thread::Builder::new()
-	// 	.name(String::from(""))
-	// 	.spawn(abort_on_unwind(move || {
-	// 		thread::sleep(RECCE_TIMEOUT);
-	// 		let _ = child.signal(nix::sys::signal::Signal::SIGKILL);
-	// 	}))
-	// 	.unwrap();
+	let child = Arc::new(child);
+	let child1 = child.clone();
+	let _ = thread::Builder::new()
+		.name(String::from(""))
+		.spawn(abort_on_unwind(move || {
+			thread::sleep(RECCE_TIMEOUT);
+			let _ = child1.signal(nix::sys::signal::Signal::SIGKILL);
+		}))
+		.unwrap();
 	// TODO: do this without waitpid/kill race
 	match child.wait() {
 		Ok(palaver::process::WaitStatus::Exited(0))
 		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
 		wait_status => panic!("{:?}", wait_status),
 	}
+	drop(child);
+	// TODO: kill timeout and drop(Arc::try_unwrap(child).unwrap());
 	let reader = unsafe { File::from_raw_fd(reader) };
 	bincode::deserialize_from(&mut &reader)
 		.map_err(map_bincode_err)

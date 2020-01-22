@@ -44,7 +44,7 @@ use futures::{
 };
 use log::trace;
 use nix::{
-	fcntl, libc, sys::{
+	errno, fcntl, libc, sys::{
 		signal, socket::{self, sockopt}, stat
 	}, unistd
 };
@@ -1017,6 +1017,9 @@ fn monitor_process(
 			}))
 			.unwrap();
 
+		let child = Arc::new(child);
+		let child1 = child.clone();
+
 		let x = thread::Builder::new()
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(abort_on_unwind(move || {
@@ -1052,10 +1055,9 @@ fn monitor_process(
 									}
 								}
 								ProcessInputEvent::Kill => {
-									// TODO: this is racey
-									// child.signal(signal::Signal::SIGKILL).unwrap_or_else(|e| {
-									// 	assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
-									// });
+									child1.signal(signal::Signal::SIGKILL).unwrap_or_else(|e| {
+										assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
+									});
 								}
 							}
 						}
@@ -1118,6 +1120,7 @@ fn monitor_process(
 		drop(bridge_outbound_sender);
 		// trace!("joining x");
 		x.join().unwrap();
+		drop(Arc::try_unwrap(child).unwrap());
 		// unistd::close(libc::STDIN_FILENO).unwrap();
 		// trace!("joining x2");
 		// trace!("joining stdin_thread");

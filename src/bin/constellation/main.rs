@@ -84,7 +84,7 @@ use palaver::{
 	file::{copy_fd, execve, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
 };
 #[cfg(unix)]
 use std::{
@@ -376,7 +376,8 @@ fn main() {
 					palaver::process::ForkResult::Parent(child) => child,
 				};
 				unistd::close(process_listener).unwrap();
-				let x = pending.write().unwrap().insert(process_id, ());
+				let child = Arc::new(child);
+				let x = pending.write().unwrap().insert(process_id, child.clone());
 				assert!(x.is_none());
 				trace.fabric(FabricOutputEvent::Init {
 					pid: process_id,
@@ -398,7 +399,11 @@ fn main() {
 						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
 						wait_status => panic!("{:?}", wait_status),
 					}
-					pending.write().unwrap().remove(&process_id).unwrap();
+					let x = pending.write().unwrap().remove(&process_id).unwrap();
+					assert!(Arc::ptr_eq(&child, &x));
+					drop(x);
+					let child = Arc::try_unwrap(child).unwrap();
+					drop(child);
 					trace.fabric(FabricOutputEvent::Exit {
 						pid: process_id,
 						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
@@ -410,9 +415,8 @@ fn main() {
 					.map_err(map_bincode_err);
 				}));
 			}
-			for (&_job, _pid) in pending.read().unwrap().iter() {
-				// TODO: this is racey
-				// let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
+			for (&_job, pid) in pending.read().unwrap().iter() {
+				let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
 			}
 		})
 		.unwrap();
