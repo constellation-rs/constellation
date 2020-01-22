@@ -26,7 +26,7 @@ jobs:
         rust_target_check: ''
         rust_target_build: ''
         rust_target_run: ''
-        constellation_test_iterations: '5'
+        constellation_test_iterations: '50'
       matrix:
         # windows:
         #   imageName: 'vs2017-win2016'
