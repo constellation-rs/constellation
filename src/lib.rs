@@ -914,17 +914,12 @@ fn monitor_process(
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
 	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
-	let old = unsafe {
-		signal::sigaction(
-			signal::SIGCHLD,
-			&signal::SigAction::new(
-				signal::SigHandler::SigDfl,
-				signal::SaFlags::empty(),
-				signal::SigSet::empty(),
-			),
-		)
-		.unwrap()
-	};
+	let new = signal::SigAction::new(
+		signal::SigHandler::SigDfl,
+		signal::SaFlags::empty(),
+		signal::SigSet::empty(),
+	);
+	let old = unsafe { signal::sigaction(signal::SIGCHLD, &new).unwrap() };
 	if let palaver::process::ForkResult::Parent(child) = palaver::process::fork(false).unwrap() {
 		unistd::close(reader).unwrap();
 		unistd::close(monitor_writer).unwrap();
@@ -1138,7 +1133,8 @@ fn monitor_process(
 		unistd::close(stderr_reader.unwrap()).unwrap();
 	}
 	unistd::close(stdout_reader).unwrap();
-	let _ = unsafe { signal::sigaction(signal::SIGCHLD, &old).unwrap() };
+	let new2 = unsafe { signal::sigaction(signal::SIGCHLD, &old).unwrap() };
+	assert_eq!(new.handler(), new2.handler());
 	trace!("awaiting ready");
 	let err = unistd::read(reader, &mut [0]).unwrap();
 	assert_eq!(err, 0);

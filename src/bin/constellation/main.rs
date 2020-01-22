@@ -376,8 +376,7 @@ fn main() {
 					palaver::process::ForkResult::Parent(child) => child,
 				};
 				unistd::close(process_listener).unwrap();
-				let child = std::sync::Arc::new(child);
-				let x = pending.write().unwrap().insert(process_id, child.clone());
+				let x = pending.write().unwrap().insert(process_id, ());
 				assert!(x.is_none());
 				trace.fabric(FabricOutputEvent::Init {
 					pid: process_id,
@@ -393,18 +392,16 @@ fn main() {
 					break;
 				}
 				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
+					let child_pid = child.pid;
 					match child.wait() {
 						Ok(palaver::process::WaitStatus::Exited(0))
 						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
 						wait_status => panic!("{:?}", wait_status),
 					}
-					let x = pending.write().unwrap().remove(&process_id).unwrap();
-					assert!(std::sync::Arc::ptr_eq(&child, &x));
-					drop(x);
-					let child = std::sync::Arc::try_unwrap(child).unwrap();
+					pending.write().unwrap().remove(&process_id).unwrap();
 					trace.fabric(FabricOutputEvent::Exit {
 						pid: process_id,
-						system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
+						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
 					});
 					let _unchecked_error = bincode::serialize_into(
 						*stream_write.lock().unwrap(),
@@ -413,9 +410,9 @@ fn main() {
 					.map_err(map_bincode_err);
 				}));
 			}
-			for (&_job, pid) in pending.read().unwrap().iter() {
+			for (&_job, _pid) in pending.read().unwrap().iter() {
 				// TODO: this is racey
-				let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
+				// let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
 			}
 		})
 		.unwrap();
