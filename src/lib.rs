@@ -777,7 +777,7 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	let (bridge_process_listener, bridge_pid) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
+	assert_eq!(palaver::thread::count(), 1);
 	if let palaver::process::ForkResult::Parent(_) = palaver::process::fork(true).unwrap() {
 		// trace!("parent");
 
@@ -913,7 +913,7 @@ fn monitor_process(
 
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
+	assert_eq!(palaver::thread::count(), 1);
 	let new = signal::SigAction::new(
 		signal::SigHandler::SigDfl,
 		signal::SaFlags::empty(),
@@ -1163,7 +1163,7 @@ pub fn init(resources: Resources) {
 	// 	log::LevelFilter::Trace,
 	// )
 	// .unwrap();
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
+	assert_eq!(palaver::thread::count(), 1);
 	if valgrind::is().unwrap_or(false) {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
