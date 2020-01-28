@@ -33,34 +33,34 @@ jobs:
         #   rust_target_run: 'x86_64-pc-windows-msvc i686-pc-windows-msvc' # currently broken building crate-type=lib: x86_64-pc-windows-gnu i686-pc-windows-gnu
         mac0:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac1:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac2:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac3:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac4:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac5:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac6:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac7:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac8:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         mac9:
           imageName: 'macos-10.13'
-          rust_target_run: 'x86_64-apple-darwin' # i686-apple-darwin'
+          rust_target_run: 'x86_64-apple-darwin'
         linux0:
           imageName: 'ubuntu-16.04'
           rust_target_run: 'x86_64-unknown-linux-gnu' # i686-unknown-linux-gnu x86_64-unknown-linux-musl i686-unknown-linux-musl'

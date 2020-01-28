@@ -45,7 +45,7 @@ use futures::{
 use log::trace;
 use nix::{
 	errno, fcntl, libc, sys::{
-		signal, socket::{self, sockopt}, stat, wait
+		signal, socket::{self, sockopt}, stat
 	}, unistd
 };
 use once_cell::sync::{Lazy, OnceCell};
@@ -544,88 +544,63 @@ fn spawn_native(
 	))
 	.unwrap();
 
-	let _child_pid = match unistd::fork().expect("Fork failed") {
-		unistd::ForkResult::Child => {
-			forbid_alloc(|| {
-				// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-				// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-				// Including malloc.
+	if let palaver::process::ForkResult::Child = palaver::process::fork(true).expect("Fork failed")
+	{
+		forbid_alloc(|| {
+			// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+			// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+			// Including malloc.
 
-				// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
-				unsafe {
-					let _ = signal::sigaction(
-						signal::SIGCHLD,
-						&signal::SigAction::new(
-							signal::SigHandler::SigDfl,
-							signal::SaFlags::empty(),
-							signal::SigSet::empty(),
-						),
-					)
-					.unwrap();
-				};
+			let valgrind_start_fd = if valgrind::is().unwrap_or(false) {
+				Some(valgrind::start_fd())
+			} else {
+				None
+			};
+			// FdIter uses libc::opendir which mallocs. Underlying syscall is getdents…
+			// FdIter::new().unwrap()
+			for fd in (0..1024).filter(|&fd| {
+				fd >= 3
+					&& fd != process_listener
+					&& fd != arg.as_raw_fd()
+					&& (valgrind_start_fd.is_none() || fd < valgrind_start_fd.unwrap())
+			}) {
+				let _ = unistd::close(fd); //.unwrap();
+			}
 
-				let valgrind_start_fd = if valgrind::is().unwrap_or(false) {
-					Some(valgrind::start_fd())
-				} else {
-					None
-				};
-				// FdIter uses libc::opendir which mallocs. Underlying syscall is getdents…
-				// FdIter::new().unwrap()
-				for fd in (0..1024).filter(|&fd| {
-					fd >= 3
-						&& fd != process_listener
-						&& fd != arg.as_raw_fd() && (valgrind_start_fd.is_none()
-						|| fd < valgrind_start_fd.unwrap())
-				}) {
-					let _ = unistd::close(fd); //.unwrap();
-				}
+			if process_listener != LISTENER_FD {
+				palaver::file::move_fd(
+					process_listener,
+					LISTENER_FD,
+					Some(fcntl::FdFlag::empty()),
+					true,
+				)
+				.unwrap();
+			}
+			if arg.as_raw_fd() != ARG_FD {
+				palaver::file::move_fd(arg.as_raw_fd(), ARG_FD, Some(fcntl::FdFlag::empty()), true)
+					.unwrap();
+			}
 
-				if process_listener != LISTENER_FD {
-					palaver::file::move_fd(
-						process_listener,
-						LISTENER_FD,
-						Some(fcntl::FdFlag::empty()),
-						true,
-					)
+			if !valgrind::is().unwrap_or(false) {
+				execve(&exe, &args, &vars)
+					.expect("Failed to execve /proc/self/exe for spawn_native");
+			} else {
+				let fd = fcntl::open::<path::PathBuf>(
+					&fd_path(valgrind_start_fd.unwrap()).unwrap(),
+					fcntl::OFlag::O_RDONLY | fcntl::OFlag::O_CLOEXEC,
+					stat::Mode::empty(),
+				)
+				.unwrap();
+				let binary_desired_fd_ = valgrind_start_fd.unwrap() - 1;
+				assert!(binary_desired_fd_ > fd);
+				palaver::file::move_fd(fd, binary_desired_fd_, Some(fcntl::FdFlag::empty()), true)
 					.unwrap();
-				}
-				if arg.as_raw_fd() != ARG_FD {
-					palaver::file::move_fd(
-						arg.as_raw_fd(),
-						ARG_FD,
-						Some(fcntl::FdFlag::empty()),
-						true,
-					)
-					.unwrap();
-				}
-
-				if !valgrind::is().unwrap_or(false) {
-					execve(&exe, &args, &vars)
-						.expect("Failed to execve /proc/self/exe for spawn_native");
-				} else {
-					let fd = fcntl::open::<path::PathBuf>(
-						&fd_path(valgrind_start_fd.unwrap()).unwrap(),
-						fcntl::OFlag::O_RDONLY | fcntl::OFlag::O_CLOEXEC,
-						stat::Mode::empty(),
-					)
-					.unwrap();
-					let binary_desired_fd_ = valgrind_start_fd.unwrap() - 1;
-					assert!(binary_desired_fd_ > fd);
-					palaver::file::move_fd(
-						fd,
-						binary_desired_fd_,
-						Some(fcntl::FdFlag::empty()),
-						true,
-					)
-					.unwrap();
-					fexecve(binary_desired_fd_, &args, &vars)
-						.expect("Failed to fexecve /proc/self/fd/n for spawn_native");
-				}
-				unreachable!();
-			})
-		}
-		unistd::ForkResult::Parent { child, .. } => child,
-	};
+				fexecve(binary_desired_fd_, &args, &vars)
+					.expect("Failed to fexecve /proc/self/fd/n for spawn_native");
+			}
+			unreachable!();
+		})
+	}
 	unistd::close(process_listener).unwrap();
 	drop(arg);
 	// *BRIDGE.get().as_ref().unwrap().0.send(ProcessOutputEvent::Spawn(new_pid)).unwrap();
@@ -802,8 +777,8 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 	let (bridge_process_listener, bridge_pid) = native_process_listener();
 
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
-	if let unistd::ForkResult::Parent { .. } = unistd::fork().unwrap() {
+	assert_eq!(palaver::thread::count(), 1);
+	if let palaver::process::ForkResult::Parent(_) = palaver::process::fork(true).unwrap() {
 		// trace!("parent");
 
 		palaver::file::move_fd(
@@ -827,22 +802,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 		let err = unsafe { libc::atexit(at_exit) };
 		assert_eq!(err, 0);
 
-		let x = thread::Builder::new()
-			.name(String::from("bridge-waitpid"))
-			.spawn(abort_on_unwind(|| {
-				loop {
-					match wait::waitpid(None, None) {
-						Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-						Ok(wait::WaitStatus::Exited(_pid, code)) if code == 0 => (), //assert_eq!(pid, child),
-						// wait::WaitStatus::Signaled(pid, signal, _) if signal == signal::Signal::SIGKILL => assert_eq!(pid, child),
-						Err(nix::Error::Sys(errno::Errno::ECHILD)) => break,
-						wait_status => {
-							panic!("bad exit: {:?}", wait_status); /*loop {thread::sleep_ms(1000)}*/
-						}
-					}
-				}
-			}))
-			.unwrap();
 		let mut exit_code = ExitStatus::Success;
 		let (stdout, stderr) = (io::stdout(), io::stderr());
 		let mut formatter = if let Format::Human = format {
@@ -899,7 +858,6 @@ fn native_bridge(format: Format, our_pid: Pid) -> Pid {
 				}
 			}
 		}
-		x.join().unwrap();
 		process::exit(exit_code.into());
 	}
 	unistd::close(bridge_process_listener).unwrap();
@@ -955,8 +913,14 @@ fn monitor_process(
 
 	// trace!("forking");
 	// No threads spawned between init and here so we're good
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
-	if let unistd::ForkResult::Parent { child } = unistd::fork().unwrap() {
+	assert_eq!(palaver::thread::count(), 1);
+	let new = signal::SigAction::new(
+		signal::SigHandler::SigDfl,
+		signal::SaFlags::empty(),
+		signal::SigSet::empty(),
+	);
+	let old = unsafe { signal::sigaction(signal::SIGCHLD, &new).unwrap() };
+	if let palaver::process::ForkResult::Parent(child) = palaver::process::fork(false).unwrap() {
 		unistd::close(reader).unwrap();
 		unistd::close(monitor_writer).unwrap();
 		unistd::close(stdout_writer).unwrap();
@@ -1053,6 +1017,9 @@ fn monitor_process(
 			}))
 			.unwrap();
 
+		let child = Arc::new(child);
+		let child1 = child.clone();
+
 		let x = thread::Builder::new()
 			.name(String::from("monitor-channel-to-bridge"))
 			.spawn(abort_on_unwind(move || {
@@ -1088,10 +1055,9 @@ fn monitor_process(
 									}
 								}
 								ProcessInputEvent::Kill => {
-									// TODO: this is racey
-									signal::kill(child, signal::Signal::SIGKILL).unwrap_or_else(
-										|e| assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH)),
-									);
+									child1.signal(signal::Signal::SIGKILL).unwrap_or_else(|e| {
+										assert_eq!(e, nix::Error::Sys(errno::Errno::ESRCH))
+									});
 								}
 							}
 						}
@@ -1108,25 +1074,8 @@ fn monitor_process(
 		);
 		// trace!("awaiting exit");
 
-		let exit = loop {
-			match wait::waitpid(child, None) {
-				Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-				exit => break exit,
-			}
-		}
-		.unwrap();
-		// 		Ok(exit) => break exit,
-		// if let Err(nix::Error::Sys(nix::errno::Errno::EINTR)) = exit {
-		// 	loop {
-		// 		thread::sleep(std::time::Duration::new(1,0));
-		// 	}
-		// }
-		// if exit.is_err() {
-		// 	loop {
-		// 		thread::sleep(std::time::Duration::new(1,0));
-		// 	}
-		// }
-		// let exit = exit.unwrap();
+		let exit = child.wait().unwrap();
+
 		trace!(
 			"PROCESS {}:{}: exited {:?}",
 			unistd::getpid(),
@@ -1149,15 +1098,12 @@ fn monitor_process(
 		let _ = deployed;
 
 		let code = match exit {
-			wait::WaitStatus::Exited(pid, code) => {
-				assert_eq!(pid, child);
+			palaver::process::WaitStatus::Exited(code) => {
 				ExitStatus::from_unix_status(code.try_into().unwrap())
 			}
-			wait::WaitStatus::Signaled(pid, signal, _) => {
-				assert_eq!(pid, child);
+			palaver::process::WaitStatus::Signaled(signal, _) => {
 				ExitStatus::from_unix_signal(signal)
 			}
-			_ => panic!(),
 		};
 		// trace!("joining stdout_thread");
 		stdout_thread.join().unwrap();
@@ -1174,6 +1120,7 @@ fn monitor_process(
 		drop(bridge_outbound_sender);
 		// trace!("joining x");
 		x.join().unwrap();
+		drop(Arc::try_unwrap(child).unwrap());
 		// unistd::close(libc::STDIN_FILENO).unwrap();
 		// trace!("joining x2");
 		// trace!("joining stdin_thread");
@@ -1189,11 +1136,8 @@ fn monitor_process(
 		unistd::close(stderr_reader.unwrap()).unwrap();
 	}
 	unistd::close(stdout_reader).unwrap();
-	#[cfg(any(target_os = "android", target_os = "linux"))]
-	{
-		let err = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-		assert_eq!(err, 0);
-	}
+	let new2 = unsafe { signal::sigaction(signal::SIGCHLD, &old).unwrap() };
+	assert_eq!(new.handler(), new2.handler());
 	trace!("awaiting ready");
 	let err = unistd::read(reader, &mut [0]).unwrap();
 	assert_eq!(err, 0);
@@ -1219,7 +1163,7 @@ pub fn init(resources: Resources) {
 	// 	log::LevelFilter::Trace,
 	// )
 	// .unwrap();
-	assert_eq!(palaver::thread::count(), 1); // TODO: balks on 32 bit due to procinfo using usize that reflects target not host
+	assert_eq!(palaver::thread::count(), 1);
 	if valgrind::is().unwrap_or(false) {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary
 	}
@@ -1260,7 +1204,6 @@ pub fn init(resources: Resources) {
 					.unwrap();
 				}
 				let bridge = native_bridge(format, our_pid);
-				// let err = unsafe{libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL)}; assert_eq!(err, 0);
 				let spawn_arg = SpawnArg {
 					bridge,
 					spawn: None,
@@ -1300,14 +1243,10 @@ pub fn init(resources: Resources) {
 		}
 	};
 
-	// trace!(
-	// 	"PROCESS {}:{}: start setup; pid: {}",
-	// 	unistd::getpid(),
-	// 	pid().addr().port(),
-	// 	pid()
-	// );
-
 	PID.set(our_pid).unwrap();
+	DEPLOYED.set(deployed).unwrap();
+	RESOURCES.set(resources).unwrap();
+	BRIDGE.set(argument.bridge).unwrap();
 
 	trace!(
 		"PROCESS {}:{}: start setup; pid: {}",
@@ -1315,10 +1254,6 @@ pub fn init(resources: Resources) {
 		pid().addr().port(),
 		pid()
 	);
-
-	DEPLOYED.set(deployed).unwrap();
-	RESOURCES.set(resources).unwrap();
-	BRIDGE.set(argument.bridge).unwrap();
 
 	let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, stat::Mode::empty()).unwrap();
 	if fd != SCHEDULER_FD {
@@ -1385,18 +1320,6 @@ pub fn init(resources: Resources) {
 
 	let err = unsafe { libc::atexit(at_exit) };
 	assert_eq!(err, 0);
-
-	unsafe {
-		let _ = signal::sigaction(
-			signal::SIGCHLD,
-			&signal::SigAction::new(
-				signal::SigHandler::SigIgn,
-				signal::SaFlags::empty(),
-				signal::SigSet::empty(),
-			),
-		)
-		.unwrap();
-	};
 
 	trace!(
 		"PROCESS {}:{}: done setup; pid: {}; bridge: {:?}",

@@ -31,7 +31,7 @@ use std::{
 	collections::HashMap, ffi::{CStr, CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
 	}, sync::{
-		atomic::{self, AtomicUsize}, mpsc, Mutex
+		atomic::{self, AtomicUsize}, mpsc, Arc, Mutex
 	}, thread, time::Duration
 };
 
@@ -43,7 +43,7 @@ use constellation_internal::{
 };
 
 const SCHEDULER_FD: Fd = 4;
-const _RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
+const RECCE_TIMEOUT: Duration = Duration::from_secs(10); // Time to allow binary to call init()
 
 #[derive(Clone, Debug)]
 enum OutputEventInt {
@@ -147,8 +147,8 @@ fn recce(
 	let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
 	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
 
-	let child = if let nix::unistd::ForkResult::Parent { child, .. } =
-		nix::unistd::fork().expect("Fork failed")
+	let child = if let palaver::process::ForkResult::Parent(child) =
+		palaver::process::fork(false).expect("Fork failed")
 	{
 		child
 	} else {
@@ -158,12 +158,6 @@ fn recce(
 			// Including malloc.
 
 			// println!("{:?}", args[0]);
-			#[cfg(any(target_os = "android", target_os = "linux"))]
-			{
-				let err =
-					unsafe { nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) };
-				assert_eq!(err, 0);
-			}
 			nix::unistd::close(reader).unwrap();
 			// FdIter::new().unwrap()
 			for fd in (0..1024).filter(|&fd| {
@@ -210,30 +204,22 @@ fn recce(
 		})
 	};
 	nix::unistd::close(writer).unwrap();
-	// let _ = thread::Builder::new()
-	// 	.name(String::from(""))
-	// 	.spawn(abort_on_unwind(move || {
-	// 		thread::sleep(RECCE_TIMEOUT);
-	// 		let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-	// 	}))
-	// 	.unwrap();
-	// TODO: do this without waitpid/kill race
-	loop {
-		match nix::sys::wait::waitpid(child, None) {
-			Err(nix::Error::Sys(nix::errno::Errno::EINTR)) => (),
-			Ok(nix::sys::wait::WaitStatus::Exited(pid, code)) if code == 0 => {
-				assert_eq!(pid, child);
-				break;
-			}
-			Ok(nix::sys::wait::WaitStatus::Signaled(pid, signal, _))
-				if signal == nix::sys::signal::Signal::SIGKILL =>
-			{
-				assert_eq!(pid, child);
-				break;
-			}
-			wait_status => panic!("{:?}", wait_status),
-		}
+	let child = Arc::new(child);
+	let child1 = child.clone();
+	let _ = thread::Builder::new()
+		.name(String::from(""))
+		.spawn(abort_on_unwind(move || {
+			thread::sleep(RECCE_TIMEOUT);
+			let _ = child1.signal(nix::sys::signal::Signal::SIGKILL);
+		}))
+		.unwrap();
+	match child.wait() {
+		Ok(palaver::process::WaitStatus::Exited(0))
+		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
+		wait_status => panic!("{:?}", wait_status),
 	}
+	drop(child);
+	// TODO: kill timeout and drop(Arc::try_unwrap(child).unwrap());
 	let reader = unsafe { File::from_raw_fd(reader) };
 	bincode::deserialize_from(&mut &reader)
 		.map_err(map_bincode_err)
