@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 pub mod serialize_as_regex_string {
-	use regex;
 	use serde::{Serialize, Serializer};
 
 	#[derive(PartialEq, Eq, Hash, Serialize, Debug)]
@@ -142,7 +141,6 @@ pub mod hashmap {
 }
 
 pub mod serde_multiset {
-	use multiset;
 	use serde::{de, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
 	use std::{fmt, hash, marker};
 
