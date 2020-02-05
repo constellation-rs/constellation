@@ -6,7 +6,7 @@ use std::{
 };
 
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Pid, Resources, TrySpawnError
+	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Pid, PidInternal, Resources, TrySpawnError
 };
 
 #[derive(Debug)]
@@ -61,9 +61,10 @@ pub fn run(
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
-					let _ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
+					let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
 						.map_err(map_bincode_err)
 						.unwrap();
+					assert_eq!(ip, master_pid.addr().ip());
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(abort_on_unwind_1(|_spawn| {
 							for request in receiver {

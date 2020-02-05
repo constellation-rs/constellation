@@ -216,7 +216,11 @@ fn recce(
 	match child.wait() {
 		Ok(palaver::process::WaitStatus::Exited(0))
 		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
-		wait_status => panic!("{:?}", wait_status),
+		wait_status => {
+			if cfg!(feature = "strict") {
+				panic!("{:?}", wait_status)
+			}
+		}
 	}
 	drop(child);
 	// TODO: kill timeout and drop(Arc::try_unwrap(child).unwrap());

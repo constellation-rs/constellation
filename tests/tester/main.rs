@@ -3,6 +3,7 @@
 //! At the top of each test is some JSON, denoted with the special comment syntax `//=`.
 //! `output` is a hashmap of file descriptor to a regex of expected output. As it is a regex ensure that any literal `\.+*?()|[]{}^$#&-~` are escaped.
 
+#![feature(backtrace)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -225,7 +226,7 @@ fn main() {
 			thread::current().name().unwrap_or("<unnamed>"),
 			info
 		);
-		eprintln!("{:?}", backtrace::Backtrace::new());
+		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
 		std::process::abort();
 	}));
 	let _ = thread::Builder::new()
@@ -262,7 +263,7 @@ fn main() {
 	} else {
 		None
 	};
-	let tests = tests.flat_map(|test| iter::once(format!("--test={}", test)));
+	let tests = tests.map(|test| format!("--test={}", test));
 	let profile = match env!("PROFILE") {
 		"debug" => None,
 		"release" => Some(String::from("--release")),

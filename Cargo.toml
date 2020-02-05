@@ -26,16 +26,22 @@ maintenance = { status = "actively-developed" }
 
 [features]
 default = ["distribute_binaries"]
+# Experimental functionality
 nightly = ["palaver/nightly"]
+# Actually send binaries; this is necessary if nodes don't all have the binary at the same location on disk
 distribute_binaries = ["constellation-internal/distribute_binaries"]
+# Experimental generator-based serialization
 fringe = ["serde_pipe/fringe"]
-no_alloc = ["constellation-internal/no_alloc"]
+# Enable auto-scaling on Kubernetes
 kubernetes = ["distribute_binaries", "k8s-openapi", "kube", "openssl", "tokio"]
+# Assert that no allocations are made during forking when they're UB
+no_alloc = ["constellation-internal/no_alloc"]
+# Make constellation non-resilient to internal failures
+strict = []
 
 [dependencies]
 constellation-internal = { path = "constellation-internal", version = "=0.1.10" }
 atty = "0.2"
-backtrace = "0.3"
 bincode = "1.2"
 cargo_metadata = { version = "0.9", default-features = false }
 clap = "2.33"

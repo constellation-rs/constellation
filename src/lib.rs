@@ -518,7 +518,6 @@ fn spawn_native(
 
 	let (process_listener, new_pid) = native_process_listener();
 
-	let mut arg: Vec<u8> = Vec::new();
 	let bridge_pid: Pid = *BRIDGE.get().unwrap();
 	let spawn_arg = SpawnArg::<Start> {
 		bridge: bridge_pid,
@@ -527,6 +526,7 @@ fn spawn_native(
 			f: OwningOrRef::Ref(f),
 		}),
 	};
+	let mut arg: Vec<u8> = Vec::new();
 	bincode::serialize_into(&mut arg, &spawn_arg).unwrap();
 	bincode::serialize_into(&mut arg, &new_pid).unwrap();
 
@@ -1136,8 +1136,10 @@ fn monitor_process(
 		unistd::close(stderr_reader.unwrap()).unwrap();
 	}
 	unistd::close(stdout_reader).unwrap();
-	let new2 = unsafe { signal::sigaction(signal::SIGCHLD, &old).unwrap() };
-	assert_eq!(new.handler(), new2.handler());
+	if new.handler() != old.handler() {
+		let new2 = unsafe { signal::sigaction(signal::SIGCHLD, &old).unwrap() };
+		assert_eq!(new.handler(), new2.handler());
+	}
 	trace!("awaiting ready");
 	let err = unistd::read(reader, &mut [0]).unwrap();
 	assert_eq!(err, 0);
@@ -1158,11 +1160,6 @@ fn monitor_process(
 /// The `resources` argument describes memory and CPU requirements for the initial process.
 #[allow(clippy::too_many_lines)]
 pub fn init(resources: Resources) {
-	// simple_logging::log_to_file(
-	// 	format!("logs/{}.log", std::process::id()),
-	// 	log::LevelFilter::Trace,
-	// )
-	// .unwrap();
 	assert_eq!(palaver::thread::count(), 1);
 	if valgrind::is().unwrap_or(false) {
 		let _ = unistd::close(valgrind::start_fd() - 1 - 12); // close non CLOEXEC'd fd of this binary

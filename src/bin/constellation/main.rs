@@ -51,6 +51,7 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
+#![feature(backtrace)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -81,7 +82,7 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, unistd};
 use palaver::{
-	file::{copy_fd, execve, fexecve, move_fds}, socket::{socket, SockFlag}, valgrind
+	file::{copy_fd, execve, fexecve, move_fds}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
@@ -137,14 +138,9 @@ fn main() {
 			thread::current().name().unwrap_or("<unnamed>"),
 			info
 		);
-		eprintln!("{:?}", backtrace::Backtrace::new());
+		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
 		std::process::abort();
 	}));
-	// simple_logging::log_to_file(
-	// 	format!("logs/{}.log", std::process::id()),
-	// 	log::LevelFilter::Trace,
-	// )
-	// .unwrap();
 	let args = Args::from_args(env::args().skip(1)).unwrap_or_else(|(message, success)| {
 		println!("{}", message);
 		process::exit(if success { 0 } else { 1 })
@@ -233,159 +229,17 @@ fn main() {
 				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 			{
 				let request: FabricRequest<File, File> = request;
-				let process_listener = socket(
-					socket::AddressFamily::Inet,
-					socket::SockType::Stream,
-					SockFlag::SOCK_NONBLOCK,
-					socket::SockProtocol::Tcp,
-				)
-				.unwrap();
-				socket::setsockopt(process_listener, socket::sockopt::ReuseAddr, &true).unwrap();
-				socket::bind(
-					process_listener,
-					&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(
-						listen, 0,
-					))),
-				)
-				.unwrap();
-				socket::setsockopt(process_listener, socket::sockopt::ReusePort, &true).unwrap();
-				let port = if let socket::SockAddr::Inet(inet) =
-					socket::getsockname(process_listener).unwrap()
-				{
-					inet.to_std()
-				} else {
-					panic!()
-				}
-				.port();
-				let process_id = Pid::new(ip, port);
-				let _ = (&request.arg).seek(std::io::SeekFrom::End(0)).unwrap();
-				bincode::serialize_into(&request.arg, &process_id).unwrap();
-				let _ = (&request.arg).seek(std::io::SeekFrom::Start(0)).unwrap();
-
-				let args = request
-					.args
-					.into_iter()
-					.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
-					.collect::<Vec<_>>();
-				let vars = [
-					(
-						CString::new("CONSTELLATION").unwrap(),
-						CString::new("fabric").unwrap(),
-					),
-					(
-						CString::new("CONSTELLATION_RESOURCES").unwrap(),
-						CString::new(serde_json::to_string(&request.resources).unwrap()).unwrap(),
-					),
-				]
-				.iter()
-				.cloned()
-				.chain(request.vars.into_iter().map(|(x, y)| {
-					(
-						CString::new(OsStringExt::into_vec(x)).unwrap(),
-						CString::new(OsStringExt::into_vec(y)).unwrap(),
-					)
-				}))
-				.map(|(key, value)| {
-					CString::new(format!(
-						"{}={}",
-						key.to_str().unwrap(),
-						value.to_str().unwrap()
-					))
-					.unwrap()
-				})
-				.collect::<Vec<_>>();
-
-				let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
-				let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
-
-				#[cfg(feature = "distribute_binaries")]
-				let binary = request.binary;
-				let mut binary_desired_fd =
-					BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
-				let arg = request.arg;
-				let bind = request.bind;
-
-				let child = match palaver::process::fork(false).expect("Fork failed") {
-					palaver::process::ForkResult::Child => {
-						forbid_alloc(|| {
-							// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
-							// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
-							// Including malloc.
-
-							// println!("{:?}", args[0]);
-							unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0))
-								.unwrap();
-							#[cfg(feature = "distribute_binaries")]
-							let binary = binary.into_raw_fd(); // These are dropped by parent
-							let arg = arg.into_raw_fd();
-							move_fds(
-								&mut [
-									(arg, ARG_FD),
-									(process_listener, LISTENER_FD),
-									#[cfg(feature = "distribute_binaries")]
-									(binary, binary_desired_fd),
-								],
-								Some(fcntl::FdFlag::empty()),
-								true,
-							);
-							for (i, addr) in bind.iter().enumerate() {
-								let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
-								let fd = socket::socket(
-									socket::AddressFamily::Inet,
-									socket::SockType::Stream,
-									socket::SockFlag::empty(),
-									socket::SockProtocol::Tcp,
-								)
-								.unwrap();
-								if fd != socket {
-									copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true)
-										.unwrap();
-									unistd::close(fd).unwrap();
-								}
-								socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true)
-									.unwrap();
-								socket::bind(
-									socket,
-									&socket::SockAddr::Inet(socket::InetAddr::from_std(&addr)),
-								)
-								.unwrap();
-							}
-							if cfg!(feature = "distribute_binaries") {
-								if valgrind::is().unwrap_or(false) {
-									let binary_desired_fd_ = valgrind::start_fd() - 1;
-									assert!(binary_desired_fd_ > binary_desired_fd);
-									copy_fd(
-										binary_desired_fd,
-										binary_desired_fd_,
-										Some(fcntl::FdFlag::empty()),
-										true,
-									)
-									.unwrap();
-									unistd::close(binary_desired_fd).unwrap();
-									binary_desired_fd = binary_desired_fd_;
-								}
-								fexecve(binary_desired_fd, &args, &vars)
-									.expect("Failed to fexecve for fabric");
-							} else {
-								execve(&args[0], &args, &vars)
-									.expect("Failed to execve for fabric");
-							}
-							unreachable!()
-						})
-					}
-					palaver::process::ForkResult::Parent(child) => child,
-				};
-				unistd::close(process_listener).unwrap();
+				let (pid, child) = spawn(listen, ip, request);
 				let child = Arc::new(child);
-				let x = pending.write().unwrap().insert(process_id, child.clone());
+				let x = pending.write().unwrap().insert(pid, child.clone());
 				assert!(x.is_none());
 				trace.fabric(FabricOutputEvent::Init {
-					pid: process_id,
+					pid,
 					system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
 				});
 				if bincode::serialize_into(
 					*stream_write.lock().unwrap(),
-					&Either::Left::<Pid, Pid>(process_id),
+					&Either::Left::<Pid, Pid>(pid),
 				)
 				.map_err(map_bincode_err)
 				.is_err()
@@ -397,29 +251,175 @@ fn main() {
 					match child.wait() {
 						Ok(palaver::process::WaitStatus::Exited(0))
 						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
-						wait_status => panic!("{:?}", wait_status),
+						wait_status => {
+							if cfg!(feature = "strict") {
+								panic!("{:?}", wait_status)
+							}
+						}
 					}
-					let x = pending.write().unwrap().remove(&process_id).unwrap();
+					let x = pending.write().unwrap().remove(&pid).unwrap();
 					assert!(Arc::ptr_eq(&child, &x));
 					drop(x);
 					let child = Arc::try_unwrap(child).unwrap();
 					drop(child);
 					trace.fabric(FabricOutputEvent::Exit {
-						pid: process_id,
+						pid,
 						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
 					});
 					let _unchecked_error = bincode::serialize_into(
 						*stream_write.lock().unwrap(),
-						&Either::Right::<Pid, Pid>(process_id),
+						&Either::Right::<Pid, Pid>(pid),
 					)
 					.map_err(map_bincode_err);
 				}));
 			}
-			for (&_job, pid) in pending.read().unwrap().iter() {
-				let _unchecked_error = pid.signal(signal::Signal::SIGKILL);
+			for (&_pid, child) in pending.read().unwrap().iter() {
+				let _unchecked_error = signal::kill(
+					nix::unistd::Pid::from_raw(-child.pid.as_raw()),
+					signal::Signal::SIGKILL,
+				);
+				let _unchecked_error = child.signal(signal::Signal::SIGKILL);
 			}
 		})
 		.unwrap();
 		assert_eq!(pending_inner.len(), 0);
 	}
+}
+
+fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid, ChildHandle) {
+	let process_listener = socket(
+		socket::AddressFamily::Inet,
+		socket::SockType::Stream,
+		SockFlag::SOCK_NONBLOCK,
+		socket::SockProtocol::Tcp,
+	)
+	.unwrap();
+	socket::setsockopt(process_listener, socket::sockopt::ReuseAddr, &true).unwrap();
+	socket::bind(
+		process_listener,
+		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(listen, 0))),
+	)
+	.unwrap();
+	socket::setsockopt(process_listener, socket::sockopt::ReusePort, &true).unwrap();
+	let port = if let socket::SockAddr::Inet(inet) = socket::getsockname(process_listener).unwrap()
+	{
+		inet.to_std()
+	} else {
+		panic!()
+	}
+	.port();
+	let pid = Pid::new(ip, port);
+	let _ = (&request.arg).seek(std::io::SeekFrom::End(0)).unwrap();
+	bincode::serialize_into(&request.arg, &pid).unwrap();
+	let _ = (&request.arg).seek(std::io::SeekFrom::Start(0)).unwrap();
+
+	let args = request
+		.args
+		.into_iter()
+		.map(|x| CString::new(OsStringExt::into_vec(x)).unwrap())
+		.collect::<Vec<_>>();
+	let vars = [
+		(
+			CString::new("CONSTELLATION").unwrap(),
+			CString::new("fabric").unwrap(),
+		),
+		(
+			CString::new("CONSTELLATION_RESOURCES").unwrap(),
+			CString::new(serde_json::to_string(&request.resources).unwrap()).unwrap(),
+		),
+	]
+	.iter()
+	.cloned()
+	.chain(request.vars.into_iter().map(|(x, y)| {
+		(
+			CString::new(OsStringExt::into_vec(x)).unwrap(),
+			CString::new(OsStringExt::into_vec(y)).unwrap(),
+		)
+	}))
+	.map(|(key, value)| {
+		CString::new(format!(
+			"{}={}",
+			key.to_str().unwrap(),
+			value.to_str().unwrap()
+		))
+		.unwrap()
+	})
+	.collect::<Vec<_>>();
+
+	let args: Vec<&CStr> = args.iter().map(|x| &**x).collect();
+	let vars: Vec<&CStr> = vars.iter().map(|x| &**x).collect();
+
+	#[cfg(feature = "distribute_binaries")]
+	let binary = request.binary;
+	let mut binary_desired_fd = BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
+	let arg = request.arg;
+	let bind = request.bind;
+
+	let child = match palaver::process::fork(false).expect("Fork failed") {
+		palaver::process::ForkResult::Child => {
+			forbid_alloc(|| {
+				// Memory can be in a weird state now. Imagine a thread has just taken out a lock,
+				// but we've just forked. Lock still held. Avoid deadlock by doing nothing fancy here.
+				// Including malloc.
+
+				// println!("{:?}", args[0]);
+				unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0)).unwrap();
+				#[cfg(feature = "distribute_binaries")]
+				let binary = binary.into_raw_fd(); // These are dropped by parent
+				let arg = arg.into_raw_fd();
+				move_fds(
+					&mut [
+						(arg, ARG_FD),
+						(process_listener, LISTENER_FD),
+						#[cfg(feature = "distribute_binaries")]
+						(binary, binary_desired_fd),
+					],
+					Some(fcntl::FdFlag::empty()),
+					true,
+				);
+				for (i, addr) in bind.iter().enumerate() {
+					let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
+					let fd = socket::socket(
+						socket::AddressFamily::Inet,
+						socket::SockType::Stream,
+						socket::SockFlag::empty(),
+						socket::SockProtocol::Tcp,
+					)
+					.unwrap();
+					if fd != socket {
+						copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true).unwrap();
+						unistd::close(fd).unwrap();
+					}
+					socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true).unwrap();
+					socket::bind(
+						socket,
+						&socket::SockAddr::Inet(socket::InetAddr::from_std(&addr)),
+					)
+					.unwrap();
+				}
+				if cfg!(feature = "distribute_binaries") {
+					if valgrind::is().unwrap_or(false) {
+						let binary_desired_fd_ = valgrind::start_fd() - 1;
+						assert!(binary_desired_fd_ > binary_desired_fd);
+						copy_fd(
+							binary_desired_fd,
+							binary_desired_fd_,
+							Some(fcntl::FdFlag::empty()),
+							true,
+						)
+						.unwrap();
+						unistd::close(binary_desired_fd).unwrap();
+						binary_desired_fd = binary_desired_fd_;
+					}
+					fexecve(binary_desired_fd, &args, &vars).expect("Failed to fexecve for fabric");
+				} else {
+					execve(&args[0], &args, &vars).expect("Failed to execve for fabric");
+				}
+				unreachable!()
+			})
+		}
+		palaver::process::ForkResult::Parent(child) => child,
+	};
+	unistd::close(process_listener).unwrap();
+	(pid, child)
 }
