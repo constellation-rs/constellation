@@ -261,8 +261,8 @@ pub enum Format {
 ///
 /// The default is [`RESOURCES_DEFAULT`], which is defined as:
 ///
-/// ```
-/// # use constellation_internal::Resources;
+/// ```ignore
+/// # use constellation_internal::{Cpu, Mem, Resources};
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
 ///     mem: 100 * Mem::MIB, // 100 MiB
 ///     cpu: Cpu::CORE / 16, // 1/16th of a logical CPU core
@@ -282,16 +282,16 @@ impl Default for Resources {
 }
 /// The [Resources] returned by [`Resources::default()`](Resources::default). Intended to be used as a placeholder in your application until you have a better idea as to resource requirements.
 ///
-/// ```
-/// # use constellation_internal::Resources;
+/// ```ignore
+/// # use constellation_internal::{Cpu, Mem, Resources};
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
 ///     mem: 100 * Mem::MIB, // 100 MiB
 ///     cpu: Cpu::CORE / 16, // 1/16th of a logical CPU core
 /// };
 /// ```
 pub const RESOURCES_DEFAULT: Resources = Resources {
-	mem: Mem(100 * 1024 * 2014), // 100 * Mem::MIB, // 100 MiB
-	cpu: Cpu(65536 / 16),        // Cpu::CORE / 16, // 1/16th of a logical CPU core
+	mem: Mem(100 * 1024 * 2014), // 100 MiB
+	cpu: Cpu(65536 / 16),        // 1/16th of a logical CPU core
 };
 
 /// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
