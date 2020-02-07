@@ -85,7 +85,7 @@ sha1 = "0.6"
 systemstat = "0.1"
 
 [patch.crates-io]
-systemstat = { git = "https://github.com/alecmocatta/systemstat" }
+systemstat = { git = "https://github.com/alecmocatta/systemstat", branch = "linking-fix" }
 
 ###
 
