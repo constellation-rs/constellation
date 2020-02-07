@@ -155,11 +155,10 @@
 //= }
 
 use constellation::*;
-use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	futures::executor::block_on(async {
@@ -167,7 +166,7 @@ fn main() {
 			.map(|_| {
 				spawn(
 					Resources {
-						mem: 20 * 1024 * 1024,
+						mem: 20 * Mem::MIB,
 						..Resources::default()
 					},
 					FnOnce!(|parent| {

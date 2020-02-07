@@ -9,10 +9,10 @@ use std::{
 };
 
 use super::master;
-use constellation_internal::{abort_on_unwind, Pid, PidInternal};
+use constellation_internal::{abort_on_unwind, Cpu, Mem, Pid, PidInternal};
 
 pub fn kube_master(
-	master_bind: SocketAddr, fabric_port: u16, bridge_bind: SocketAddr, mem: u64, cpu: u32,
+	master_bind: SocketAddr, fabric_port: u16, bridge_bind: SocketAddr, mem: Mem, cpu: Cpu,
 	replicas: u32,
 ) {
 	let config = config::incluster_config().expect("failed to load in-cluster kubeconfig");

@@ -27,6 +27,7 @@
 mod ext;
 mod format;
 pub mod msg;
+mod units;
 
 #[cfg(unix)]
 use nix::{fcntl, libc, sys::signal, unistd};
@@ -49,6 +50,7 @@ static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
 pub use ext::*;
 pub use format::*;
+pub use units::*;
 
 /// A process identifier.
 ///
@@ -262,16 +264,16 @@ pub enum Format {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-///     mem: 100 * 1024 * 1024, // 100 MiB
-///     cpu: 65536 / 16,        // 1/16th of a logical CPU core
+///     mem: 100 * Mem::MIB, // 100 MiB
+///     cpu: Cpu::CORE / 16, // 1/16th of a logical CPU core
 /// };
 /// ```
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct Resources {
 	/// Memory requirement in bytes
-	pub mem: u64,
-	/// CPU requirement as a fraction of one logical core multiplied by 2^16.
-	pub cpu: u32,
+	pub mem: Mem,
+	/// CPU requirement as a fraction of one logical core
+	pub cpu: Cpu,
 }
 impl Default for Resources {
 	fn default() -> Self {
@@ -283,13 +285,13 @@ impl Default for Resources {
 /// ```
 /// # use constellation_internal::Resources;
 /// pub const RESOURCES_DEFAULT: Resources = Resources {
-///     mem: 100 * 1024 * 1024, // 100 MiB
-///     cpu: 65536 / 16,        // 1/16th of a logical CPU core
+///     mem: 100 * Mem::MIB, // 100 MiB
+///     cpu: Cpu::CORE / 16, // 1/16th of a logical CPU core
 /// };
 /// ```
 pub const RESOURCES_DEFAULT: Resources = Resources {
-	mem: 100 * 1024 * 1024, // 100 MiB
-	cpu: 65536 / 16,        // 1/16th of a logical CPU core
+	mem: Mem(100 * 1024 * 2014), // 100 * Mem::MIB, // 100 MiB
+	cpu: Cpu(65536 / 16),        // Cpu::CORE / 16, // 1/16th of a logical CPU core
 };
 
 /// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.

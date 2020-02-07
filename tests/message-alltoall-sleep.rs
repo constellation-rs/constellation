@@ -115,7 +115,6 @@
 //= }
 
 use constellation::*;
-use serde_closure::FnOnce;
 use std::{env, thread, time};
 
 fn sub2<
@@ -128,7 +127,7 @@ fn sub2<
 		let arg = (arg.0 - 1, format!("hello alec! {}; {}", arg.0 - 1, arg.1));
 		let child_pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024,
+				mem: 20 * Mem::MIB,
 				..Resources::default()
 			},
 			FnOnce!(move |parent| sub2(parent, arg)),
@@ -155,7 +154,7 @@ fn sub2<
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	std::env::set_var("RUST_BACKTRACE", "full");
@@ -180,7 +179,7 @@ fn main() {
 			let arg = (String::from("HELLO!!!"), String::from("THERE!!!"));
 			let pid = spawn(
 				Resources {
-					mem: 20 * 1024 * 1024,
+					mem: 20 * Mem::MIB,
 					..Resources::default()
 				},
 				FnOnce!(move |parent| {
@@ -214,7 +213,7 @@ fn main() {
 		let arg = (count, format!("hello alec! {}", count));
 		let pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024,
+				mem: 20 * Mem::MIB,
 				..Resources::default()
 			},
 			FnOnce!(move |parent| sub2(parent, arg)),
@@ -230,7 +229,7 @@ fn main() {
 			.map(|arg| {
 				spawn(
 					Resources {
-						mem: 20 * 1024 * 1024,
+						mem: 20 * Mem::MIB,
 						..Resources::default()
 					},
 					FnOnce!(move |parent| {

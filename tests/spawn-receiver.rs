@@ -42,20 +42,17 @@
 //=   "exit": "Success"
 //= }
 
-#![allow(clippy::unused_unit)] // for FnOnce!
-
 use constellation::*;
-use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	for _ in 0..2 {
 		let pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024,
+				mem: 20 * Mem::MIB,
 				..Resources::default()
 			},
 			FnOnce!(|_parent| ()),

@@ -34,15 +34,12 @@
 //=   }
 //= }
 
-#![allow(clippy::unused_unit)] // for FnOnce!
-
 use constellation::*;
-use serde_closure::FnOnce;
 use std::{panic, process, thread};
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	panic::set_hook(Box::new(|info| {
@@ -65,7 +62,7 @@ fn main() {
 	}));
 	let pid = spawn(
 		Resources {
-			mem: 20 * 1024 * 1024,
+			mem: 20 * Mem::MIB,
 			..Resources::default()
 		},
 		FnOnce!(|_parent| ()),

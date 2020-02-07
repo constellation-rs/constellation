@@ -67,7 +67,9 @@ use constellation_internal::{
 #[doc(inline)]
 pub use channel::ChannelError;
 #[doc(inline)]
-pub use constellation_internal::{Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT};
+pub use constellation_internal::{
+	Cpu, Mem, Pid, Resources, SpawnError, TrySpawnError, RESOURCES_DEFAULT
+};
 #[doc(inline)]
 pub use deploy::deploy;
 #[doc(inline)]

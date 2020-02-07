@@ -1,18 +1,18 @@
-#![allow(clippy::too_many_lines)]
+#![allow(clippy::too_many_lines, clippy::erasing_op)]
 
 use either::Either;
 use std::{
-	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread
+	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
 };
 
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Pid, PidInternal, Resources, TrySpawnError
+	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Cpu, Mem, Pid, PidInternal, Resources, TrySpawnError
 };
 
 #[derive(Debug)]
 pub struct Node {
-	mem: u64,
-	cpu: u32,
+	mem: Mem,
+	cpu: Cpu,
 }
 impl Node {
 	fn fits(&self, process: &Resources) -> bool {
@@ -33,7 +33,7 @@ impl Node {
 
 pub fn run(
 	bind_addr: SocketAddr, master_pid: Pid,
-	nodes: HashMap<SocketAddr, (Option<SocketAddr>, u64, u32)>,
+	nodes: HashMap<SocketAddr, (Option<SocketAddr>, Mem, Cpu)>,
 ) {
 	let (sender, receiver) = sync_channel::<
 		Either<
@@ -52,8 +52,18 @@ pub fn run(
 		.map(|(i, (fabric, (bridge, mem, cpu)))| {
 			let node = Node { mem, cpu };
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
-			let stream = TcpStream::connect(&fabric)
-				.unwrap_or_else(|e| panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e));
+			let start = Instant::now();
+			let stream = loop {
+				let err = match TcpStream::connect(&fabric) {
+					Ok(stream) => break Ok(stream),
+					Err(err) => err,
+				};
+				if start.elapsed() > Duration::from_secs(1) {
+					break Err(err);
+				}
+				thread::sleep(Duration::from_secs(1));
+			}
+			.unwrap_or_else(|e| panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e));
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(abort_on_unwind(move || {
@@ -100,7 +110,10 @@ pub fn run(
 							.send(Either::Left((
 								FabricRequest {
 									block: false,
-									resources: Resources { mem: 0, cpu: 0 },
+									resources: Resources {
+										mem: 0 * Mem::B,
+										cpu: 0 * Cpu::CORE,
+									},
 									bind: vec![bridge],
 									args: vec![
 										OsString::from(env::current_exe().unwrap()),

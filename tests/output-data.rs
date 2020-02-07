@@ -18,7 +18,7 @@ use std::io::{self, Write};
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	io::stdout()

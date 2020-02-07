@@ -155,19 +155,18 @@
 //= }
 
 use constellation::*;
-use serde_closure::FnOnce;
 use std::mem;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	let pids = (0..10)
 		.map(|_| {
 			spawn(
 				Resources {
-					mem: 20 * 1024 * 1024,
+					mem: 20 * Mem::MIB,
 					..Resources::default()
 				},
 				FnOnce!(|parent| {

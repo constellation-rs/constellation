@@ -42,15 +42,12 @@
 //=   "exit": "Success"
 //= }
 
-#![allow(clippy::unused_unit)] // for FnOnce!
-
 use constellation::*;
-use serde_closure::FnOnce;
 use std::env;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	let env = (
@@ -63,7 +60,7 @@ fn main() {
 		let env = env.clone();
 		let _pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024,
+				mem: 20 * Mem::MIB,
 				..Resources::default()
 			},
 			FnOnce!(|_parent| {

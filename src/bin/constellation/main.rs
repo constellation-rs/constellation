@@ -95,7 +95,7 @@ use std::{
 #[cfg(feature = "kubernetes")]
 use self::kube::kube_master;
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, FabricOutputEvent, Fd, Format, Pid, PidInternal, Trace
+	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Cpu, FabricOutputEvent, Fd, Format, Mem, Pid, PidInternal, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -110,8 +110,8 @@ enum Role {
 	KubeMaster {
 		master_bind: SocketAddr,
 		bridge_bind: SocketAddr,
-		mem: u64,
-		cpu: u32,
+		mem: Mem,
+		cpu: Cpu,
 		replicas: u32,
 	},
 	Master(SocketAddr, Vec<Node>),
@@ -122,8 +122,8 @@ enum Role {
 struct Node {
 	fabric: SocketAddr,
 	bridge: Option<SocketAddr>,
-	mem: u64,
-	cpu: u32,
+	mem: Mem,
+	cpu: Cpu,
 }
 
 const LISTENER_FD: Fd = 3;
@@ -247,7 +247,6 @@ fn main() {
 					break;
 				}
 				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
-					let child_pid = child.pid;
 					match child.wait() {
 						Ok(palaver::process::WaitStatus::Exited(0))
 						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
@@ -261,6 +260,7 @@ fn main() {
 					assert!(Arc::ptr_eq(&child, &x));
 					drop(x);
 					let child = Arc::try_unwrap(child).unwrap();
+					let child_pid = child.pid;
 					drop(child);
 					trace.fabric(FabricOutputEvent::Exit {
 						pid,

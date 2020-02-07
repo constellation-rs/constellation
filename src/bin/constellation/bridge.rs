@@ -26,7 +26,10 @@ TODO: can lose processes such that ctrl+c doesn't kill them. i think if we kill 
 
 use futures::{future::FutureExt, sink::SinkExt, stream::StreamExt};
 use log::trace;
-use palaver::file::{execve, fexecve, move_fds};
+use nix::sys::signal::Signal;
+use palaver::{
+	file::{execve, fexecve, move_fds}, process::WaitStatus
+};
 use std::{
 	collections::HashMap, ffi::{CStr, CString, OsString}, fs::File, iter, net::TcpStream, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
@@ -210,24 +213,23 @@ fn recce(
 		.name(String::from(""))
 		.spawn(abort_on_unwind(move || {
 			thread::sleep(RECCE_TIMEOUT);
-			let _ = child1.signal(nix::sys::signal::Signal::SIGKILL);
+			let _ = child1.signal(Signal::SIGKILL);
 		}))
 		.unwrap();
 	match child.wait() {
-		Ok(palaver::process::WaitStatus::Exited(0))
-		| Ok(palaver::process::WaitStatus::Signaled(nix::sys::signal::Signal::SIGKILL, _)) => (),
+		Ok(WaitStatus::Exited(0)) => (),
 		wait_status => {
-			if cfg!(feature = "strict") {
+			if let Ok(WaitStatus::Signaled(Signal::SIGKILL, _)) = wait_status {
+			} else if cfg!(feature = "strict") {
 				panic!("{:?}", wait_status)
 			}
+			return Err(());
 		}
 	}
 	drop(child);
 	// TODO: kill timeout and drop(Arc::try_unwrap(child).unwrap());
 	let reader = unsafe { File::from_raw_fd(reader) };
-	bincode::deserialize_from(&mut &reader)
-		.map_err(map_bincode_err)
-		.map_err(|_| ())
+	bincode::deserialize_from(&mut &reader).map_err(|_| ())
 }
 
 fn manage_connection(

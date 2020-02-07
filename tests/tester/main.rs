@@ -19,7 +19,8 @@
 	clippy::if_not_else,
 	clippy::type_complexity,
 	clippy::cast_possible_truncation,
-	clippy::derive_hash_xor_eq
+	clippy::derive_hash_xor_eq,
+	clippy::filter_map
 )]
 
 mod ext;
@@ -27,11 +28,11 @@ mod ext;
 use multiset::HashMultiSet;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, ffi::OsStr, fmt, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, net::TcpStream, path::{Path, PathBuf}, process, str, thread, time::{self, Duration}
+	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, thread, thread::JoinHandle, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
-use constellation_internal::{abort_on_unwind, ExitStatus, Fd};
+use constellation_internal::{abort_on_unwind, Cpu, ExitStatus, Fd, Mem};
 use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -39,8 +40,7 @@ const FABRIC: &str = "src/bin/constellation/main.rs";
 const TESTS: &str = "tests/";
 const SELF: &str = "tests/tester/main.rs";
 
-const FABRIC_ADDR: &str = "127.0.0.1:12360";
-const BRIDGE_ADDR: &str = "127.0.0.1:12340";
+const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 const FORWARD_STDERR: bool = true;
 
@@ -281,7 +281,7 @@ fn main() {
 	println!(
 		"Building with: cargo {}",
 		args.iter()
-			.map(|arg| if arg.contains('"') {
+			.map(|arg| if arg.contains(' ') {
 				format!("\"{}\"", arg)
 			} else {
 				arg.to_owned()
@@ -308,12 +308,11 @@ fn main() {
 				if (artifact.target.kind == vec![String::from("bin")] && !artifact.profile.test)
 					|| artifact.target.kind == vec![String::from("test")]
 				{
-					// println!("{:#?}", artifact);
-					// assert_eq!(artifact.filenames.len(), 1, "{:?}", artifact);
 					let x = products.insert(
 						path.to_owned(),
 						artifact.filenames.into_iter().next().unwrap(),
 					);
+					// We're assuming the first filename is the binary – .dSYM etc seem to always be second?
 					assert!(x.is_none());
 				}
 			}
@@ -321,155 +320,93 @@ fn main() {
 	}
 
 	let (deploy, fabric) = (&products[Path::new(DEPLOY)], &products[Path::new(FABRIC)]);
-
-	if TcpStream::connect(FABRIC_ADDR).is_ok() {
-		panic!("Service already running on FABRIC_ADDR {}", FABRIC_ADDR);
-	}
-	if TcpStream::connect(BRIDGE_ADDR).is_ok() {
-		panic!("Service already running on BRIDGE_ADDR {}", BRIDGE_ADDR);
-	}
-	let mut fabric = process::Command::new(fabric)
-		.args(&[
-			"--format",
-			"json",
-			"-v",
-			FABRIC_ADDR,
-			FABRIC_ADDR,
-			BRIDGE_ADDR,
-			"4GiB",
-			"4",
-		])
-		.stdin(process::Stdio::null())
-		.stdout(process::Stdio::piped())
-		.stderr(process::Stdio::piped())
-		.spawn()
-		.unwrap();
-	let mut fabric_stdout = fabric.stdout.take().unwrap();
-	let fabric_stdout = thread::spawn(abort_on_unwind(move || {
-		let mut none = true;
-		loop {
-			use std::io::Read;
-			let mut stdout = vec![0; 1024];
-			// println!("awaiting stdout");
-			let n = fabric_stdout.read(&mut stdout).unwrap();
-			// println!("got stdout {}", n);
-			if n == 0 {
-				break;
-			}
-			none = false;
-			stdout.truncate(n);
-			println!("fab stdout: {:?}", String::from_utf8(stdout).unwrap());
-		}
-		none
-	}));
-	let mut fabric_stderr = fabric.stderr.take().unwrap();
-	let fabric_stderr = thread::spawn(abort_on_unwind(move || {
-		let mut none = true;
-		loop {
-			use std::io::Read;
-			let mut stderr = vec![0; 1024];
-			// println!("awaiting stderr");
-			let n = fabric_stderr.read(&mut stderr).unwrap();
-			// println!("got stderr {}", n);
-			if n == 0 {
-				break;
-			}
-			none = false;
-			stderr.truncate(n);
-			println!("fab stderr: {:?}", String::from_utf8(stderr).unwrap());
-		}
-		none
-	}));
-	let start_ = time::Instant::now();
-	while TcpStream::connect(FABRIC_ADDR).is_err() {
-		// TODO: parse output rather than this loop and timeout
-		if start_.elapsed() > time::Duration::new(5, 0) {
-			panic!("Fabric not up within 5s");
-		}
-		thread::sleep(std::time::Duration::new(0, 1_000_000));
-	}
-	while TcpStream::connect(BRIDGE_ADDR).is_err() {
-		// TODO: parse output rather than this loop and timeout
-		if start_.elapsed() > time::Duration::new(15, 0) {
-			panic!("Bridge not up within 15s");
-		}
-		thread::sleep(std::time::Duration::new(0, 1_000_000));
-	}
-
 	let mut products = products
 		.iter()
 		.filter(|&(src, _bin)| src.starts_with(Path::new(TESTS)) && src != Path::new(SELF))
+		.map(|(src, bin)| {
+			let mut file: Result<OutputTest, serde_json::Error> = serde_json::from_str(
+				&BufReader::new(File::open(src).unwrap())
+					.lines()
+					.map(Result::unwrap)
+					.take_while(|x| x.get(0..3) == Some("//="))
+					.flat_map(|x| ext::string::Chars::new(x).skip(3))
+					.collect::<String>(),
+			);
+			if !FORWARD_STDERR {
+				file = file.map(remove_stderr);
+			}
+			(src, bin, file)
+		})
 		.collect::<Vec<_>>();
-	products.sort_by(|&(ref a_src, _), &(ref b_src, _)| a_src.cmp(b_src));
+	products.sort_by(|&(ref a_src, _, _), &(ref b_src, _, _)| a_src.cmp(b_src));
+
+	let node1_fabric_port = 12340;
+	let node1_bridge_port = 12341;
+	let node2_fabric_port = 12350;
+	let node3_fabric_port = 12360;
 
 	let (mut succeeded, mut failed) = (0, 0);
-	for (src, bin) in products {
-		println!("{}", src.display());
-		let mut file: Result<OutputTest, _> = serde_json::from_str(
-			&BufReader::new(File::open(src).unwrap())
-				.lines()
-				.map(Result::unwrap)
-				.take_while(|x| x.get(0..3) == Some("//="))
-				.flat_map(|x| ext::string::Chars::new(x).skip(3))
-				.collect::<String>(),
-		);
-		if !FORWARD_STDERR {
-			file = file.map(remove_stderr);
-		}
-		let mut x = |command: &mut process::Command| {
-			let result = command.output().unwrap();
-			let output = parse_output(&result);
-			if output.is_err()
-				|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
-			{
-				println!("Error in {:?}", src);
-				match file {
-					Ok(ref file) => println!(
-						"Documented:\n{}",
-						serde_json::to_string_pretty(file).unwrap()
-					),
-					Err(ref e) => println!("Documented:\nInvalid result JSON: {:?}\n", e),
-				}
-				match output {
-					Ok(ref output) => {
-						println!("Actual:\n{}", serde_json::to_string_pretty(output).unwrap())
+	for environment in &mut [
+		&mut Native as &mut dyn Environment,
+		&mut Cluster::new(
+			deploy.clone(),
+			fabric.clone(),
+			vec![
+				Node {
+					fabric: Socket::localhost(node1_fabric_port),
+					bridge: Some(Socket::localhost(node1_bridge_port)),
+					mem: 2 * Mem::GIB,
+					cpu: 2 * Cpu::CORE,
+				},
+				Node {
+					fabric: Socket::localhost(node2_fabric_port),
+					bridge: None,
+					mem: Mem::GIB,
+					cpu: Cpu::CORE,
+				},
+				Node {
+					fabric: Socket::localhost(node3_fabric_port),
+					bridge: None,
+					mem: Mem::GIB / 2,
+					cpu: Cpu::CORE / 2,
+				},
+			],
+		),
+	] {
+		println!("Running in environment: {:#?}", environment);
+		environment.start();
+		for (ref src, ref bin, ref file) in &products {
+			println!("{}", src.display());
+			for i in 0..iterations {
+				println!("    {}", i);
+				let result = environment.run(bin);
+				let output = parse_output(&result);
+				if output.is_err()
+					|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
+				{
+					println!("Error in {:?}", src);
+					match file {
+						Ok(ref file) => println!(
+							"Documented:\n{}",
+							serde_json::to_string_pretty(file).unwrap()
+						),
+						Err(ref e) => println!("Documented:\nInvalid result JSON: {:?}\n", e),
 					}
-					Err(ref e) => println!("Actual:\nFailed to parse: {:?}\n{:?}", result, e),
+					match output {
+						Ok(ref output) => {
+							println!("Actual:\n{}", serde_json::to_string_pretty(output).unwrap())
+						}
+						Err(ref e) => println!("Actual:\nFailed to parse: {:?}\n{:?}", result, e),
+					}
+					failed += 1;
+				} else {
+					succeeded += 1;
 				}
-				failed += 1;
-			} else {
-				succeeded += 1;
 			}
-		};
-		println!("  native");
-		for i in 0..iterations {
-			println!("    {}", i);
-			x(process::Command::new(bin)
-				.env_remove("CONSTELLATION_VERSION")
-				.env("CONSTELLATION_FORMAT", "json"));
+			print!("{:?}", SystemLoad::measure());
 		}
-		print!("{:?}", SystemLoad::measure());
-		println!("  deployed");
-		for i in 0..iterations {
-			println!("    {}", i);
-			x(process::Command::new(deploy)
-				.env_remove("CONSTELLATION_VERSION")
-				.env_remove("CONSTELLATION_FORMAT")
-				.args(&["--format=json", BRIDGE_ADDR, bin.to_str().unwrap()]));
-		}
-		print!("{:?}", SystemLoad::measure());
+		environment.stop();
 	}
-
-	println!("killing");
-	fabric.kill().unwrap();
-	println!("waiting");
-	let _ = fabric.wait().unwrap();
-	println!("waiting stderr");
-	let stderr_empty = fabric_stderr.join().unwrap();
-	assert!(stderr_empty);
-	println!("waiting stdout");
-	let _stdout_empty = fabric_stdout.join().unwrap();
-	// assert!(stdout_empty);
 
 	println!(
 		"{}/{} succeeded in {:?}",
@@ -477,9 +414,226 @@ fn main() {
 		succeeded + failed,
 		start.elapsed()
 	);
-	if failed > 0 {
+	if failed > 0 || succeeded == 0 {
 		process::exit(1);
 	}
+}
+
+trait Environment: Debug {
+	fn start(&mut self) {}
+	fn run(&mut self, bin: &Path) -> process::Output;
+	fn stop(&mut self) {}
+}
+
+#[derive(Debug)]
+struct Native;
+impl Environment for Native {
+	fn run(&mut self, bin: &Path) -> process::Output {
+		process::Command::new(bin)
+			.env_remove("CONSTELLATION_VERSION")
+			.env("CONSTELLATION_FORMAT", "json")
+			.output()
+			.unwrap()
+	}
+}
+
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+enum Cluster {
+	Init(ClusterConfig),
+	Running {
+		config: ClusterConfig,
+		cluster: Vec<ClusterNode>,
+	},
+	Invalid,
+}
+#[derive(Debug)]
+struct ClusterConfig {
+	deploy: PathBuf,
+	fabric: PathBuf,
+	nodes: Vec<Node>,
+}
+#[derive(Debug)]
+struct Node {
+	fabric: Socket,
+	bridge: Option<Socket>,
+	mem: Mem,
+	cpu: Cpu,
+}
+#[derive(Clone, Copy, Debug)]
+struct Socket {
+	bind: SocketAddr,
+	external: SocketAddr,
+}
+impl Socket {
+	fn localhost(port: u16) -> Self {
+		let bind = SocketAddr::new(LOCALHOST, port);
+		Self {
+			bind,
+			external: bind,
+		}
+	}
+}
+#[derive(Debug)]
+struct ClusterNode {
+	process: process::Child,
+	stdout: JoinHandle<bool>,
+	stderr: JoinHandle<bool>,
+}
+
+impl Cluster {
+	fn new(deploy: PathBuf, fabric: PathBuf, nodes: Vec<Node>) -> Self {
+		Cluster::Init(ClusterConfig {
+			deploy,
+			fabric,
+			nodes,
+		})
+	}
+}
+impl Environment for Cluster {
+	fn start(&mut self) {
+		let config = if let Self::Init(config) = mem::replace(self, Cluster::Invalid) {
+			config
+		} else {
+			panic!()
+		};
+		let mut cluster = config
+			.nodes
+			.iter()
+			.enumerate()
+			.rev()
+			.map(|(i, node)| {
+				if TcpStream::connect(node.fabric.external).is_ok() {
+					panic!(
+						"Service already running on FABRIC_ADDR {}",
+						node.fabric.external
+					);
+				}
+				if let Some(bridge) = node.bridge {
+					if TcpStream::connect(bridge.external).is_ok() {
+						panic!("Service already running on BRIDGE_ADDR {}", bridge.external);
+					}
+				}
+				let mut args = vec![
+					String::from("--format"),
+					String::from("json"),
+					String::from("-v"),
+					node.fabric.bind.to_string(),
+				];
+				if i == 0 {
+					for node in &config.nodes {
+						args.extend(vec![
+							node.fabric.external.to_string(),
+							node.bridge.map_or_else(
+								|| String::from("-"),
+								|bridge| bridge.bind.to_string(),
+							),
+							node.mem.to_string(),
+							node.cpu.to_string(),
+						]);
+					}
+				}
+				let mut process = process::Command::new(&config.fabric)
+					.args(args)
+					.stdin(process::Stdio::null())
+					.stdout(process::Stdio::piped())
+					.stderr(process::Stdio::piped())
+					.spawn()
+					.unwrap();
+				let stdout = process.stdout.take().unwrap();
+				let stdout = capture_stdout(stdout, true, move |none, output| {
+					*none = false;
+					println!("fab stdout: {:?}", str::from_utf8(output).unwrap());
+				});
+				let stderr = process.stderr.take().unwrap();
+				let stderr = capture_stdout(stderr, true, move |none, output| {
+					*none = false;
+					println!("fab stderr: {:?}", str::from_utf8(output).unwrap());
+				});
+				let start_ = time::Instant::now();
+				while TcpStream::connect(node.fabric.external).is_err() {
+					// TODO: parse output rather than this loop and timeout
+					if start_.elapsed() > time::Duration::new(5, 0) {
+						panic!("Fabric not up within 5s");
+					}
+					thread::sleep(std::time::Duration::new(0, 1_000_000));
+				}
+				if let Some(bridge) = node.bridge {
+					while TcpStream::connect(bridge.external).is_err() {
+						// TODO: parse output rather than this loop and timeout
+						if start_.elapsed() > time::Duration::new(15, 0) {
+							panic!("Bridge not up within 15s");
+						}
+						thread::sleep(std::time::Duration::new(0, 1_000_000));
+					}
+				}
+				ClusterNode {
+					process,
+					stdout,
+					stderr,
+				}
+			})
+			.collect::<Vec<_>>();
+		cluster.reverse();
+		*self = Cluster::Running { config, cluster }
+	}
+	fn run(&mut self, bin: &Path) -> process::Output {
+		let config = if let Self::Running { config, .. } = self {
+			config
+		} else {
+			panic!()
+		};
+		process::Command::new(&config.deploy)
+			.env_remove("CONSTELLATION_VERSION")
+			.env_remove("CONSTELLATION_FORMAT")
+			.args(&[
+				"--format=json",
+				&config.nodes[0].bridge.unwrap().external.to_string(),
+				bin.to_str().unwrap(),
+			])
+			.output()
+			.unwrap()
+	}
+	fn stop(&mut self) {
+		let (config, cluster) =
+			if let Self::Running { config, cluster } = mem::replace(self, Self::Invalid) {
+				(config, cluster)
+			} else {
+				panic!()
+			};
+		for mut node in cluster {
+			println!("killing");
+			node.process.kill().unwrap();
+			println!("waiting");
+			let _ = node.process.wait().unwrap();
+			println!("waiting stderr");
+			let stderr_empty = node.stderr.join().unwrap();
+			assert!(stderr_empty);
+			println!("waiting stdout");
+			let _stdout_empty = node.stdout.join().unwrap();
+			// assert!(stdout_empty);
+		}
+		*self = Self::Init(config);
+	}
+}
+
+fn capture_stdout<
+	R: io::Read + Send + 'static,
+	F: FnMut(&mut S, &[u8]) + Send + 'static,
+	S: Send + 'static,
+>(
+	mut read: R, mut state: S, mut f: F,
+) -> JoinHandle<S> {
+	thread::spawn(abort_on_unwind(move || {
+		let mut buf = vec![0; 16 * 1024];
+		loop {
+			let n = read.read(&mut buf).unwrap();
+			if n == 0 {
+				break state;
+			}
+			f(&mut state, &buf[..n]);
+		}
+	}))
 }
 
 struct SystemLoad {
@@ -506,7 +660,7 @@ impl SystemLoad {
 		}
 	}
 }
-impl fmt::Debug for SystemLoad {
+impl Debug for SystemLoad {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match &self.memory {
 			Ok(mem) => writeln!(
