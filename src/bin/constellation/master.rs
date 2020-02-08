@@ -58,7 +58,7 @@ pub fn run(
 					Ok(stream) => break Ok(stream),
 					Err(err) => err,
 				};
-				if start.elapsed() > Duration::from_secs(1) {
+				if start.elapsed() > Duration::from_secs(60) {
 					break Err(err);
 				}
 				thread::sleep(Duration::from_secs(1));

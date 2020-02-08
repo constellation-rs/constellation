@@ -61,17 +61,17 @@ pub use units::*;
 ///  * When running across a cluster, it is valid and unique cluster-wide, rather than within a single node.
 ///
 /// All inter-process communication occurs after [Sender](Sender)s and [Receiver](Receiver)s have been created with their remotes' `Pid`s. Thus `Pid`s are the primary form of addressing in a `constellation` cluster.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Pid {
+	key: u128,
 	ip: IpAddr,
 	port: u16,
-	key: u128,
 }
 impl Pid {
 	pub(crate) fn new(ip: IpAddr, port: u16) -> Self {
 		assert_ne!(port, 0);
 		let key = rand::random();
-		Self { ip, port, key }
+		Self { key, ip, port }
 	}
 
 	pub(crate) fn addr(&self) -> SocketAddr {

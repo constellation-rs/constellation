@@ -231,7 +231,7 @@ cpu = 16
 Your laptop:
 ```text
 cargo install constellation-rs
-cargo deploy 10.0.0.1:8888 --release # address of the bridge
+cargo deploy --release 10.0.0.1:8888 # address of the bridge
 833d3de:
     Hello, world!
     exited
