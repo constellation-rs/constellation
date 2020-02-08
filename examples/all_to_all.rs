@@ -49,7 +49,7 @@ fn main() {
 		.map(|process_index| {
 			spawn(
 				Resources {
-					mem: 20 * 1024 * 1024,
+					mem: 20 * Mem::MIB,
 					..Resources::default()
 				},
 				FnOnce!(move |parent| {

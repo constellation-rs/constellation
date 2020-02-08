@@ -160,13 +160,13 @@ use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	let x = futures::executor::block_on(futures::future::join_all((0..10).map(|i| {
 		let pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024,
+				mem: 20 * Mem::MIB,
 				..Resources::default()
 			},
 			FnOnce!(move |parent| {

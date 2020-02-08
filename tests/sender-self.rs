@@ -24,7 +24,7 @@ use std::{panic, process, thread};
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	panic::set_hook(Box::new(|info| {

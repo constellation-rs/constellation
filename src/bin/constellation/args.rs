@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::{error::Error, fs::File, io::Read, net::SocketAddr};
 
 use super::{Args, Node, Role};
-use constellation_internal::{parse_cpu_size, parse_mem_size, Format};
+use constellation_internal::{Cpu, Format, Mem};
 
 const DESCRIPTION: &str = r"Run a constellation node.
 ";
@@ -168,8 +168,8 @@ impl Args {
 				) = (
 					args.next().map(|x| x.parse::<SocketAddr>()),
 					args.next().map(|x| x.parse::<SocketAddr>()),
-					args.next().map(|x| parse_mem_size(&x)),
-					args.next().map(|x| parse_cpu_size(&x)),
+					args.next().map(|x| x.parse::<Mem>()),
+					args.next().map(|x| x.parse::<Cpu>()),
 					args.next().map(|x| x.parse::<u32>()),
 					args.next(),
 				) {
@@ -200,8 +200,8 @@ impl Args {
 										x.parse().map(Some)
 									}
 								}),
-								args.next().map(|x| parse_mem_size(&x)),
-								args.next().map(|x| parse_cpu_size(&x)),
+								args.next().map(|x| x.parse::<Mem>()),
+								args.next().map(|x| x.parse::<Cpu>()),
 							) {
 								(None, _, _, _) if !nodes.is_empty() => break,
 								(
@@ -265,105 +265,8 @@ impl Args {
 		struct B {
 			fabric_addr: SocketAddr,
 			bridge_bind: Option<SocketAddr>,
-			#[serde(deserialize_with = "serde_mem::deserialize")]
-			mem: u64,
-			#[serde(deserialize_with = "serde_cpu::deserialize")]
-			cpu: u32,
-		}
-
-		mod serde_mem {
-			use constellation_internal::parse_mem_size;
-			use serde::{de::Visitor, *};
-			use std::fmt;
-			pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
-			where
-				D: Deserializer<'de>,
-			{
-				if deserializer.is_human_readable() {
-					deserializer.deserialize_str(MemVisitor)
-				} else {
-					u64::deserialize(deserializer)
-				}
-			}
-			struct MemVisitor;
-
-			impl<'de> Visitor<'de> for MemVisitor {
-				type Value = u64;
-
-				fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-					formatter.write_str("a memory size, like \"800 MiB\" or \"6 GiB\"")
-				}
-
-				fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					parse_mem_size(value)
-						.map_err(|()| E::custom(format!("couldn't parse memory size: {}", value)))
-				}
-
-				fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					Ok(value)
-				}
-			}
-		}
-		mod serde_cpu {
-			use constellation_internal::parse_cpu_size;
-			use serde::{de::Visitor, *};
-			use std::{convert::TryInto, fmt};
-			pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
-			where
-				D: Deserializer<'de>,
-			{
-				if deserializer.is_human_readable() {
-					deserializer.deserialize_any(CpuVisitor)
-				} else {
-					u32::deserialize(deserializer)
-				}
-			}
-			struct CpuVisitor;
-			impl<'de> Visitor<'de> for CpuVisitor {
-				type Value = u32;
-
-				fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-					formatter.write_str("a quantity of logical CPU cores, like \"0.5\" or \"4\"")
-				}
-
-				fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					parse_cpu_size(value)
-						.map_err(|()| E::custom(format!("couldn't parse CPU quantity: {}", value)))
-				}
-
-				fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					Ok((value * 65536).try_into().map_err(|_| {
-						E::custom(format!("couldn't parse CPU quantity: {}", value))
-					})?)
-				}
-				fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					self.visit_u64(value.try_into().map_err(|_| {
-						E::custom(format!("couldn't parse CPU quantity: {}", value))
-					})?)
-				}
-				#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-				fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-				where
-					E: de::Error,
-				{
-					Ok((value * 65536.0) as u32) // TODO
-				}
-			}
+			mem: Mem,
+			cpu: Cpu,
 		}
 
 		let mut toml = Vec::new();
@@ -470,8 +373,8 @@ mod tests {
 					vec![Node {
 						fabric: "10.0.0.1:8888".parse().unwrap(),
 						bridge: Some("10.0.0.1:7777".parse().unwrap()),
-						mem: 400 * 1024 * 1024 * 1024,
-						cpu: 34 * 65536,
+						mem: 400 * Mem::GIB,
+						cpu: 34 * Cpu::CORE,
 					}]
 				)
 			})
@@ -498,14 +401,14 @@ mod tests {
 						Node {
 							fabric: "10.0.0.1:8888".parse().unwrap(),
 							bridge: Some("10.0.0.1:7777".parse().unwrap()),
-							mem: 400 * 1024 * 1024 * 1024,
-							cpu: 34 * 65536,
+							mem: 400 * Mem::GIB,
+							cpu: 34 * Cpu::CORE,
 						},
 						Node {
 							fabric: "10.0.0.1:8888".parse().unwrap(),
 							bridge: None,
-							mem: 400 * 1024 * 1024 * 1024,
-							cpu: 34 * 65536,
+							mem: 400 * Mem::GIB,
+							cpu: 34 * Cpu::CORE,
 						}
 					]
 				)

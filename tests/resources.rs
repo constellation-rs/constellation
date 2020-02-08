@@ -5,7 +5,7 @@
 //=       true
 //=     ],
 //=     "1": [
-//=       "Resources \\{ mem: 20971520, cpu: 4096 \\}\n",
+//=       "Resources \\{ mem: Mem\\(20971520\\), cpu: Cpu\\(4096\\) \\}\n",
 //=       true
 //=     ]
 //=   },
@@ -17,7 +17,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971520, cpu: 65 \\}\n",
+//=           "hi Resources \\{ mem: Mem\\(20971520\\), cpu: Cpu\\(65\\) \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -27,7 +27,7 @@
 //=     {
 //=       "output": {
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971521, cpu: 65 \\}\n",
+//=           "hi Resources \\{ mem: Mem\\(20971521\\), cpu: Cpu\\(65\\) \\}\n",
 //=           true
 //=         ],
 //=         "2": [
@@ -45,7 +45,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971522, cpu: 65 \\}\n",
+//=           "hi Resources \\{ mem: Mem\\(20971522\\), cpu: Cpu\\(65\\) \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -59,7 +59,7 @@
 //=           true
 //=         ],
 //=         "1": [
-//=           "hi Resources \\{ mem: 20971523, cpu: 65 \\}\n",
+//=           "hi Resources \\{ mem: Mem\\(20971523\\), cpu: Cpu\\(65\\) \\}\n",
 //=           true
 //=         ]
 //=       },
@@ -70,23 +70,25 @@
 //=   "exit": "Success"
 //= }
 
+#![allow(clippy::needless_update)]
+
 use constellation::*;
-use serde_closure::FnOnce;
 
 fn main() {
 	init(Resources {
-		mem: 20 * 1024 * 1024,
+		mem: 20 * Mem::MIB,
 		..Resources::default()
 	});
 	println!("{:?}", resources());
 	for i in 0..4 {
 		let _pid = spawn(
 			Resources {
-				mem: 20 * 1024 * 1024 + i,
-				cpu: 65536 / 1000,
+				mem: 20 * Mem::MIB + i * Mem::B,
+				cpu: Cpu::CORE / 1000,
+				..Resources::default()
 			},
 			FnOnce!(move |_parent| {
-				assert_eq!(resources().mem, 20 * 1024 * 1024 + i);
+				assert_eq!(resources().mem, 20 * Mem::MIB + i * Mem::B);
 				println!("hi {:?}", resources());
 			}),
 		)
