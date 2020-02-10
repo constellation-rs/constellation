@@ -324,14 +324,16 @@ fn main() {
 		.iter()
 		.filter(|&(src, _bin)| src.starts_with(Path::new(TESTS)) && src != Path::new(SELF))
 		.map(|(src, bin)| {
-			let mut file: Result<OutputTest, serde_json::Error> = serde_json::from_str(
-				&BufReader::new(File::open(src).unwrap())
-					.lines()
-					.map(Result::unwrap)
-					.take_while(|x| x.get(0..3) == Some("//="))
-					.flat_map(|x| ext::string::Chars::new(x).skip(3))
-					.collect::<String>(),
-			);
+			let file = BufReader::new(File::open(src).unwrap())
+				.lines()
+				.map(Result::unwrap)
+				.take_while(|x| x.get(0..3) == Some("//="))
+				.flat_map(|x| ext::string::Chars::new(x).skip(3))
+				.collect::<String>();
+			let mut deserializer = serde_json::Deserializer::from_str(&file);
+			deserializer.disable_recursion_limit();
+			let mut file: Result<OutputTest, serde_json::Error> =
+				Deserialize::deserialize(&mut deserializer);
 			if !FORWARD_STDERR {
 				file = file.map(remove_stderr);
 			}
@@ -386,16 +388,11 @@ fn main() {
 				{
 					println!("Error in {:?}", src);
 					match file {
-						Ok(ref file) => println!(
-							"Documented:\n{}",
-							serde_json::to_string_pretty(file).unwrap()
-						),
+						Ok(ref file) => println!("Documented:\n{}", json_to_string(file).unwrap()),
 						Err(ref e) => println!("Documented:\nInvalid result JSON: {:?}\n", e),
 					}
 					match output {
-						Ok(ref output) => {
-							println!("Actual:\n{}", serde_json::to_string_pretty(output).unwrap())
-						}
+						Ok(ref output) => println!("Actual:\n{}", json_to_string(output).unwrap()),
 						Err(ref e) => println!("Actual:\nFailed to parse: {:?}\n{:?}", result, e),
 					}
 					failed += 1;
@@ -634,6 +631,19 @@ fn capture_stdout<
 			f(&mut state, &buf[..n]);
 		}
 	}))
+}
+
+fn json_to_string<T: ?Sized>(value: &T) -> Result<String>
+where
+	T: Serialize,
+{
+	let dense = serde_json::to_string(value)?;
+	if dense.len() < 1000 {
+		if let Ok(pretty) = serde_json::to_string_pretty(value) {
+			return Ok(pretty);
+		}
+	}
+	dense
 }
 
 struct SystemLoad {

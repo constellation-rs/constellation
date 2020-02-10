@@ -330,12 +330,20 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 	]
 	.iter()
 	.cloned()
-	.chain(request.vars.into_iter().map(|(x, y)| {
-		(
-			CString::new(OsStringExt::into_vec(x)).unwrap(),
-			CString::new(OsStringExt::into_vec(y)).unwrap(),
-		)
-	}))
+	.chain(
+		request
+			.vars
+			.into_iter()
+			.map(|(x, y)| {
+				(
+					CString::new(OsStringExt::into_vec(x)).unwrap(),
+					CString::new(OsStringExt::into_vec(y)).unwrap(),
+				)
+			})
+			.filter(|&(ref x, _)| {
+				x.to_str() != Ok("CONSTELLATION") && x.to_str() != Ok("CONSTELLATION_RESOURCES")
+			}),
+	)
 	.map(|(key, value)| {
 		CString::new(format!(
 			"{}={}",

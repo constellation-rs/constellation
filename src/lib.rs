@@ -503,6 +503,7 @@ fn spawn_native(
 				CString::new(OsStringExt::into_vec(y.clone())).unwrap(),
 			)
 		})
+		.filter(|&(ref x, _)| x.to_str() != Ok("CONSTELLATION_RESOURCES"))
 		.chain(iter::once((
 			CString::new("CONSTELLATION_RESOURCES").unwrap(),
 			CString::new(serde_json::to_string(&resources).unwrap()).unwrap(),
