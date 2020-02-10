@@ -633,7 +633,7 @@ fn capture_stdout<
 	}))
 }
 
-fn json_to_string<T: ?Sized>(value: &T) -> Result<String>
+fn json_to_string<T: ?Sized>(value: &T) -> Result<String, serde_json::Error>
 where
 	T: Serialize,
 {
@@ -643,7 +643,7 @@ where
 			return Ok(pretty);
 		}
 	}
-	dense
+	Ok(dense)
 }
 
 struct SystemLoad {
