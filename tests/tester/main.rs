@@ -26,6 +26,7 @@
 mod ext;
 
 use multiset::HashMultiSet;
+use palaver::file::FdIter;
 use serde::{Deserialize, Serialize};
 use std::{
 	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, thread, thread::JoinHandle, time::{self, Duration}
@@ -229,6 +230,13 @@ fn main() {
 		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
 		std::process::abort();
 	}));
+	// https://github.com/rust-lang/cargo/issues/6344
+	#[cfg(unix)]
+	for fd in FdIter::new().unwrap() {
+		if fd > 2 {
+			nix::unistd::close(fd).unwrap();
+		}
+	}
 	let _ = thread::Builder::new()
 		.spawn(abort_on_unwind(move || loop {
 			thread::sleep(time::Duration::new(10, 0));
@@ -239,7 +247,7 @@ fn main() {
 	let mut products = HashMap::new();
 	let iterations: usize = env::var("CONSTELLATION_TEST_ITERATIONS")
 		.map(|x| x.parse().unwrap())
-		.unwrap_or(10);
+		.unwrap_or(1);
 	let tests = fs::read_dir(TESTS).unwrap().filter_map(|path| {
 		let path = path.ok()?.path();
 		if path.extension()? == "rs" {

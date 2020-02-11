@@ -73,8 +73,25 @@
 #![allow(clippy::needless_update)]
 
 use constellation::*;
+use palaver::file::FdIter;
+use std::{collections::HashSet, env};
 
 fn main() {
+	let binary_fd = cfg!(feature = "distribute_binaries") as i32;
+	let fds = match (
+		env::var("CONSTELLATION").as_ref().map(|x| &**x),
+		env::var("CONSTELLATION_RECCE").as_ref().map(|x| &**x),
+		env::var("CONSTELLATION_RESOURCES").as_ref().map(|x| &**x),
+	) {
+		(Ok("fabric"), Ok("1"), _) => 0..4 + binary_fd, // bridge recce: output, (binary)
+		(Ok("fabric"), _, _) => 0..5 + binary_fd,       // fabric: listener, arg, (binary)
+		(_, _, Ok(_)) => 0..5,                          // native sub: listener, arg
+		(_, _, _) => 0..3,                              // native top
+	};
+	assert_eq!(
+		FdIter::new().unwrap().collect::<HashSet<_>>(),
+		fds.collect()
+	);
 	init(Resources {
 		mem: 20 * Mem::MIB,
 		..Resources::default()

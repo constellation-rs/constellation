@@ -82,7 +82,7 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, unistd};
 use palaver::{
-	file::{copy_fd, execve, fexecve, move_fds}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
+	file::{execve, fexecve, move_fd, move_fds}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
@@ -148,8 +148,7 @@ fn main() {
 	if args.role == Role::Bridge {
 		return bridge::main();
 	}
-	let stdout = io::stdout();
-	let trace = &Trace::new(stdout, args.format, args.verbose);
+	let trace = &Trace::new(io::stdout(), args.format, args.verbose);
 	let (listen, listener) = match args.role {
 		#[cfg(feature = "kubernetes")]
 		Role::KubeMaster {
@@ -206,10 +205,11 @@ fn main() {
 
 	loop {
 		let accepted = listener.accept();
-		if accepted.is_err() {
+		let (stream, addr) = if let Ok(accepted) = accepted {
+			accepted
+		} else {
 			continue;
-		}
-		let (stream, addr) = accepted.unwrap();
+		};
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		let (mut stream_read, stream_write) =
@@ -220,10 +220,7 @@ fn main() {
 			continue;
 		}
 		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
-		if ip.is_err() {
-			continue;
-		}
-		let ip = ip.unwrap();
+		let ip = if let Ok(ip) = ip { ip } else { continue };
 		crossbeam::scope(|scope| {
 			while let Ok(request) =
 				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
@@ -385,6 +382,12 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 					Some(fcntl::FdFlag::empty()),
 					true,
 				);
+				for fd in BOUND_FD_START..1024 {
+					if cfg!(feature = "distribute_binaries") && fd == binary_desired_fd {
+						continue;
+					}
+					let _ = unistd::close(fd);
+				}
 				for (i, addr) in bind.iter().enumerate() {
 					let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
 					let fd = socket::socket(
@@ -395,8 +398,7 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 					)
 					.unwrap();
 					if fd != socket {
-						copy_fd(fd, socket, Some(fcntl::FdFlag::empty()), true).unwrap();
-						unistd::close(fd).unwrap();
+						move_fd(fd, socket, Some(fcntl::FdFlag::empty()), true).unwrap();
 					}
 					socket::setsockopt(socket, socket::sockopt::ReuseAddr, &true).unwrap();
 					socket::bind(
@@ -409,14 +411,13 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 					if valgrind::is().unwrap_or(false) {
 						let binary_desired_fd_ = valgrind::start_fd() - 1;
 						assert!(binary_desired_fd_ > binary_desired_fd);
-						copy_fd(
+						move_fd(
 							binary_desired_fd,
 							binary_desired_fd_,
 							Some(fcntl::FdFlag::empty()),
 							true,
 						)
 						.unwrap();
-						unistd::close(binary_desired_fd).unwrap();
 						binary_desired_fd = binary_desired_fd_;
 					}
 					fexecve(binary_desired_fd, &args, &vars).expect("Failed to fexecve for fabric");
