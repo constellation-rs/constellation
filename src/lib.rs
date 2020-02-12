@@ -735,25 +735,28 @@ extern "C" fn at_exit() {
 }
 
 #[doc(hidden)]
-pub fn bridge_init() -> TcpListener {
-	const BOUND_FD: Fd = 5; // from fabric
+pub fn master_init(sched: bool) {
 	if valgrind::is().unwrap_or(false) {
 		unistd::close(valgrind::start_fd() - 1 - 12).unwrap();
 	}
 	// init();
-	socket::listen(BOUND_FD, 100).unwrap();
-	let listener = unsafe { TcpListener::from_raw_fd(BOUND_FD) };
-	{
-		let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
-		let sched_arg: SchedulerArg = bincode::deserialize_from(&mut &arg)
-			.map_err(map_bincode_err)
-			.unwrap();
-		let our_pid: Pid = bincode::deserialize_from(&mut &arg)
-			.map_err(map_bincode_err)
-			.unwrap();
-		assert_eq!((&arg).read(&mut [0]).unwrap(), 0);
-		drop(arg);
-		PID.set(our_pid).unwrap();
+	let arg = unsafe { fs::File::from_raw_fd(ARG_FD) };
+	let sched_arg: Option<SchedulerArg> = if sched {
+		Some(
+			bincode::deserialize_from(&mut &arg)
+				.map_err(map_bincode_err)
+				.unwrap(),
+		)
+	} else {
+		None
+	};
+	let our_pid: Pid = bincode::deserialize_from(&mut &arg)
+		.map_err(map_bincode_err)
+		.unwrap();
+	assert_eq!((&arg).read(&mut [0]).unwrap(), 0);
+	drop(arg);
+	PID.set(our_pid).unwrap();
+	if let Some(sched_arg) = sched_arg {
 		let scheduler = TcpStream::connect(sched_arg.scheduler.addr())
 			.unwrap()
 			.into_raw_fd();
@@ -761,18 +764,26 @@ pub fn bridge_init() -> TcpListener {
 			palaver::file::move_fd(scheduler, SCHEDULER_FD, Some(fcntl::FdFlag::empty()), true)
 				.unwrap();
 		}
-
-		let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
-		*REACTOR.try_write().unwrap() = Some(reactor);
-		let handle = channel::Reactor::run(
-			|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
-			|&_fd| None,
-		);
-		*HANDLE.try_write().unwrap() = Some(handle);
-
-		let err = unsafe { libc::atexit(at_exit) };
-		assert_eq!(err, 0);
 	}
+
+	let reactor = channel::Reactor::with_fd(LISTENER_FD, pid().addr());
+	*REACTOR.try_write().unwrap() = Some(reactor);
+	let handle = channel::Reactor::run(
+		|| BorrowMap::new(REACTOR.read().unwrap(), borrow_unwrap_option),
+		|&_fd| None,
+	);
+	*HANDLE.try_write().unwrap() = Some(handle);
+
+	let err = unsafe { libc::atexit(at_exit) };
+	assert_eq!(err, 0);
+}
+
+#[doc(hidden)]
+pub fn bridge_init() -> TcpListener {
+	const BOUND_FD: Fd = 5; // from fabric
+	socket::listen(BOUND_FD, 100).unwrap();
+	let listener = unsafe { TcpListener::from_raw_fd(BOUND_FD) };
+	master_init(true);
 	listener
 }
 

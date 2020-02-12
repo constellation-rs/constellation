@@ -69,7 +69,8 @@
 	clippy::type_complexity,
 	clippy::non_ascii_literal,
 	clippy::shadow_unrelated,
-	clippy::too_many_lines
+	clippy::too_many_lines,
+	clippy::erasing_op
 )]
 
 mod args;
@@ -89,13 +90,13 @@ use std::{
 };
 #[cfg(unix)]
 use std::{
-	ffi::{CStr, CString}, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
+	ffi::{CStr, CString, OsString}, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
 };
 
 #[cfg(feature = "kubernetes")]
 use self::kube::kube_master;
 use constellation_internal::{
-	abort_on_unwind, abort_on_unwind_1, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Cpu, FabricOutputEvent, Fd, Format, Mem, Pid, PidInternal, Trace
+	abort_on_unwind_1, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Cpu, FabricOutputEvent, Fd, Format, Mem, Pid, PidInternal, Resources, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -115,6 +116,7 @@ enum Role {
 		replicas: u32,
 	},
 	Master(SocketAddr, Vec<Node>),
+	Master2(IpAddr, SocketAddr, Vec<Node>),
 	Worker(SocketAddr),
 	Bridge,
 }
@@ -148,7 +150,26 @@ fn main() {
 	if args.role == Role::Bridge {
 		return bridge::main();
 	}
+	if let Role::Master2(listen, master_addr, nodes) = args.role {
+		let nodes = nodes
+			.into_iter()
+			.map(
+				|Node {
+				     fabric,
+				     bridge,
+				     mem,
+				     cpu,
+				 }| { (fabric, (bridge, mem, cpu)) },
+			)
+			.collect::<HashMap<_, _>>(); // TODO: error on clash
+		master::run(
+			SocketAddr::new(listen, master_addr.port()),
+			Pid::new(master_addr.ip(), master_addr.port()),
+			nodes,
+		)
+	}
 	let trace = &Trace::new(io::stdout(), args.format, args.verbose);
+	let mut master = None;
 	let (listen, listener) = match args.role {
 		#[cfg(feature = "kubernetes")]
 		Role::KubeMaster {
@@ -175,58 +196,55 @@ fn main() {
 			nodes[0]
 				.fabric
 				.set_port(fabric.local_addr().unwrap().port());
-			let nodes = nodes
-				.into_iter()
-				.map(
-					|Node {
-					     fabric,
-					     bridge,
-					     mem,
-					     cpu,
-					 }| { (fabric, (bridge, mem, cpu)) },
-				)
-				.collect::<HashMap<_, _>>(); // TODO: error on clash
-			let _ = thread::Builder::new()
-				.name(String::from("master"))
-				.spawn(abort_on_unwind(move || {
-					std::thread::sleep(std::time::Duration::from_secs(1));
-					master::run(
-						SocketAddr::new(listen.ip(), master_addr.port()),
-						Pid::new(master_addr.ip(), master_addr.port()),
-						nodes,
-					)
-				}))
-				.unwrap();
+			master = Some((listen.ip(), master_addr, nodes));
 			(listen.ip(), fabric)
 		}
 		Role::Worker(listen) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
-		Role::Bridge => unreachable!(),
+		Role::Bridge | Role::Master2(_, _, _) => unreachable!(),
 	};
 
 	loop {
-		let accepted = listener.accept();
-		let (stream, addr) = if let Ok(accepted) = accepted {
-			accepted
-		} else {
-			continue;
-		};
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
-		let (mut stream_read, stream_write) =
-			(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
-		if bincode::serialize_into::<_, IpAddr>(&mut *stream_write.try_lock().unwrap(), &addr.ip())
-			.is_err()
-		{
-			continue;
-		}
-		let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
-		let ip = if let Ok(ip) = ip { ip } else { continue };
 		crossbeam::scope(|scope| {
-			while let Ok(request) =
-				bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
-			{
-				let request: FabricRequest<File, File> = request;
-				let (pid, child) = spawn(listen, ip, request);
+			if let Some((master_listen, master_addr, nodes)) = master.take() {
+				let mut args = vec![
+					OsString::from(env::current_exe().unwrap()),
+					OsString::from("master2"),
+					OsString::from(master_listen.to_string()),
+					OsString::from(master_addr.to_string()),
+				];
+				for node in &nodes {
+					args.extend(
+						vec![
+							node.fabric.to_string(),
+							node.bridge
+								.map_or_else(|| String::from("-"), |bridge| bridge.to_string()),
+							node.mem.to_string(),
+							node.cpu.to_string(),
+						]
+						.into_iter()
+						.map(OsString::from),
+					);
+				}
+				#[cfg(feature = "distribute_binaries")]
+				let binary = palaver::env::exe().unwrap();
+				#[cfg(not(feature = "distribute_binaries"))]
+				let binary = std::marker::PhantomData;
+				let arg = file_from_reader(&mut &*vec![], 0, &OsString::from("a"), false).unwrap();
+				let request: FabricRequest<File, File> = FabricRequest {
+					block: false,
+					resources: Resources {
+						mem: 0 * Mem::B,
+						cpu: 0 * Cpu::CORE,
+					},
+					bind: vec![],
+					args,
+					vars: Vec::new(),
+					binary,
+					arg,
+				};
+				let (pid, child) = spawn(listen, nodes[0].fabric.ip(), request);
 				let child = Arc::new(child);
 				let x = pending.write().unwrap().insert(pid, child.clone());
 				assert!(x.is_none());
@@ -234,15 +252,6 @@ fn main() {
 					pid,
 					system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
 				});
-				if bincode::serialize_into(
-					*stream_write.lock().unwrap(),
-					&Either::Left::<Pid, Pid>(pid),
-				)
-				.map_err(map_bincode_err)
-				.is_err()
-				{
-					break;
-				}
 				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
 					match child.wait() {
 						Ok(palaver::process::WaitStatus::Exited(0))
@@ -263,12 +272,80 @@ fn main() {
 						pid,
 						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
 					});
-					let _unchecked_error = bincode::serialize_into(
-						*stream_write.lock().unwrap(),
-						&Either::Right::<Pid, Pid>(pid),
-					)
-					.map_err(map_bincode_err);
 				}));
+			}
+			let accepted = listener.accept();
+			if let Ok((stream, addr)) = accepted {
+				let (mut stream_read, stream_write) =
+					(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
+				crossbeam::scope(|scope| {
+					if bincode::serialize_into::<_, IpAddr>(
+						&mut *stream_write.try_lock().unwrap(),
+						&addr.ip(),
+					)
+					.is_ok()
+					{
+						let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
+						if let Ok(ip) = ip {
+							while let Ok(request) =
+								bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+							{
+								let request: FabricRequest<File, File> = request;
+								let (pid, child) = spawn(listen, ip, request);
+								let child = Arc::new(child);
+								let x = pending.write().unwrap().insert(pid, child.clone());
+								assert!(x.is_none());
+								trace.fabric(FabricOutputEvent::Init {
+									pid,
+									system_pid: nix::libc::pid_t::from(child.pid)
+										.try_into()
+										.unwrap(),
+								});
+								if bincode::serialize_into(
+									*stream_write.lock().unwrap(),
+									&Either::Left::<Pid, Pid>(pid),
+								)
+								.map_err(map_bincode_err)
+								.is_err()
+								{
+									break;
+								}
+								let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
+									match child.wait() {
+										Ok(palaver::process::WaitStatus::Exited(0))
+										| Ok(palaver::process::WaitStatus::Signaled(
+											signal::Signal::SIGKILL,
+											_,
+										)) => (),
+										wait_status => {
+											if cfg!(feature = "strict") {
+												panic!("{:?}", wait_status)
+											}
+										}
+									}
+									let x = pending.write().unwrap().remove(&pid).unwrap();
+									assert!(Arc::ptr_eq(&child, &x));
+									drop(x);
+									let child = Arc::try_unwrap(child).unwrap();
+									let child_pid = child.pid;
+									drop(child);
+									trace.fabric(FabricOutputEvent::Exit {
+										pid,
+										system_pid: nix::libc::pid_t::from(child_pid)
+											.try_into()
+											.unwrap(),
+									});
+									let _unchecked_error = bincode::serialize_into(
+										*stream_write.lock().unwrap(),
+										&Either::Right::<Pid, Pid>(pid),
+									)
+									.map_err(map_bincode_err);
+								}));
+							}
+						}
+					}
+				})
+				.unwrap();
 			}
 			for (&_pid, child) in pending.read().unwrap().iter() {
 				let _unchecked_error = signal::kill(

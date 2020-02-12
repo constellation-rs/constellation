@@ -5,6 +5,7 @@ use std::{
 	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
 };
 
+use constellation::master_init;
 use constellation_internal::{
 	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Cpu, Mem, Pid, PidInternal, Resources, TrySpawnError
 };
@@ -34,7 +35,9 @@ impl Node {
 pub fn run(
 	bind_addr: SocketAddr, master_pid: Pid,
 	nodes: HashMap<SocketAddr, (Option<SocketAddr>, Mem, Cpu)>,
-) {
+) -> ! {
+	master_init(false);
+	// let master_pid = pid();
 	let (sender, receiver) = sync_channel::<
 		Either<
 			(
@@ -249,4 +252,5 @@ pub fn run(
 			}
 		}
 	}
+	unreachable!()
 }

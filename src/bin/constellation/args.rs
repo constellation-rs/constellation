@@ -154,7 +154,15 @@ impl Args {
 			));
 		}
 		let format = format.unwrap_or(Format::Human);
-		let role: Role = match (&*args.next().unwrap(), args.peek()) {
+		let mut arg = args.next().unwrap();
+		let master2 = if arg == "master2" {
+			let listen = args.next().unwrap().parse().unwrap();
+			arg = args.next().unwrap();
+			Some(listen)
+		} else {
+			None
+		};
+		let role: Role = match (&*arg, args.peek()) {
 			("bridge", None) => Role::Bridge,
 			#[cfg(feature = "kubernetes")]
 			("kube", _) => {
@@ -241,7 +249,11 @@ impl Args {
 						})?;
 					}
 				}
-				Role::Master(bind, nodes)
+				if let Some(master2) = master2 {
+					Role::Master2(master2, bind, nodes)
+				} else {
+					Role::Master(bind, nodes)
+				}
 			}
 			(bind, None) if bind.parse::<SocketAddr>().is_ok() => {
 				Role::Worker(bind.parse::<SocketAddr>().unwrap())

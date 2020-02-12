@@ -87,6 +87,7 @@ systemstat = "0.1"
 
 [patch.crates-io]
 systemstat = { git = "https://github.com/alecmocatta/systemstat", branch = "linking-fix" }
+palaver = {git = "https://github.com/alecmocatta/palaver", branch = "move_fds-ring" }
 
 ###
 
