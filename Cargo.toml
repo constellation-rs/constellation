@@ -54,13 +54,13 @@ kube = { version = "0.23", features = ["openapi"], optional = true }
 log = "0.4"
 notifier = { version = "0.1", features = ["tcp_typed"] }
 once_cell = "1.0"
-palaver = "0.3.0-alpha.1"
+palaver = "0.3.0-alpha.2"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_closure = "0.2"
 serde_traitobject = "0.2"
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["unbounded_depth"] }
 serde_pipe = "0.1"
 tcp_typed = "0.1"
 tokio = { version = "0.2", optional = true }
@@ -80,6 +80,7 @@ doc-comment = "0.3"
 hex = "0.4"
 itertools = "0.8"
 multiset = "0.0"
+rand_pcg = { version = "0.2", features = ["serde1"] }
 regex = "1.0"
 sha1 = "0.6"
 systemstat = "0.1"
@@ -121,6 +122,14 @@ test = false
 harness = false
 [[test]]
 name = "output-data"
+test = false
+harness = false
+[[test]]
+name = "resource-limit-stress"
+test = false
+harness = false
+[[test]]
+name = "resource-limit"
 test = false
 harness = false
 [[test]]
@@ -177,6 +186,10 @@ test = false
 harness = false
 [[test]]
 name = "spawn-send-recv"
+test = false
+harness = false
+[[test]]
+name = "spawn-send-sleep"
 test = false
 harness = false
 [[test]]

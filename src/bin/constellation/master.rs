@@ -170,6 +170,8 @@ pub fn run(
 
 	let mut processes: HashMap<(usize, Pid), Resources> = HashMap::new();
 
+	let mut blocked = Vec::new();
+
 	for msg in receiver.iter() {
 		match msg {
 			Either::Left((mut request, sender, force)) => {
@@ -199,8 +201,7 @@ pub fn run(
 					// 	resources, nodes
 					// );
 					if request.block {
-						// TODO!
-						sender.send(Err(TrySpawnError::Unknown)).unwrap();
+						blocked.push((request, sender));
 					} else {
 						sender.send(Err(TrySpawnError::NoCapacity)).unwrap();
 					}
@@ -219,6 +220,32 @@ pub fn run(
 				// println!("done {}:{} ({})", node, pid, processes.len());
 				let node = &mut nodes[node];
 				node.1.free(&process);
+				blocked = blocked
+					.into_iter()
+					.filter_map(|(mut request, sender)| {
+						if let Some(node) = nodes
+							.iter()
+							.position(|node| node.1.fits(&request.resources))
+						{
+							let node = &mut nodes[node];
+							node.1.alloc(&request.resources);
+
+							bincode::serialize_into(
+								&mut request.arg,
+								&SchedulerArg {
+									ip: node.2,
+									scheduler: master_pid,
+								},
+							)
+							.unwrap();
+							node.3.push_back((sender, request.resources));
+							node.0.send(request).unwrap();
+							None
+						} else {
+							Some((request, sender))
+						}
+					})
+					.collect();
 			}
 		}
 	}
