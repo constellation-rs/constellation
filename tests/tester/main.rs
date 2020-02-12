@@ -29,11 +29,11 @@ use multiset::HashMultiSet;
 use palaver::file::FdIter;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, thread, thread::JoinHandle, time::{self, Duration}
+	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, sync::mpsc, thread, thread::JoinHandle, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
-use constellation_internal::{abort_on_unwind, Cpu, ExitStatus, Fd, Mem};
+use constellation_internal::{abort_on_unwind, Cpu, ExitStatus, FabricOutputEvent, Fd, Mem};
 use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -248,9 +248,14 @@ fn main() {
 	let iterations: usize = env::var("CONSTELLATION_TEST_ITERATIONS")
 		.map(|x| x.parse().unwrap())
 		.unwrap_or(1);
+	let test = env::var("CONSTELLATION_TEST").ok();
 	let tests = fs::read_dir(TESTS).unwrap().filter_map(|path| {
 		let path = path.ok()?.path();
-		if path.extension()? == "rs" {
+		let is_test = path.extension()? == "rs"
+			&& test.as_ref().map_or(true, |test| {
+				Some(&**test) == path.file_stem().unwrap().to_str()
+			});
+		if is_test {
 			Some(String::from(path.file_stem()?.to_str()?))
 		} else {
 			None
@@ -389,7 +394,7 @@ fn main() {
 			println!("{}", src.display());
 			for i in 0..iterations {
 				println!("    {}", i);
-				let result = environment.run(bin);
+				let result = environment.run(bin, file.as_ref().ok());
 				let output = parse_output(&result);
 				if output.is_err()
 					|| file.is_err() || !file.as_ref().unwrap().is_match(output.as_ref().unwrap())
@@ -426,14 +431,14 @@ fn main() {
 
 trait Environment: Debug {
 	fn start(&mut self) {}
-	fn run(&mut self, bin: &Path) -> process::Output;
+	fn run(&mut self, bin: &Path, output: Option<&OutputTest>) -> process::Output;
 	fn stop(&mut self) {}
 }
 
 #[derive(Debug)]
 struct Native;
 impl Environment for Native {
-	fn run(&mut self, bin: &Path) -> process::Output {
+	fn run(&mut self, bin: &Path, _output: Option<&OutputTest>) -> process::Output {
 		process::Command::new(bin)
 			.env_remove("CONSTELLATION_VERSION")
 			.env("CONSTELLATION_FORMAT", "json")
@@ -449,6 +454,7 @@ enum Cluster {
 	Running {
 		config: ClusterConfig,
 		cluster: Vec<ClusterNode>,
+		stdout: mpsc::Receiver<(usize, Option<Result<FabricOutputEvent, serde_json::Error>>)>,
 	},
 	Invalid,
 }
@@ -479,11 +485,15 @@ impl Socket {
 		}
 	}
 }
-#[derive(Debug)]
 struct ClusterNode {
 	process: process::Child,
-	stdout: JoinHandle<bool>,
+	stdout: JoinHandle<()>,
 	stderr: JoinHandle<bool>,
+}
+impl Debug for ClusterNode {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("ClusterNode").finish()
+	}
 }
 
 impl Cluster {
@@ -502,6 +512,7 @@ impl Environment for Cluster {
 		} else {
 			panic!()
 		};
+		let (sender, receiver) = mpsc::sync_channel(0);
 		let mut cluster = config
 			.nodes
 			.iter()
@@ -546,10 +557,15 @@ impl Environment for Cluster {
 					.spawn()
 					.unwrap();
 				let stdout = process.stdout.take().unwrap();
-				let stdout = capture_stdout(stdout, true, move |none, output| {
-					*none = false;
-					println!("fab stdout: {:?}", str::from_utf8(output).unwrap());
-				});
+				let sender = sender.clone();
+				let stdout = thread::spawn(abort_on_unwind(move || {
+					for msg in
+						serde_json::StreamDeserializer::new(serde_json::de::IoRead::new(stdout))
+					{
+						sender.send((i, Some(msg))).unwrap();
+					}
+					sender.send((i, None)).unwrap();
+				}));
 				let stderr = process.stderr.take().unwrap();
 				let stderr = capture_stdout(stderr, true, move |none, output| {
 					*none = false;
@@ -564,6 +580,8 @@ impl Environment for Cluster {
 					thread::sleep(std::time::Duration::new(0, 1_000_000));
 				}
 				if let Some(bridge) = node.bridge {
+					let _bridge_pid: FabricOutputEvent =
+						receiver.recv().unwrap().1.unwrap().unwrap();
 					while TcpStream::connect(bridge.external).is_err() {
 						// TODO: parse output rather than this loop and timeout
 						if start_.elapsed() > time::Duration::new(15, 0) {
@@ -580,33 +598,74 @@ impl Environment for Cluster {
 			})
 			.collect::<Vec<_>>();
 		cluster.reverse();
-		*self = Cluster::Running { config, cluster }
+		*self = Cluster::Running {
+			config,
+			cluster,
+			stdout: receiver,
+		}
 	}
-	fn run(&mut self, bin: &Path) -> process::Output {
-		let config = if let Self::Running { config, .. } = self {
-			config
+	fn run(&mut self, bin: &Path, output: Option<&OutputTest>) -> process::Output {
+		let (config, stdout) = if let Self::Running { config, stdout, .. } = self {
+			(config, stdout)
 		} else {
 			panic!()
 		};
-		process::Command::new(&config.deploy)
-			.env_remove("CONSTELLATION_VERSION")
-			.env_remove("CONSTELLATION_FORMAT")
-			.args(&[
-				"--format=json",
-				&config.nodes[0].bridge.unwrap().external.to_string(),
-				bin.to_str().unwrap(),
-			])
-			.output()
-			.unwrap()
+		crossbeam::thread::scope(|scope| {
+			if let Some(output) = output {
+				fn count_processes(output_test: &OutputTest) -> usize {
+					1 + output_test
+						.children
+						.iter()
+						.map(count_processes)
+						.sum::<usize>()
+				}
+				let processes = count_processes(output);
+				let _ = scope.spawn(move |_| {
+					let mut pids = HashMap::new();
+					for _ in 0..processes * 2 {
+						let (_node, msg) = stdout.recv().unwrap();
+						match msg.unwrap().unwrap() {
+							FabricOutputEvent::Init { pid, system_pid } => {
+								let x = pids.insert(pid, system_pid);
+								assert!(x.is_none());
+							}
+							FabricOutputEvent::Exit { pid, system_pid } => {
+								let x = pids.remove(&pid);
+								assert_eq!(x, Some(system_pid));
+							}
+						}
+					}
+					assert!(pids.is_empty(), "{:?}", pids);
+					if let Ok(err) = stdout.try_recv() {
+						panic!("{:?}", err);
+					}
+				});
+			}
+			process::Command::new(&config.deploy)
+				.env_remove("CONSTELLATION_VERSION")
+				.env_remove("CONSTELLATION_FORMAT")
+				.args(&[
+					"--format=json",
+					&config.nodes[0].bridge.unwrap().external.to_string(),
+					bin.to_str().unwrap(),
+				])
+				.output()
+				.unwrap()
+		})
+		.unwrap()
 	}
 	fn stop(&mut self) {
-		let (config, cluster) =
-			if let Self::Running { config, cluster } = mem::replace(self, Self::Invalid) {
-				(config, cluster)
-			} else {
-				panic!()
-			};
-		for mut node in cluster {
+		let (config, cluster, stdout) = if let Self::Running {
+			config,
+			cluster,
+			stdout,
+		} = mem::replace(self, Self::Invalid)
+		{
+			(config, cluster, stdout)
+		} else {
+			panic!()
+		};
+		for (i, mut node) in cluster.into_iter().enumerate() {
 			println!("killing");
 			node.process.kill().unwrap();
 			println!("waiting");
@@ -615,8 +674,11 @@ impl Environment for Cluster {
 			let stderr_empty = node.stderr.join().unwrap();
 			assert!(stderr_empty);
 			println!("waiting stdout");
-			let _stdout_empty = node.stdout.join().unwrap();
-			// assert!(stdout_empty);
+			let x = stdout.recv().unwrap();
+			assert_eq!(x.0, i);
+			assert!(x.1.is_none());
+			println!("waiting stdout thread");
+			node.stdout.join().unwrap();
 		}
 		*self = Self::Init(config);
 	}
