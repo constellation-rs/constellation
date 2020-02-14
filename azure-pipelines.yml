@@ -30,6 +30,7 @@ jobs:
       matrix:
         windows0:
           imageName: 'vs2017-win2016'
+          rust_target_check: 'x86_64-unknown-freebsd x86_64-unknown-netbsd aarch64-unknown-linux-gnu aarch64-unknown-linux-musl' # TODO: build aarch64 musl
           rust_target_build: 'x86_64-unknown-linux-musl i686-unknown-linux-musl'
           # rust_target_run: 'x86_64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-gnu i686-pc-windows-gnu' # TODO
         mac0:

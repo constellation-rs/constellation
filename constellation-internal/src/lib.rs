@@ -48,6 +48,9 @@ pub type Fd = std::os::windows::io::RawHandle;
 #[global_allocator]
 static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
+// This is used when a key is not supplied for a standalone cluster
+const DEFAULT_KEY: u128 = 0x02b0_b808_95b7_e9b1_380e_e1fa_1c76_1c0e;
+
 pub use ext::*;
 pub use format::*;
 pub use units::*;
@@ -71,6 +74,12 @@ impl Pid {
 	pub(crate) fn new(ip: IpAddr, port: u16) -> Self {
 		assert_ne!(port, 0);
 		let key = rand::random();
+		Self { key, ip, port }
+	}
+
+	pub(crate) fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Self {
+		assert_ne!(port, 0);
+		let key = key.unwrap_or(DEFAULT_KEY);
 		Self { key, ip, port }
 	}
 
@@ -101,12 +110,17 @@ impl Debug for Pid {
 }
 pub trait PidInternal {
 	fn new(ip: IpAddr, port: u16) -> Pid;
+	fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Pid;
 	fn addr(&self) -> SocketAddr;
 }
 #[doc(hidden)]
 impl PidInternal for Pid {
 	fn new(ip: IpAddr, port: u16) -> Self {
 		Self::new(ip, port)
+	}
+
+	fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Pid {
+		Self::new_with(ip, port, key)
 	}
 
 	fn addr(&self) -> SocketAddr {

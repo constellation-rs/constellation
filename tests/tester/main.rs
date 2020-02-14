@@ -29,7 +29,7 @@ use multiset::HashMultiSet;
 use palaver::file::FdIter;
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, sync::mpsc, thread, thread::JoinHandle, time::{self, Duration}
+	collections::HashMap, env, ffi::OsStr, fmt, fmt::Debug, fs::{self, File}, hash, io::{self, BufRead, BufReader, Read}, iter, mem, net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream}, path::{Path, PathBuf}, process, str, sync::mpsc, thread, thread::JoinHandle, time::{self, Duration}
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
@@ -513,7 +513,8 @@ impl Environment for Cluster {
 		} else {
 			panic!()
 		};
-		let (sender, receiver) = mpsc::sync_channel(0);
+		let (sender, receiver) =
+			mpsc::sync_channel::<(usize, Option<Result<FabricOutputEvent, _>>)>(0);
 		let mut cluster = config
 			.nodes
 			.iter()
@@ -535,9 +536,13 @@ impl Environment for Cluster {
 					String::from("--format"),
 					String::from("json"),
 					String::from("-v"),
-					node.fabric.bind.to_string(),
 				];
 				if i == 0 {
+					args.push(String::from("master"));
+				}
+				args.push(node.fabric.bind.to_string());
+				if i == 0 {
+					args.push(String::from("-"));
 					for node in &config.nodes {
 						args.extend(vec![
 							node.fabric.external.to_string(),
@@ -566,6 +571,15 @@ impl Environment for Cluster {
 						sender.send((i, Some(msg))).unwrap();
 					}
 					sender.send((i, None)).unwrap();
+					// let mut stdout = stdout;
+					// let mut buf = vec![0; 16 * 1024];
+					// loop {
+					// 	let n = stdout.read(&mut buf).unwrap();
+					// 	if n == 0 {
+					// 		break;
+					// 	}
+					// 	println!("fab stdout: {:?}", str::from_utf8(&buf[..n]).unwrap());
+					// }
 				}));
 				let stderr = process.stderr.take().unwrap();
 				let stderr = capture_stdout(stderr, true, move |none, output| {
@@ -690,7 +704,7 @@ impl Environment for Cluster {
 }
 
 fn capture_stdout<
-	R: io::Read + Send + 'static,
+	R: Read + Send + 'static,
 	F: FnMut(&mut S, &[u8]) + Send + 'static,
 	S: Send + 'static,
 >(

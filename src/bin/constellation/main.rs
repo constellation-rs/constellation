@@ -115,9 +115,9 @@ enum Role {
 		cpu: Cpu,
 		replicas: u32,
 	},
-	Master(SocketAddr, Vec<Node>),
-	Master2(IpAddr, SocketAddr, Vec<Node>),
-	Worker(SocketAddr),
+	Master(SocketAddr, Option<u128>, Vec<Node>),
+	Master2(IpAddr, SocketAddr, Option<u128>, Vec<Node>),
+	Worker(SocketAddr, Option<u128>),
 	Bridge,
 }
 #[derive(PartialEq, Debug)]
@@ -150,7 +150,7 @@ fn main() {
 	if args.role == Role::Bridge {
 		return bridge::main();
 	}
-	if let Role::Master2(listen, master_addr, nodes) = args.role {
+	if let Role::Master2(listen, master_addr, key, nodes) = args.role {
 		let nodes = nodes
 			.into_iter()
 			.map(
@@ -164,7 +164,7 @@ fn main() {
 			.collect::<HashMap<_, _>>(); // TODO: error on clash
 		master::run(
 			SocketAddr::new(listen, master_addr.port()),
-			Pid::new(master_addr.ip(), master_addr.port()),
+			Pid::new_with(master_addr.ip(), master_addr.port(), key),
 			nodes,
 		)
 	}
@@ -190,30 +190,34 @@ fn main() {
 			);
 			(master_bind.ip(), fabric)
 		}
-		Role::Master(listen, mut nodes) => {
+		Role::Master(listen, key, mut nodes) => {
 			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();
 			let master_addr = nodes[0].fabric;
 			nodes[0]
 				.fabric
 				.set_port(fabric.local_addr().unwrap().port());
-			master = Some((listen.ip(), master_addr, nodes));
+			master = Some((listen.ip(), master_addr, key, nodes));
 			(listen.ip(), fabric)
 		}
-		Role::Worker(listen) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
-		Role::Bridge | Role::Master2(_, _, _) => unreachable!(),
+		Role::Worker(listen, key) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
+		Role::Bridge | Role::Master2(_, _, _, _) => unreachable!(),
 	};
 
 	loop {
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		crossbeam::scope(|scope| {
-			if let Some((master_listen, master_addr, nodes)) = master.take() {
+			if let Some((master_listen, master_addr, key, nodes)) = master.take() {
 				let mut args = vec![
 					OsString::from(env::current_exe().unwrap()),
 					OsString::from("master2"),
 					OsString::from(master_listen.to_string()),
 					OsString::from(master_addr.to_string()),
+					OsString::from("-"),
 				];
+				if let Some(key) = key {
+					args.push(OsString::from(key.to_string()));
+				}
 				for node in &nodes {
 					args.extend(
 						vec![
