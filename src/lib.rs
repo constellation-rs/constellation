@@ -475,14 +475,18 @@ pub fn pid() -> Pid {
 
 /// Get the memory and CPU requirements configured at initialisation of the current process.
 pub fn resources() -> Resources {
-	*RESOURCES.get().unwrap_or_else(|| {
-		panic!("You must call init() immediately inside your application's main() function")
-	})
+	// TODO: return &'static ?
+	RESOURCES
+		.get()
+		.unwrap_or_else(|| {
+			panic!("You must call init() immediately inside your application's main() function")
+		})
+		.clone()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
 fn spawn_native(
 	resources: Resources, f: &(dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static),
 	_block: bool,

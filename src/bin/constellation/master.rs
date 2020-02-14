@@ -196,7 +196,7 @@ pub fn run(
 						},
 					)
 					.unwrap();
-					node.3.push_back((sender, request.resources));
+					node.3.push_back((sender, request.resources.clone()));
 					node.0.send(request).unwrap();
 				} else {
 					// println!(
@@ -241,7 +241,7 @@ pub fn run(
 								},
 							)
 							.unwrap();
-							node.3.push_back((sender, request.resources));
+							node.3.push_back((sender, request.resources.clone()));
 							node.0.send(request).unwrap();
 							None
 						} else {

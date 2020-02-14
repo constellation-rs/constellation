@@ -268,7 +268,7 @@ pub enum Format {
 ///     cpu: Cpu::CORE / 16, // 1/16th of a logical CPU core
 /// };
 /// ```
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct Resources {
 	/// Memory requirement in bytes
 	pub mem: Mem,

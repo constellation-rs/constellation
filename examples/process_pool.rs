@@ -81,7 +81,7 @@ impl ProcessPool {
 				// Spawn the following FnOnce closure in a new process
 				let child = spawn(
 					// Use the default resource limits, which are enough for this example
-					resources,
+					resources.clone(),
 					// Make this closure serializable by wrapping with serde_closure's
 					// FnOnce!() macro, which requires explicitly listing captured variables.
 					FnOnce!(move |parent| {

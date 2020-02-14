@@ -35,7 +35,7 @@ fn main() {
 		mem: 20 * Mem::MIB,
 		..Resources::default()
 	};
-	init(resources);
+	init(resources.clone());
 	let rng = SmallRng::seed_from_u64(0);
 	let round = 0;
 	let mut nodes = vec![
@@ -112,15 +112,15 @@ fn run(mut rng: SmallRng, round: u64, mut nodes: Vec<Node>, mut processes: Vec<P
 						.map(
 							|&Process {
 							     node,
-							     resources,
+							     ref resources,
 							     pid,
 							     ..
-							 }| (node, resources, pid),
+							 }| (node, resources.clone(), pid),
 						)
 						.collect::<Vec<_>>(),
 				);
 				let spawned_pid = spawn(
-					resources,
+					resources.clone(),
 					FnOnce!(move |_parent| {
 						let mut processes = processes_
 							.into_iter()
@@ -158,7 +158,7 @@ fn run(mut rng: SmallRng, round: u64, mut nodes: Vec<Node>, mut processes: Vec<P
 				}
 				processes.push(Process {
 					node,
-					resources,
+					resources: resources.clone(),
 					pid: spawned_pid,
 					sender: None,
 					receiver: None,

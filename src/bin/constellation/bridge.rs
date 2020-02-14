@@ -279,6 +279,7 @@ fn manage_connection(
 	bincode::serialize_into(&mut request.arg, &spawn_arg).unwrap();
 	let resources = request
 		.resources
+		.clone()
 		.or_else(|| {
 			recce(
 				#[cfg(feature = "distribute_binaries")]
