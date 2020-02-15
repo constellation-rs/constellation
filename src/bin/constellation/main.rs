@@ -86,7 +86,7 @@ use palaver::{
 	file::{execve, fexecve, move_fd, move_fds}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, process, sync, sync::Arc, thread
 };
 #[cfg(unix)]
 use std::{
@@ -118,6 +118,7 @@ enum Role {
 	Master(SocketAddr, Option<u128>, Vec<Node>),
 	Master2(IpAddr, SocketAddr, Option<u128>, Vec<Node>),
 	Worker(SocketAddr, Option<u128>),
+	Worker2(SocketAddr, Option<u128>),
 	Bridge,
 }
 #[derive(PartialEq, Debug)]
@@ -168,8 +169,25 @@ fn main() {
 			nodes,
 		)
 	}
+	if let Role::Worker2(listen, key) = args.role {
+		let listener = TcpListener::bind(&listen).unwrap();
+		loop {
+			let accepted = listener.accept();
+			if let Ok((stream, addr)) = accepted {
+				let mut addr = listen;
+				addr.set_port(addr.port()+1);
+				let conn = TcpStream::connect(addr).unwrap();
+				crossbeam::scope(|scope| {
+					scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
+					io::copy(&mut &stream, &mut &conn).unwrap();
+				})
+				.unwrap();
+			}
+		}
+	}
 	let trace = &Trace::new(io::stdout(), args.format, args.verbose);
 	let mut master = None;
+	let mut listen2 = if let Role::Worker(listen,_) = args.role { Some(listen) } else { None };
 	let (listen, listener) = match args.role {
 		#[cfg(feature = "kubernetes")]
 		Role::KubeMaster {
@@ -199,8 +217,11 @@ fn main() {
 			master = Some((listen.ip(), master_addr, key, nodes));
 			(listen.ip(), fabric)
 		}
-		Role::Worker(listen, key) => (listen.ip(), TcpListener::bind(&listen).unwrap()),
-		Role::Bridge | Role::Master2(_, _, _, _) => unreachable!(),
+		Role::Worker(mut listen, key) => {
+			listen.set_port(listen.port()+1);
+			(listen.ip(), TcpListener::bind(&listen).unwrap())
+		},
+		Role::Bridge | Role::Master2(_, _, _, _) | Role::Worker2(_, _) => unreachable!(),
 	};
 
 	loop {
@@ -249,6 +270,61 @@ fn main() {
 					arg,
 				};
 				let (pid, child) = spawn(listen, nodes[0].fabric.ip(), request);
+				let child = Arc::new(child);
+				let x = pending.write().unwrap().insert(pid, child.clone());
+				assert!(x.is_none());
+				trace.fabric(FabricOutputEvent::Init {
+					pid,
+					system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
+				});
+				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
+					match child.wait() {
+						Ok(palaver::process::WaitStatus::Exited(0))
+						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
+						wait_status => {
+							if cfg!(feature = "strict") {
+								panic!("{:?}", wait_status)
+							}
+						}
+					}
+					let x = pending.write().unwrap().remove(&pid).unwrap();
+					assert!(Arc::ptr_eq(&child, &x));
+					drop(x);
+					let child = Arc::try_unwrap(child).unwrap();
+					let child_pid = child.pid;
+					drop(child);
+					trace.fabric(FabricOutputEvent::Exit {
+						pid,
+						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
+					});
+				}));
+			} else {
+				// let (read, write) = pipe(OFlag::O_CLOEXEC).unwrap();
+				let listen = listen2.unwrap();
+				let mut args = vec![
+					OsString::from(env::current_exe().unwrap()),
+					OsString::from("worker2"),
+					OsString::from(listen.to_string()),
+					OsString::from("-"),
+				];
+				#[cfg(feature = "distribute_binaries")]
+				let binary = palaver::env::exe().unwrap();
+				#[cfg(not(feature = "distribute_binaries"))]
+				let binary = std::marker::PhantomData;
+				let arg = file_from_reader(&mut &*vec![], 0, &OsString::from("a"), false).unwrap();
+				let request: FabricRequest<File, File> = FabricRequest {
+					block: false,
+					resources: Resources {
+						mem: 0 * Mem::B,
+						cpu: 0 * Cpu::CORE,
+					},
+					bind: vec![],
+					args,
+					vars: Vec::new(),
+					binary,
+					arg,
+				};
+				let (pid, child) = spawn(listen.ip(), std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), request);
 				let child = Arc::new(child);
 				let x = pending.write().unwrap().insert(pid, child.clone());
 				assert!(x.is_none());

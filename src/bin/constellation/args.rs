@@ -237,6 +237,11 @@ impl Args {
 					Role::Master(bind, key, nodes)
 				}
 			}
+			"worker2" => {
+				let bind = args.next().unwrap().parse().unwrap();
+				let key = match &*args.next().unwrap() { "-"=> None,key => Some(key.parse().unwrap())};
+				Role::Worker2(bind, key)
+			}
 			bind if bind.parse::<SocketAddr>().is_ok() => {
 				let bind = bind.parse().unwrap();
 				if let Some(toml) = args.next() {

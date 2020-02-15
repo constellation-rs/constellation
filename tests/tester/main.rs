@@ -587,10 +587,10 @@ impl Environment for Cluster {
 					println!("fab stderr: {:?}", str::from_utf8(output).unwrap());
 				});
 				let start_ = time::Instant::now();
-				if i == 0 {
+				// if i == 0 {
 					let _master_pid: FabricOutputEvent =
 						receiver.recv().unwrap().1.unwrap().unwrap();
-				}
+				// }
 				while TcpStream::connect(node.fabric.external).is_err() {
 					// TODO: parse output rather than this loop and timeout
 					if start_.elapsed() > time::Duration::new(5, 0) {
