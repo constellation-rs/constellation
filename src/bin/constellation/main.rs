@@ -93,8 +93,6 @@ use std::{
 	ffi::{CStr, CString, OsString}, fs::File, os::unix::io::FromRawFd, os::unix::{ffi::OsStringExt, io::IntoRawFd}
 };
 
-use std::io::{Read, Write};
-
 #[cfg(feature = "kubernetes")]
 use self::kube::kube_master;
 use constellation_internal::{
@@ -178,18 +176,15 @@ fn main() {
 			let accepted = listener.accept();
 			if let Ok((stream, addr)) = accepted {
 				if bincode::serialize_into::<_, IpAddr>(&mut &stream, &addr.ip()).is_ok() {
-					let mut read = unsafe { File::from_raw_fd(BOUND_FD_START) };
-					let mut write = unsafe { File::from_raw_fd(BOUND_FD_START + 1) };
-					write.write_all(b"0123456789").unwrap();
-					let mut buf = [0; 10];
-					read.read_exact(&mut buf).unwrap();
-					assert_eq!(b"9876543210", &buf);
+					let read = unsafe { File::from_raw_fd(BOUND_FD_START) };
+					let write = unsafe { File::from_raw_fd(BOUND_FD_START + 1) };
 					crossbeam::scope(|scope| {
-						let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream).unwrap());
-						let _ = io::copy(&mut &stream, &mut &write).unwrap();
+						let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream));
+						let _ = io::copy(&mut &stream, &mut &write);
 						let _ = x.join().unwrap();
 					})
 					.unwrap();
+					process::exit(0);
 				}
 			}
 		}
@@ -319,12 +314,8 @@ fn main() {
 				(host_read, host_write)
 			};
 
-			let mut read = unsafe { File::from_raw_fd(read) };
-			let mut write = unsafe { File::from_raw_fd(write) };
-			write.write_all(b"9876543210").unwrap();
-			let mut buf = [0; 10];
-			read.read_exact(&mut buf).unwrap();
-			assert_eq!(b"0123456789", &buf);
+			let read = unsafe { File::from_raw_fd(read) };
+			let write = unsafe { File::from_raw_fd(write) };
 
 			let (mut stream_read, stream_write) =
 				(BufferedStream::new(read), &sync::Mutex::new(write));

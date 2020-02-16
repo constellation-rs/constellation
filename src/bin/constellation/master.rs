@@ -5,8 +5,6 @@ use std::{
 	collections::{HashMap, VecDeque}, env, ffi::OsString, fs::File, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, os::unix::io::FromRawFd, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
 };
 
-use std::io::{Read, Write};
-
 use constellation::master_init;
 use constellation_internal::{
 	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Cpu, Mem, Pid, PidInternal, Resources, TrySpawnError
@@ -81,12 +79,8 @@ pub fn run(
 						None
 					};
 					let (stream_read, stream_write) = if master {
-						let mut read = unsafe { File::from_raw_fd(super::BOUND_FD_START) };
-						let mut write = unsafe { File::from_raw_fd(super::BOUND_FD_START + 1) };
-						write.write_all(b"0123456789").unwrap();
-						let mut buf = [0; 10];
-						read.read_exact(&mut buf).unwrap();
-						assert_eq!(b"9876543210", &buf);
+						let read = unsafe { File::from_raw_fd(super::BOUND_FD_START) };
+						let write = unsafe { File::from_raw_fd(super::BOUND_FD_START + 1) };
 						(Either::Left(read), Either::Left(write))
 					} else {
 						(
