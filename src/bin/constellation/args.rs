@@ -386,7 +386,9 @@ mod tests {
 		assert_eq!(
 			from_args(&[
 				"--format=json",
+				"master",
 				"10.0.0.1:8888",
+				"-",
 				"10.0.0.1:8888",
 				"10.0.0.1:7777",
 				"400GiB",
@@ -410,7 +412,9 @@ mod tests {
 		assert_eq!(
 			from_args(&[
 				"--format=json",
+				"master",
 				"10.0.0.1:8888",
+				"-",
 				"10.0.0.1:8888",
 				"10.0.0.1:7777",
 				"400GiB",
