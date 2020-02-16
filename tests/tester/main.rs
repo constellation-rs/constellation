@@ -394,7 +394,9 @@ fn main() {
 		for (ref src, ref bin, ref file) in &products {
 			println!("{}", src.display());
 			for i in 0..iterations {
-				println!("    {}", i);
+				if iterations != 1 {
+					println!("    {}", i);
+				}
 				let result = environment.run(bin, file.as_ref().ok());
 				let output = parse_output(&result);
 				if output.is_err()

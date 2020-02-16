@@ -83,7 +83,7 @@ use either::Either;
 #[cfg(unix)]
 use nix::{fcntl, sys::signal, sys::socket, unistd};
 use palaver::{
-	file::{execve, fexecve, move_fd, move_fds}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
+	file::{execve, fexecve, move_fd, move_fds, pipe, OFlag}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
 	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, process, sync, sync::Arc, thread
@@ -225,7 +225,7 @@ fn main() {
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		crossbeam::scope(|scope| {
-			{
+			let (_read, _write) = {
 				let (ip, args) = match &args.role {
 					Role::Master(listen, key, nodes) => {
 						let mut args = vec![
@@ -267,7 +267,8 @@ fn main() {
 					}
 					_ => unreachable!(),
 				};
-				// let (read, write) = pipe(OFlag::O_CLOEXEC).unwrap();
+				let (host_read, mesh_write) = pipe(OFlag::empty()).unwrap();
+				let (mesh_read, host_write) = pipe(OFlag::empty()).unwrap();
 				#[cfg(feature = "distribute_binaries")]
 				let binary = palaver::env::exe().unwrap();
 				#[cfg(not(feature = "distribute_binaries"))]
@@ -285,7 +286,9 @@ fn main() {
 					binary,
 					arg,
 				};
-				let (pid, child) = spawn(listen, ip, request);
+				let (pid, child) = spawn(listen, ip, request, Some([mesh_read, mesh_write]));
+				unistd::close(mesh_read).unwrap();
+				unistd::close(mesh_write).unwrap();
 				let child = Arc::new(child);
 				let x = pending.write().unwrap().insert(pid, child.clone());
 				assert!(x.is_none());
@@ -314,7 +317,8 @@ fn main() {
 						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
 					});
 				}));
-			}
+				(host_read, host_write)
+			};
 
 			let accepted = listener.accept();
 			if let Ok((stream, _addr)) = accepted {
@@ -327,7 +331,7 @@ fn main() {
 							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 						{
 							let request: FabricRequest<File, File> = request;
-							let (pid, child) = spawn(listen, ip, request);
+							let (pid, child) = spawn(listen, ip, request, None);
 							let child = Arc::new(child);
 							let x = pending.write().unwrap().insert(pid, child.clone());
 							assert!(x.is_none());
@@ -393,7 +397,9 @@ fn main() {
 	}
 }
 
-fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid, ChildHandle) {
+fn spawn(
+	listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>, host: Option<[Fd; 2]>,
+) -> (Pid, ChildHandle) {
 	let process_listener = socket(
 		socket::AddressFamily::Inet,
 		socket::SockType::Stream,
@@ -466,7 +472,15 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 
 	#[cfg(feature = "distribute_binaries")]
 	let binary = request.binary;
-	let mut binary_desired_fd = BOUND_FD_START + Fd::try_from(request.bind.len()).unwrap();
+	let binary_desired_fd = if cfg!(feature = "distribute_binaries") {
+		Some(
+			BOUND_FD_START
+				+ host.map_or(0, |host| host.len().try_into().unwrap())
+				+ Fd::try_from(request.bind.len()).unwrap(),
+		)
+	} else {
+		None
+	};
 	let arg = request.arg;
 	let bind = request.bind;
 
@@ -479,27 +493,30 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 
 				// println!("{:?}", args[0]);
 				unistd::setpgid(unistd::Pid::from_raw(0), unistd::Pid::from_raw(0)).unwrap();
+
+				let mut fds = arrayvec::ArrayVec::<[_; 5]>::new();
+				fds.push((process_listener, LISTENER_FD));
+				fds.push((arg.into_raw_fd(), ARG_FD));
+				if let Some(host) = host {
+					for (i, &host) in host.iter().enumerate() {
+						fds.push((host, BOUND_FD_START + Fd::try_from(i).unwrap()));
+					}
+				}
 				#[cfg(feature = "distribute_binaries")]
-				let binary = binary.into_raw_fd(); // These are dropped by parent
-				let arg = arg.into_raw_fd();
-				move_fds(
-					&mut [
-						(arg, ARG_FD),
-						(process_listener, LISTENER_FD),
-						#[cfg(feature = "distribute_binaries")]
-						(binary, binary_desired_fd),
-					],
-					Some(fcntl::FdFlag::empty()),
-					true,
-				);
-				for fd in BOUND_FD_START..1024 {
-					if cfg!(feature = "distribute_binaries") && fd == binary_desired_fd {
+				fds.push((binary.into_raw_fd(), binary_desired_fd.unwrap()));
+				move_fds(&mut fds, Some(fcntl::FdFlag::empty()), true);
+				for fd in
+					BOUND_FD_START + host.map_or(0, |host| host.len().try_into().unwrap())..1024
+				{
+					if Some(fd) == binary_desired_fd {
 						continue;
 					}
 					let _ = unistd::close(fd);
 				}
 				for (i, addr) in bind.iter().enumerate() {
-					let socket: Fd = BOUND_FD_START + Fd::try_from(i).unwrap();
+					let socket: Fd = BOUND_FD_START
+						+ host.map_or(0, |host| host.len().try_into().unwrap())
+						+ Fd::try_from(i).unwrap();
 					let fd = socket::socket(
 						socket::AddressFamily::Inet,
 						socket::SockType::Stream,
@@ -518,6 +535,7 @@ fn spawn(listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>) -> (Pid
 					.unwrap();
 				}
 				if cfg!(feature = "distribute_binaries") {
+					let mut binary_desired_fd = binary_desired_fd.unwrap();
 					if valgrind::is().unwrap_or(false) {
 						let binary_desired_fd_ = valgrind::start_fd() - 1;
 						assert!(binary_desired_fd_ > binary_desired_fd);

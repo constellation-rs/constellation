@@ -41,6 +41,7 @@ strict = []
 
 [dependencies]
 constellation-internal = { path = "constellation-internal", version = "=0.2.0-alpha.1" }
+arrayvec = "0.5"
 atty = "0.2"
 bincode = "1.2"
 cargo_metadata = { version = "0.9", default-features = false }
