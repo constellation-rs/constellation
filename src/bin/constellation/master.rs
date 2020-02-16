@@ -2,8 +2,10 @@
 
 use either::Either;
 use std::{
-	collections::{HashMap, VecDeque}, env, ffi::OsString, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
+	collections::{HashMap, VecDeque}, env, ffi::OsString, fs::File, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, os::unix::io::FromRawFd, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
 };
+
+use std::io::{Read, Write};
 
 use constellation::master_init;
 use constellation_internal::{
@@ -56,24 +58,48 @@ pub fn run(
 			let node = Node { mem, cpu };
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
 			let start = Instant::now();
-			let stream = loop {
-				let err = match TcpStream::connect(&fabric) {
-					Ok(stream) => break Ok(stream),
-					Err(err) => err,
-				};
-				if start.elapsed() > Duration::from_secs(60) {
-					break Err(err);
-				}
-				thread::sleep(Duration::from_secs(1));
-			}
-			.unwrap_or_else(|e| panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e));
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(abort_on_unwind(move || {
 					let (receiver, sender) = (receiver_a, sender1);
-					let (mut stream_read, mut stream_write) =
-						(BufferedStream::new(&stream), BufferedStream::new(&stream));
-					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
+					let stream = if std::ops::Not::not(master) {
+						let stream = loop {
+							let err = match TcpStream::connect(&fabric) {
+								Ok(stream) => break Ok(stream),
+								Err(err) => err,
+							};
+							if start.elapsed() > Duration::from_secs(60) {
+								break Err(err);
+							}
+							thread::sleep(Duration::from_secs(1));
+						}
+						.unwrap_or_else(|e| {
+							panic!("couldn't connect to node {}: {:?}: {}", i, fabric, e)
+						});
+						Some(stream)
+					} else {
+						None
+					};
+					let (stream_read, stream_write) = if master {
+						let mut read = unsafe { File::from_raw_fd(super::BOUND_FD_START) };
+						let mut write = unsafe { File::from_raw_fd(super::BOUND_FD_START + 1) };
+						write.write_all(b"0123456789").unwrap();
+						let mut buf = [0; 10];
+						read.read_exact(&mut buf).unwrap();
+						assert_eq!(b"9876543210", &buf);
+						(Either::Left(read), Either::Left(write))
+					} else {
+						(
+							Either::Right(stream.as_ref().unwrap()),
+							Either::Right(stream.as_ref().unwrap()),
+						)
+					};
+					let (mut stream_read, mut stream_write) = (
+						BufferedStream::new(stream_read),
+						BufferedStream::new(stream_write),
+					);
+					bincode::serialize_into::<_, IpAddr>(&mut stream_write.write(), &fabric.ip())
+						.unwrap();
 					if !master {
 						let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
 							.map_err(map_bincode_err)

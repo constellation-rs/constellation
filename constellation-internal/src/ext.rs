@@ -106,7 +106,7 @@ mod bufferedstream {
 		}
 
 		pub fn write(&mut self) -> BufferedStreamWriter<T> {
-			BufferedStreamWriter(io::BufWriter::new(self))
+			BufferedStreamWriter(io::BufWriter::new(Wrap(self)))
 		}
 
 		pub fn get_ref(&self) -> &T {
@@ -122,20 +122,22 @@ mod bufferedstream {
 			self.stream.read(buf)
 		}
 	}
-	impl<'a, T: Read + Write + 'a> Write for &'a mut BufferedStream<T> {
+	#[derive(Debug)]
+	struct Wrap<T>(T);
+	impl<'a, T: Read + Write> Write for Wrap<&'a mut BufferedStream<T>> {
 		fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-			self.stream.get_mut().write(buf)
+			self.0.stream.get_mut().write(buf)
 		}
 
 		fn flush(&mut self) -> io::Result<()> {
-			self.stream.get_mut().flush()
+			self.0.stream.get_mut().flush()
 		}
 	}
 	#[derive(Debug)]
-	pub struct BufferedStreamWriter<'a, T: Read + Write + 'a>(
-		io::BufWriter<&'a mut BufferedStream<T>>,
+	pub struct BufferedStreamWriter<'a, T: Read + Write>(
+		io::BufWriter<Wrap<&'a mut BufferedStream<T>>>,
 	);
-	impl<'a, T: Read + Write + 'a> Write for BufferedStreamWriter<'a, T> {
+	impl<'a, T: Read + Write> Write for BufferedStreamWriter<'a, T> {
 		fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
 			self.0.write(buf)
 		}
@@ -144,7 +146,7 @@ mod bufferedstream {
 			self.0.flush()
 		}
 	}
-	impl<'a, T: Read + Write + 'a> Drop for BufferedStreamWriter<'a, T> {
+	impl<'a, T: Read + Write> Drop for BufferedStreamWriter<'a, T> {
 		fn drop(&mut self) {
 			self.0.flush().unwrap();
 		}

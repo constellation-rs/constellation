@@ -77,8 +77,13 @@ use palaver::file::FdIter;
 use std::{collections::HashSet, env};
 
 fn main() {
+	let fds = FdIter::new().unwrap().collect::<HashSet<_>>();
+	init(Resources {
+		mem: 20 * Mem::MIB,
+		..Resources::default()
+	});
 	let binary_fd = cfg!(feature = "distribute_binaries") as i32;
-	let fds = match (
+	let expected_fds = match (
 		env::var("CONSTELLATION").as_ref().map(|x| &**x),
 		env::var("CONSTELLATION_RECCE").as_ref().map(|x| &**x),
 		env::var("CONSTELLATION_RESOURCES").as_ref().map(|x| &**x),
@@ -88,14 +93,7 @@ fn main() {
 		(_, _, Ok(_)) => 0..5,                          // native sub: listener, arg
 		(_, _, _) => 0..3,                              // native top
 	};
-	assert_eq!(
-		FdIter::new().unwrap().collect::<HashSet<_>>(),
-		fds.collect()
-	);
-	init(Resources {
-		mem: 20 * Mem::MIB,
-		..Resources::default()
-	});
+	assert_eq!(fds, expected_fds.collect());
 	println!("{:?}", resources());
 	for i in 0..4 {
 		let _pid = spawn(

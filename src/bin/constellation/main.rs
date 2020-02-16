@@ -86,12 +86,14 @@ use palaver::{
 	file::{execve, fexecve, move_fd, move_fds, pipe, OFlag}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, process, sync, sync::Arc, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
 };
 #[cfg(unix)]
 use std::{
-	ffi::{CStr, CString, OsString}, fs::File, os::unix::{ffi::OsStringExt, io::IntoRawFd}
+	ffi::{CStr, CString, OsString}, fs::File, os::unix::io::FromRawFd, os::unix::{ffi::OsStringExt, io::IntoRawFd}
 };
+
+use std::io::{Read, Write};
 
 #[cfg(feature = "kubernetes")]
 use self::kube::kube_master;
@@ -151,9 +153,8 @@ fn main() {
 	if args.role == Role::Bridge {
 		return bridge::main();
 	}
-	if let Role::Master2(listen, key, mut nodes) = args.role {
+	if let Role::Master2(listen, key, nodes) = args.role {
 		let pid = nodes[0].fabric;
-		nodes[0].fabric.set_port(pid.port() + 1);
 		let nodes = nodes
 			.into_iter()
 			.enumerate()
@@ -177,12 +178,15 @@ fn main() {
 			let accepted = listener.accept();
 			if let Ok((stream, addr)) = accepted {
 				if bincode::serialize_into::<_, IpAddr>(&mut &stream, &addr.ip()).is_ok() {
-					let mut addr = listen;
-					addr.set_port(addr.port() + 1);
-					let conn = TcpStream::connect(addr).unwrap();
+					let mut read = unsafe { File::from_raw_fd(BOUND_FD_START) };
+					let mut write = unsafe { File::from_raw_fd(BOUND_FD_START + 1) };
+					write.write_all(b"0123456789").unwrap();
+					let mut buf = [0; 10];
+					read.read_exact(&mut buf).unwrap();
+					assert_eq!(b"9876543210", &buf);
 					crossbeam::scope(|scope| {
-						let x = scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
-						let _ = io::copy(&mut &stream, &mut &conn).unwrap();
+						let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream).unwrap());
+						let _ = io::copy(&mut &stream, &mut &write).unwrap();
 						let _ = x.join().unwrap();
 					})
 					.unwrap();
@@ -211,21 +215,16 @@ fn main() {
 			);
 			(master_bind.ip(), fabric)
 		}
-		Role::Master(listen, _key, _nodes) => *listen,
-		Role::Worker(listen, _key) => *listen,
+		Role::Master(listen, _key, _nodes) => listen.ip(),
+		Role::Worker(listen, _key) => listen.ip(),
 		Role::Bridge | Role::Master2(_, _, _) | Role::Worker2(_, _) => unreachable!(),
 	};
-
-	let mut pipe_listen = listen;
-	pipe_listen.set_port(pipe_listen.port() + 1);
-	let listener = TcpListener::bind(&pipe_listen).unwrap();
-	let listen = listen.ip();
 
 	loop {
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		crossbeam::scope(|scope| {
-			let (_read, _write) = {
+			let (read, write) = {
 				let (ip, args) = match &args.role {
 					Role::Master(listen, key, nodes) => {
 						let mut args = vec![
@@ -320,70 +319,73 @@ fn main() {
 				(host_read, host_write)
 			};
 
-			let accepted = listener.accept();
-			if let Ok((stream, _addr)) = accepted {
-				let (mut stream_read, stream_write) =
-					(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
-				crossbeam::scope(|scope| {
-					let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
-					if let Ok(ip) = ip {
-						while let Ok(request) =
-							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+			let mut read = unsafe { File::from_raw_fd(read) };
+			let mut write = unsafe { File::from_raw_fd(write) };
+			write.write_all(b"9876543210").unwrap();
+			let mut buf = [0; 10];
+			read.read_exact(&mut buf).unwrap();
+			assert_eq!(b"0123456789", &buf);
+
+			let (mut stream_read, stream_write) =
+				(BufferedStream::new(read), &sync::Mutex::new(write));
+			crossbeam::scope(|scope| {
+				let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
+				if let Ok(ip) = ip {
+					while let Ok(request) =
+						bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+					{
+						let request: FabricRequest<File, File> = request;
+						let (pid, child) = spawn(listen, ip, request, None);
+						let child = Arc::new(child);
+						let x = pending.write().unwrap().insert(pid, child.clone());
+						assert!(x.is_none());
+						trace.fabric(FabricOutputEvent::Init {
+							pid,
+							system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
+						});
+						if bincode::serialize_into(
+							&mut *stream_write.lock().unwrap(),
+							&Either::Left::<Pid, Pid>(pid),
+						)
+						.map_err(map_bincode_err)
+						.is_err()
 						{
-							let request: FabricRequest<File, File> = request;
-							let (pid, child) = spawn(listen, ip, request, None);
-							let child = Arc::new(child);
-							let x = pending.write().unwrap().insert(pid, child.clone());
-							assert!(x.is_none());
-							trace.fabric(FabricOutputEvent::Init {
-								pid,
-								system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
-							});
-							if bincode::serialize_into(
-								*stream_write.lock().unwrap(),
-								&Either::Left::<Pid, Pid>(pid),
-							)
-							.map_err(map_bincode_err)
-							.is_err()
-							{
-								break;
-							}
-							let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
-								match child.wait() {
-									Ok(palaver::process::WaitStatus::Exited(0))
-									| Ok(palaver::process::WaitStatus::Signaled(
-										signal::Signal::SIGKILL,
-										_,
-									)) => (),
-									wait_status => {
-										if cfg!(feature = "strict") {
-											panic!("{:?}", wait_status)
-										}
+							break;
+						}
+						let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
+							match child.wait() {
+								Ok(palaver::process::WaitStatus::Exited(0))
+								| Ok(palaver::process::WaitStatus::Signaled(
+									signal::Signal::SIGKILL,
+									_,
+								)) => (),
+								wait_status => {
+									if cfg!(feature = "strict") {
+										panic!("{:?}", wait_status)
 									}
 								}
-								let x = pending.write().unwrap().remove(&pid).unwrap();
-								assert!(Arc::ptr_eq(&child, &x));
-								drop(x);
-								let child = Arc::try_unwrap(child).unwrap();
-								let child_pid = child.pid;
-								drop(child);
-								trace.fabric(FabricOutputEvent::Exit {
-									pid,
-									system_pid: nix::libc::pid_t::from(child_pid)
-										.try_into()
-										.unwrap(),
-								});
-								let _unchecked_error = bincode::serialize_into(
-									*stream_write.lock().unwrap(),
-									&Either::Right::<Pid, Pid>(pid),
-								)
-								.map_err(map_bincode_err);
-							}));
-						}
+							}
+							let x = pending.write().unwrap().remove(&pid).unwrap();
+							assert!(Arc::ptr_eq(&child, &x));
+							drop(x);
+							let child = Arc::try_unwrap(child).unwrap();
+							let child_pid = child.pid;
+							drop(child);
+							trace.fabric(FabricOutputEvent::Exit {
+								pid,
+								system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
+							});
+							let _unchecked_error = bincode::serialize_into(
+								&mut *stream_write.lock().unwrap(),
+								&Either::Right::<Pid, Pid>(pid),
+							)
+							.map_err(map_bincode_err);
+						}));
 					}
-				})
-				.unwrap();
-			}
+				}
+			})
+			.unwrap();
+
 			for (&_pid, child) in pending.read().unwrap().iter() {
 				let _unchecked_error = signal::kill(
 					nix::unistd::Pid::from_raw(-child.pid.as_raw()),
@@ -533,6 +535,17 @@ fn spawn(
 						&socket::SockAddr::Inet(socket::InetAddr::from_std(&addr)),
 					)
 					.unwrap();
+				}
+				for fd in 0..BOUND_FD_START
+					+ host.map_or(0, |host| host.len().try_into().unwrap())
+					+ i32::try_from(bind.len()).unwrap()
+					+ cfg!(feature = "distribute_binaries") as i32
+				{
+					let flags = fcntl::FdFlag::from_bits(
+						fcntl::fcntl(fd, fcntl::FcntlArg::F_GETFD).unwrap(),
+					)
+					.unwrap();
+					assert!(!flags.contains(fcntl::FdFlag::FD_CLOEXEC));
 				}
 				if cfg!(feature = "distribute_binaries") {
 					let mut binary_desired_fd = binary_desired_fd.unwrap();
