@@ -357,7 +357,7 @@ fn main() {
 	products.sort_by(|&(ref a_src, _, _), &(ref b_src, _, _)| a_src.cmp(b_src));
 
 	let node1_fabric_port = 12340;
-	let node1_bridge_port = 12341;
+	let node1_bridge_port = 12342;
 	let node2_fabric_port = 12350;
 	let node3_fabric_port = 12360;
 
@@ -587,10 +587,7 @@ impl Environment for Cluster {
 					println!("fab stderr: {:?}", str::from_utf8(output).unwrap());
 				});
 				let start_ = time::Instant::now();
-				// if i == 0 {
-					let _master_pid: FabricOutputEvent =
-						receiver.recv().unwrap().1.unwrap().unwrap();
-				// }
+				let _mesh_pid: FabricOutputEvent = receiver.recv().unwrap().1.unwrap().unwrap();
 				while TcpStream::connect(node.fabric.external).is_err() {
 					// TODO: parse output rather than this loop and timeout
 					if start_.elapsed() > time::Duration::new(5, 0) {

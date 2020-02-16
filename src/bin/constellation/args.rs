@@ -186,11 +186,7 @@ impl Args {
 				}
 			}
 			"master" | "master2" => {
-				let master2 = if arg == "master2" {
-					Some(args.next().unwrap().parse().unwrap())
-				} else {
-					None
-				};
+				let master2 = arg == "master2";
 				let err = || {
 					(format!("Invalid args, expecting master <bind> <key> <nodes>, like master 127.0.0.1:9999 - 127.0.0.1:8888 - 400GiB 34\n{}", USAGE), false)
 				};
@@ -231,15 +227,18 @@ impl Args {
 				if nodes.is_empty() {
 					return Err((format!("At least one node must be present: expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
 				}
-				if let Some(master2) = master2 {
-					Role::Master2(master2, bind, key, nodes)
+				if master2 {
+					Role::Master2(bind, key, nodes)
 				} else {
 					Role::Master(bind, key, nodes)
 				}
 			}
 			"worker2" => {
 				let bind = args.next().unwrap().parse().unwrap();
-				let key = match &*args.next().unwrap() { "-"=> None,key => Some(key.parse().unwrap())};
+				let key = match &*args.next().unwrap() {
+					"-" => None,
+					key => Some(key.parse().unwrap()),
+				};
 				Role::Worker2(bind, key)
 			}
 			bind if bind.parse::<SocketAddr>().is_ok() => {

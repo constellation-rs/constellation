@@ -116,7 +116,7 @@ enum Role {
 		replicas: u32,
 	},
 	Master(SocketAddr, Option<u128>, Vec<Node>),
-	Master2(IpAddr, SocketAddr, Option<u128>, Vec<Node>),
+	Master2(SocketAddr, Option<u128>, Vec<Node>),
 	Worker(SocketAddr, Option<u128>),
 	Worker2(SocketAddr, Option<u128>),
 	Bridge,
@@ -151,7 +151,9 @@ fn main() {
 	if args.role == Role::Bridge {
 		return bridge::main();
 	}
-	if let Role::Master2(listen, master_addr, key, nodes) = args.role {
+	if let Role::Master2(listen, key, mut nodes) = args.role {
+		let pid = nodes[0].fabric;
+		nodes[0].fabric.set_port(pid.port() + 1);
 		let nodes = nodes
 			.into_iter()
 			.map(
@@ -163,32 +165,27 @@ fn main() {
 				 }| { (fabric, (bridge, mem, cpu)) },
 			)
 			.collect::<HashMap<_, _>>(); // TODO: error on clash
-		master::run(
-			SocketAddr::new(listen, master_addr.port()),
-			Pid::new_with(master_addr.ip(), master_addr.port(), key),
-			nodes,
-		)
+		master::run(listen, Pid::new_with(pid.ip(), pid.port(), key), nodes)
 	}
-	if let Role::Worker2(listen, key) = args.role {
+	if let Role::Worker2(listen, _key) = args.role {
 		let listener = TcpListener::bind(&listen).unwrap();
 		loop {
 			let accepted = listener.accept();
-			if let Ok((stream, addr)) = accepted {
+			if let Ok((stream, _addr)) = accepted {
 				let mut addr = listen;
-				addr.set_port(addr.port()+1);
+				addr.set_port(addr.port() + 1);
 				let conn = TcpStream::connect(addr).unwrap();
 				crossbeam::scope(|scope| {
-					scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
-					io::copy(&mut &stream, &mut &conn).unwrap();
+					let x = scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
+					let _ = io::copy(&mut &stream, &mut &conn).unwrap();
+					let _ = x.join().unwrap();
 				})
 				.unwrap();
 			}
 		}
 	}
 	let trace = &Trace::new(io::stdout(), args.format, args.verbose);
-	let mut master = None;
-	let mut listen2 = if let Role::Worker(listen,_) = args.role { Some(listen) } else { None };
-	let (listen, listener) = match args.role {
+	let listen = match &args.role {
 		#[cfg(feature = "kubernetes")]
 		Role::KubeMaster {
 			master_bind,
@@ -208,105 +205,63 @@ fn main() {
 			);
 			(master_bind.ip(), fabric)
 		}
-		Role::Master(listen, key, mut nodes) => {
-			let fabric = TcpListener::bind(SocketAddr::new(listen.ip(), 0)).unwrap();
-			let master_addr = nodes[0].fabric;
-			nodes[0]
-				.fabric
-				.set_port(fabric.local_addr().unwrap().port());
-			master = Some((listen.ip(), master_addr, key, nodes));
-			(listen.ip(), fabric)
-		}
-		Role::Worker(mut listen, key) => {
-			listen.set_port(listen.port()+1);
-			(listen.ip(), TcpListener::bind(&listen).unwrap())
-		},
-		Role::Bridge | Role::Master2(_, _, _, _) | Role::Worker2(_, _) => unreachable!(),
+		Role::Master(listen, _key, _nodes) => *listen,
+		Role::Worker(listen, _key) => *listen,
+		Role::Bridge | Role::Master2(_, _, _) | Role::Worker2(_, _) => unreachable!(),
 	};
+
+	let mut pipe_listen = listen;
+	pipe_listen.set_port(pipe_listen.port() + 1);
+	let listener = TcpListener::bind(&pipe_listen).unwrap();
+	let listen = listen.ip();
 
 	loop {
 		let mut pending_inner = HashMap::new();
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		crossbeam::scope(|scope| {
-			if let Some((master_listen, master_addr, key, nodes)) = master.take() {
-				let mut args = vec![
-					OsString::from(env::current_exe().unwrap()),
-					OsString::from("master2"),
-					OsString::from(master_listen.to_string()),
-					OsString::from(master_addr.to_string()),
-					OsString::from("-"),
-				];
-				if let Some(key) = key {
-					args.push(OsString::from(key.to_string()));
-				}
-				for node in &nodes {
-					args.extend(
-						vec![
-							node.fabric.to_string(),
-							node.bridge
-								.map_or_else(|| String::from("-"), |bridge| bridge.to_string()),
-							node.mem.to_string(),
-							node.cpu.to_string(),
-						]
-						.into_iter()
-						.map(OsString::from),
-					);
-				}
-				#[cfg(feature = "distribute_binaries")]
-				let binary = palaver::env::exe().unwrap();
-				#[cfg(not(feature = "distribute_binaries"))]
-				let binary = std::marker::PhantomData;
-				let arg = file_from_reader(&mut &*vec![], 0, &OsString::from("a"), false).unwrap();
-				let request: FabricRequest<File, File> = FabricRequest {
-					block: false,
-					resources: Resources {
-						mem: 0 * Mem::B,
-						cpu: 0 * Cpu::CORE,
-					},
-					bind: vec![],
-					args,
-					vars: Vec::new(),
-					binary,
-					arg,
-				};
-				let (pid, child) = spawn(listen, nodes[0].fabric.ip(), request);
-				let child = Arc::new(child);
-				let x = pending.write().unwrap().insert(pid, child.clone());
-				assert!(x.is_none());
-				trace.fabric(FabricOutputEvent::Init {
-					pid,
-					system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
-				});
-				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
-					match child.wait() {
-						Ok(palaver::process::WaitStatus::Exited(0))
-						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
-						wait_status => {
-							if cfg!(feature = "strict") {
-								panic!("{:?}", wait_status)
-							}
+			{
+				let (ip, args) = match &args.role {
+					Role::Master(listen, key, nodes) => {
+						let mut args = vec![
+							OsString::from(env::current_exe().unwrap()),
+							OsString::from("master2"),
+							OsString::from(listen.to_string()),
+							OsString::from("-"),
+						];
+						if let Some(key) = key {
+							args.push(OsString::from(key.to_string()));
 						}
+						for node in nodes {
+							args.extend(
+								vec![
+									node.fabric.to_string(),
+									node.bridge.map_or_else(
+										|| String::from("-"),
+										|bridge| bridge.to_string(),
+									),
+									node.mem.to_string(),
+									node.cpu.to_string(),
+								]
+								.into_iter()
+								.map(OsString::from),
+							);
+						}
+						let ip = nodes[0].fabric.ip();
+						(ip, args)
 					}
-					let x = pending.write().unwrap().remove(&pid).unwrap();
-					assert!(Arc::ptr_eq(&child, &x));
-					drop(x);
-					let child = Arc::try_unwrap(child).unwrap();
-					let child_pid = child.pid;
-					drop(child);
-					trace.fabric(FabricOutputEvent::Exit {
-						pid,
-						system_pid: nix::libc::pid_t::from(child_pid).try_into().unwrap(),
-					});
-				}));
-			} else {
+					Role::Worker(listen, key) => {
+						let args = vec![
+							OsString::from(env::current_exe().unwrap()),
+							OsString::from("worker2"),
+							OsString::from(listen.to_string()),
+							OsString::from(key.map_or(String::from("-"), |key| key.to_string())),
+						];
+						let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+						(ip, args)
+					}
+					_ => unreachable!(),
+				};
 				// let (read, write) = pipe(OFlag::O_CLOEXEC).unwrap();
-				let listen = listen2.unwrap();
-				let mut args = vec![
-					OsString::from(env::current_exe().unwrap()),
-					OsString::from("worker2"),
-					OsString::from(listen.to_string()),
-					OsString::from("-"),
-				];
 				#[cfg(feature = "distribute_binaries")]
 				let binary = palaver::env::exe().unwrap();
 				#[cfg(not(feature = "distribute_binaries"))]
@@ -324,7 +279,7 @@ fn main() {
 					binary,
 					arg,
 				};
-				let (pid, child) = spawn(listen.ip(), std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), request);
+				let (pid, child) = spawn(listen, ip, request);
 				let child = Arc::new(child);
 				let x = pending.write().unwrap().insert(pid, child.clone());
 				assert!(x.is_none());
@@ -354,6 +309,7 @@ fn main() {
 					});
 				}));
 			}
+
 			let accepted = listener.accept();
 			if let Ok((stream, addr)) = accepted {
 				let (mut stream_read, stream_write) =
