@@ -156,13 +156,17 @@ fn main() {
 		nodes[0].fabric.set_port(pid.port() + 1);
 		let nodes = nodes
 			.into_iter()
+			.enumerate()
 			.map(
-				|Node {
-				     fabric,
-				     bridge,
-				     mem,
-				     cpu,
-				 }| { (fabric, (bridge, mem, cpu)) },
+				|(
+					i,
+					Node {
+						fabric,
+						bridge,
+						mem,
+						cpu,
+					},
+				)| { (fabric, (i == 0, bridge, mem, cpu)) },
 			)
 			.collect::<HashMap<_, _>>(); // TODO: error on clash
 		master::run(listen, Pid::new_with(pid.ip(), pid.port(), key), nodes)
@@ -171,16 +175,18 @@ fn main() {
 		let listener = TcpListener::bind(&listen).unwrap();
 		loop {
 			let accepted = listener.accept();
-			if let Ok((stream, _addr)) = accepted {
-				let mut addr = listen;
-				addr.set_port(addr.port() + 1);
-				let conn = TcpStream::connect(addr).unwrap();
-				crossbeam::scope(|scope| {
-					let x = scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
-					let _ = io::copy(&mut &stream, &mut &conn).unwrap();
-					let _ = x.join().unwrap();
-				})
-				.unwrap();
+			if let Ok((stream, addr)) = accepted {
+				if bincode::serialize_into::<_, IpAddr>(&mut &stream, &addr.ip()).is_ok() {
+					let mut addr = listen;
+					addr.set_port(addr.port() + 1);
+					let conn = TcpStream::connect(addr).unwrap();
+					crossbeam::scope(|scope| {
+						let x = scope.spawn(|_| io::copy(&mut &conn, &mut &stream).unwrap());
+						let _ = io::copy(&mut &stream, &mut &conn).unwrap();
+						let _ = x.join().unwrap();
+					})
+					.unwrap();
+				}
 			}
 		}
 	}
@@ -311,73 +317,64 @@ fn main() {
 			}
 
 			let accepted = listener.accept();
-			if let Ok((stream, addr)) = accepted {
+			if let Ok((stream, _addr)) = accepted {
 				let (mut stream_read, stream_write) =
 					(BufferedStream::new(&stream), &sync::Mutex::new(&stream));
 				crossbeam::scope(|scope| {
-					if bincode::serialize_into::<_, IpAddr>(
-						&mut *stream_write.try_lock().unwrap(),
-						&addr.ip(),
-					)
-					.is_ok()
-					{
-						let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
-						if let Ok(ip) = ip {
-							while let Ok(request) =
-								bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+					let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
+					if let Ok(ip) = ip {
+						while let Ok(request) =
+							bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
+						{
+							let request: FabricRequest<File, File> = request;
+							let (pid, child) = spawn(listen, ip, request);
+							let child = Arc::new(child);
+							let x = pending.write().unwrap().insert(pid, child.clone());
+							assert!(x.is_none());
+							trace.fabric(FabricOutputEvent::Init {
+								pid,
+								system_pid: nix::libc::pid_t::from(child.pid).try_into().unwrap(),
+							});
+							if bincode::serialize_into(
+								*stream_write.lock().unwrap(),
+								&Either::Left::<Pid, Pid>(pid),
+							)
+							.map_err(map_bincode_err)
+							.is_err()
 							{
-								let request: FabricRequest<File, File> = request;
-								let (pid, child) = spawn(listen, ip, request);
-								let child = Arc::new(child);
-								let x = pending.write().unwrap().insert(pid, child.clone());
-								assert!(x.is_none());
-								trace.fabric(FabricOutputEvent::Init {
+								break;
+							}
+							let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
+								match child.wait() {
+									Ok(palaver::process::WaitStatus::Exited(0))
+									| Ok(palaver::process::WaitStatus::Signaled(
+										signal::Signal::SIGKILL,
+										_,
+									)) => (),
+									wait_status => {
+										if cfg!(feature = "strict") {
+											panic!("{:?}", wait_status)
+										}
+									}
+								}
+								let x = pending.write().unwrap().remove(&pid).unwrap();
+								assert!(Arc::ptr_eq(&child, &x));
+								drop(x);
+								let child = Arc::try_unwrap(child).unwrap();
+								let child_pid = child.pid;
+								drop(child);
+								trace.fabric(FabricOutputEvent::Exit {
 									pid,
-									system_pid: nix::libc::pid_t::from(child.pid)
+									system_pid: nix::libc::pid_t::from(child_pid)
 										.try_into()
 										.unwrap(),
 								});
-								if bincode::serialize_into(
+								let _unchecked_error = bincode::serialize_into(
 									*stream_write.lock().unwrap(),
-									&Either::Left::<Pid, Pid>(pid),
+									&Either::Right::<Pid, Pid>(pid),
 								)
-								.map_err(map_bincode_err)
-								.is_err()
-								{
-									break;
-								}
-								let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
-									match child.wait() {
-										Ok(palaver::process::WaitStatus::Exited(0))
-										| Ok(palaver::process::WaitStatus::Signaled(
-											signal::Signal::SIGKILL,
-											_,
-										)) => (),
-										wait_status => {
-											if cfg!(feature = "strict") {
-												panic!("{:?}", wait_status)
-											}
-										}
-									}
-									let x = pending.write().unwrap().remove(&pid).unwrap();
-									assert!(Arc::ptr_eq(&child, &x));
-									drop(x);
-									let child = Arc::try_unwrap(child).unwrap();
-									let child_pid = child.pid;
-									drop(child);
-									trace.fabric(FabricOutputEvent::Exit {
-										pid,
-										system_pid: nix::libc::pid_t::from(child_pid)
-											.try_into()
-											.unwrap(),
-									});
-									let _unchecked_error = bincode::serialize_into(
-										*stream_write.lock().unwrap(),
-										&Either::Right::<Pid, Pid>(pid),
-									)
-									.map_err(map_bincode_err);
-								}));
-							}
+								.map_err(map_bincode_err);
+							}));
 						}
 					}
 				})

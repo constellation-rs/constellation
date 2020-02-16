@@ -34,7 +34,7 @@ impl Node {
 
 pub fn run(
 	bind_addr: SocketAddr, master_pid: Pid,
-	nodes: HashMap<SocketAddr, (Option<SocketAddr>, Mem, Cpu)>,
+	nodes: HashMap<SocketAddr, (bool, Option<SocketAddr>, Mem, Cpu)>,
 ) -> ! {
 	master_init(false);
 	// let master_pid = pid();
@@ -52,7 +52,7 @@ pub fn run(
 	let mut nodes = nodes
 		.into_iter()
 		.enumerate()
-		.map(|(i, (fabric, (bridge, mem, cpu)))| {
+		.map(|(i, (fabric, (master, bridge, mem, cpu)))| {
 			let node = Node { mem, cpu };
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
 			let start = Instant::now();
@@ -74,10 +74,12 @@ pub fn run(
 					let (mut stream_read, mut stream_write) =
 						(BufferedStream::new(&stream), BufferedStream::new(&stream));
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write, &fabric.ip()).unwrap();
-					let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
-						.map_err(map_bincode_err)
-						.unwrap();
-					assert_eq!(ip, master_pid.addr().ip());
+					if !master {
+						let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
+							.map_err(map_bincode_err)
+							.unwrap();
+						assert_eq!(ip, master_pid.addr().ip());
+					}
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(abort_on_unwind_1(|_spawn| {
 							for request in receiver {
