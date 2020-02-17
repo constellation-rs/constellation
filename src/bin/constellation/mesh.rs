@@ -52,12 +52,11 @@ pub(super) fn main(role: MeshRole) -> ! {
 						let read = unsafe { File::from_raw_fd(super::BOUND_FD_START) };
 						let write = unsafe { File::from_raw_fd(super::BOUND_FD_START + 1) };
 						crossbeam::scope(|scope| {
-							let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream));
+							let _ = scope.spawn(|_| io::copy(&mut &read, &mut &stream));
 							let _ = io::copy(&mut &stream, &mut &write);
-							let _ = x.join().unwrap();
+							process::exit(0);
 						})
 						.unwrap();
-						process::exit(0);
 					}
 				}
 			}
