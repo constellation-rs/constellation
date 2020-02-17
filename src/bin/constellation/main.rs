@@ -51,7 +51,6 @@
 //! cargo deploy 10.0.0.1:8888
 //! ```
 
-#![feature(backtrace)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -77,7 +76,7 @@ mod args;
 mod bridge;
 #[cfg(feature = "kubernetes")]
 mod kube;
-mod master;
+mod mesh;
 
 use either::Either;
 #[cfg(unix)]
@@ -86,7 +85,7 @@ use palaver::{
 	file::{execve, fexecve, move_fd, move_fds, pipe, OFlag}, process::ChildHandle, socket::{socket, SockFlag}, valgrind
 };
 use std::{
-	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr, TcpListener}, process, sync, sync::Arc, thread
+	collections::HashMap, convert::{TryFrom, TryInto}, env, io, io::Seek, net::{IpAddr, SocketAddr}, process, sync, sync::Arc
 };
 #[cfg(unix)]
 use std::{
@@ -96,7 +95,7 @@ use std::{
 #[cfg(feature = "kubernetes")]
 use self::kube::kube_master;
 use constellation_internal::{
-	abort_on_unwind_1, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Cpu, FabricOutputEvent, Fd, Format, Mem, Pid, PidInternal, Resources, Trace
+	abort_on_unwind_1, enable_backtrace, file_from_reader, forbid_alloc, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest}, BufferedStream, Cpu, FabricOutputEvent, Fd, Format, Key, Mem, Pid, PidInternal, Resources, Trace
 };
 
 #[derive(PartialEq, Debug)]
@@ -115,11 +114,15 @@ enum Role {
 		cpu: Cpu,
 		replicas: u32,
 	},
-	Master(SocketAddr, Option<u128>, Vec<Node>),
-	Master2(SocketAddr, Option<u128>, Vec<Node>),
-	Worker(SocketAddr, Option<u128>),
-	Worker2(SocketAddr, Option<u128>),
+	Master(SocketAddr, Key, Vec<Node>),
+	Worker(SocketAddr, Key),
+	Mesh(MeshRole),
 	Bridge,
+}
+#[derive(PartialEq, Debug)]
+enum MeshRole {
+	Master(SocketAddr, Key, Vec<Node>),
+	Worker(SocketAddr, Key),
 }
 #[derive(PartialEq, Debug)]
 struct Node {
@@ -134,63 +137,19 @@ const ARG_FD: Fd = 4;
 const BOUND_FD_START: Fd = 5;
 
 fn main() {
-	std::env::set_var("RUST_BACKTRACE", "full");
-	std::panic::set_hook(Box::new(|info| {
-		eprintln!(
-			"thread '{}' {}",
-			thread::current().name().unwrap_or("<unnamed>"),
-			info
-		);
-		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
-		std::process::abort();
-	}));
+	enable_backtrace();
 	let args = Args::from_args(env::args().skip(1)).unwrap_or_else(|(message, success)| {
 		println!("{}", message);
 		process::exit(if success { 0 } else { 1 })
 	});
-	if args.role == Role::Bridge {
-		return bridge::main();
+	if let Role::Bridge = args.role {
+		bridge::main();
 	}
-	if let Role::Master2(listen, key, nodes) = args.role {
-		let pid = nodes[0].fabric;
-		let nodes = nodes
-			.into_iter()
-			.enumerate()
-			.map(
-				|(
-					i,
-					Node {
-						fabric,
-						bridge,
-						mem,
-						cpu,
-					},
-				)| { (fabric, (i == 0, bridge, mem, cpu)) },
-			)
-			.collect::<HashMap<_, _>>(); // TODO: error on clash
-		master::run(listen, Pid::new_with(pid.ip(), pid.port(), key), nodes)
-	}
-	if let Role::Worker2(listen, _key) = args.role {
-		let listener = TcpListener::bind(&listen).unwrap();
-		loop {
-			let accepted = listener.accept();
-			if let Ok((stream, addr)) = accepted {
-				if bincode::serialize_into::<_, IpAddr>(&mut &stream, &addr.ip()).is_ok() {
-					let read = unsafe { File::from_raw_fd(BOUND_FD_START) };
-					let write = unsafe { File::from_raw_fd(BOUND_FD_START + 1) };
-					crossbeam::scope(|scope| {
-						let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream));
-						let _ = io::copy(&mut &stream, &mut &write);
-						let _ = x.join().unwrap();
-					})
-					.unwrap();
-					process::exit(0);
-				}
-			}
-		}
+	if let Role::Mesh(role) = args.role {
+		mesh::main(role);
 	}
 	let trace = &Trace::new(io::stdout(), args.format, args.verbose);
-	let listen = match &args.role {
+	let bind_ip = match &args.role {
 		#[cfg(feature = "kubernetes")]
 		Role::KubeMaster {
 			master_bind,
@@ -210,9 +169,9 @@ fn main() {
 			);
 			(master_bind.ip(), fabric)
 		}
-		Role::Master(listen, _key, _nodes) => listen.ip(),
-		Role::Worker(listen, _key) => listen.ip(),
-		Role::Bridge | Role::Master2(_, _, _) | Role::Worker2(_, _) => unreachable!(),
+		Role::Master(bind, _key, _nodes) => bind.ip(),
+		Role::Worker(bind, _key) => bind.ip(),
+		Role::Bridge | Role::Mesh(_) => unreachable!(),
 	};
 
 	loop {
@@ -220,25 +179,20 @@ fn main() {
 		let pending = &sync::RwLock::new(&mut pending_inner);
 		crossbeam::scope(|scope| {
 			let (read, write) = {
-				let (ip, args) = match &args.role {
-					Role::Master(listen, key, nodes) => {
+				let (cluster_ip, args, key) = match &args.role {
+					Role::Master(bind, key, nodes) => {
 						let mut args = vec![
 							OsString::from(env::current_exe().unwrap()),
-							OsString::from("master2"),
-							OsString::from(listen.to_string()),
-							OsString::from("-"),
+							OsString::from("mesh-master"),
+							OsString::from(bind.to_string()),
+							OsString::from(key.to_string()),
 						];
-						if let Some(key) = key {
-							args.push(OsString::from(key.to_string()));
-						}
 						for node in nodes {
 							args.extend(
 								vec![
 									node.fabric.to_string(),
-									node.bridge.map_or_else(
-										|| String::from("-"),
-										|bridge| bridge.to_string(),
-									),
+									node.bridge
+										.map_or(String::from("-"), |bridge| bridge.to_string()),
 									node.mem.to_string(),
 									node.cpu.to_string(),
 								]
@@ -246,18 +200,18 @@ fn main() {
 								.map(OsString::from),
 							);
 						}
-						let ip = nodes[0].fabric.ip();
-						(ip, args)
+						let cluster_ip = nodes[0].fabric.ip();
+						(cluster_ip, args, *key)
 					}
-					Role::Worker(listen, key) => {
+					Role::Worker(bind, key) => {
 						let args = vec![
 							OsString::from(env::current_exe().unwrap()),
-							OsString::from("worker2"),
-							OsString::from(listen.to_string()),
-							OsString::from(key.map_or(String::from("-"), |key| key.to_string())),
+							OsString::from("mesh-worker"),
+							OsString::from(bind.to_string()),
+							OsString::from(key.to_string()),
 						];
-						let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
-						(ip, args)
+						let cluster_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+						(cluster_ip, args, *key)
 					}
 					_ => unreachable!(),
 				};
@@ -280,7 +234,13 @@ fn main() {
 					binary,
 					arg,
 				};
-				let (pid, child) = spawn(listen, ip, request, Some([mesh_read, mesh_write]));
+				let (pid, child) = spawn(
+					bind_ip,
+					cluster_ip,
+					request,
+					Some(key),
+					Some([mesh_read, mesh_write]),
+				);
 				unistd::close(mesh_read).unwrap();
 				unistd::close(mesh_write).unwrap();
 				let child = Arc::new(child);
@@ -292,8 +252,7 @@ fn main() {
 				});
 				let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
 					match child.wait() {
-						Ok(palaver::process::WaitStatus::Exited(0))
-						| Ok(palaver::process::WaitStatus::Signaled(signal::Signal::SIGKILL, _)) => (),
+						Ok(palaver::process::WaitStatus::Exited(0)) => (),
 						wait_status => {
 							if cfg!(feature = "strict") {
 								panic!("{:?}", wait_status)
@@ -320,13 +279,13 @@ fn main() {
 			let (mut stream_read, stream_write) =
 				(BufferedStream::new(read), &sync::Mutex::new(write));
 			crossbeam::scope(|scope| {
-				let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
-				if let Ok(ip) = ip {
+				let cluster_ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read);
+				if let Ok(cluster_ip) = cluster_ip {
 					while let Ok(request) =
 						bincode_deserialize_from(&mut stream_read).map_err(map_bincode_err)
 					{
 						let request: FabricRequest<File, File> = request;
-						let (pid, child) = spawn(listen, ip, request, None);
+						let (pid, child) = spawn(bind_ip, cluster_ip, request, None, None);
 						let child = Arc::new(child);
 						let x = pending.write().unwrap().insert(pid, child.clone());
 						assert!(x.is_none());
@@ -345,11 +304,7 @@ fn main() {
 						}
 						let _ = scope.spawn(abort_on_unwind_1(move |_scope| {
 							match child.wait() {
-								Ok(palaver::process::WaitStatus::Exited(0))
-								| Ok(palaver::process::WaitStatus::Signaled(
-									signal::Signal::SIGKILL,
-									_,
-								)) => (),
+								Ok(palaver::process::WaitStatus::Exited(0)) => (),
 								wait_status => {
 									if cfg!(feature = "strict") {
 										panic!("{:?}", wait_status)
@@ -391,7 +346,8 @@ fn main() {
 }
 
 fn spawn(
-	listen: IpAddr, ip: IpAddr, request: FabricRequest<File, File>, host: Option<[Fd; 2]>,
+	bind_ip: IpAddr, cluster_ip: IpAddr, request: FabricRequest<File, File>, key: Option<Key>,
+	host: Option<[Fd; 2]>,
 ) -> (Pid, ChildHandle) {
 	let process_listener = socket(
 		socket::AddressFamily::Inet,
@@ -403,7 +359,7 @@ fn spawn(
 	socket::setsockopt(process_listener, socket::sockopt::ReuseAddr, &true).unwrap();
 	socket::bind(
 		process_listener,
-		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(listen, 0))),
+		&socket::SockAddr::Inet(socket::InetAddr::from_std(&SocketAddr::new(bind_ip, 0))),
 	)
 	.unwrap();
 	socket::setsockopt(process_listener, socket::sockopt::ReusePort, &true).unwrap();
@@ -414,7 +370,7 @@ fn spawn(
 		panic!()
 	}
 	.port();
-	let pid = Pid::new(ip, port);
+	let pid = Pid::new(cluster_ip, port, key);
 	let _ = (&request.arg).seek(std::io::SeekFrom::End(0)).unwrap();
 	bincode::serialize_into(&request.arg, &pid).unwrap();
 	let _ = (&request.arg).seek(std::io::SeekFrom::Start(0)).unwrap();

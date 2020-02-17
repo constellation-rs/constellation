@@ -1,10 +1,10 @@
 #![allow(clippy::too_many_lines)]
 
 use serde::Deserialize;
-use std::{error::Error, fs::File, io::Read, net::SocketAddr};
+use std::{error::Error, fs, net::SocketAddr};
 
-use super::{Args, Node, Role};
-use constellation_internal::{Cpu, Format, Mem};
+use super::{Args, MeshRole, Node, Role};
+use constellation_internal::{Cpu, Format, Key, Mem};
 
 const DESCRIPTION: &str = r"Run a constellation node.
 ";
@@ -185,16 +185,13 @@ impl Args {
 					return Err((format!("Invalid kubernetes master options, expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
 				}
 			}
-			"master" | "master2" => {
-				let master2 = arg == "master2";
+			"master" | "mesh-master" => {
+				let mesh = arg == "mesh-master";
 				let err = || {
 					(format!("Invalid args, expecting master <bind> <key> <nodes>, like master 127.0.0.1:9999 - 127.0.0.1:8888 - 400GiB 34\n{}", USAGE), false)
 				};
 				let bind = args.next().ok_or_else(err)?.parse().map_err(|_| err())?;
-				let key = match &*args.next().ok_or_else(err)? {
-					"-" => None,
-					key => Some(key.parse().map_err(|_| err())?),
-				};
+				let key = args.next().ok_or_else(err)?.parse().map_err(|_| err())?;
 				let mut nodes = Vec::new();
 				let mut arg: Option<String> = Some(args.next().ok_or_else(err)?);
 				loop {
@@ -227,43 +224,36 @@ impl Args {
 				if nodes.is_empty() {
 					return Err((format!("At least one node must be present: expecting <addr> <addr> <mem> <cpu>, like 127.0.0.1:9999 127.0.0.1:8888 400GiB 34\n{}", USAGE), false));
 				}
-				if master2 {
-					Role::Master2(bind, key, nodes)
+				if mesh {
+					Role::Mesh(MeshRole::Master(bind, key, nodes))
 				} else {
 					Role::Master(bind, key, nodes)
 				}
 			}
-			"worker2" => {
+			"mesh-worker" => {
 				let bind = args.next().unwrap().parse().unwrap();
-				let key = match &*args.next().unwrap() {
-					"-" => None,
-					key => Some(key.parse().unwrap()),
-				};
-				Role::Worker2(bind, key)
+				let key = args.next().unwrap().parse().unwrap();
+				Role::Mesh(MeshRole::Worker(bind, key))
 			}
 			bind if bind.parse::<SocketAddr>().is_ok() => {
 				let bind = bind.parse().unwrap();
+				let key = match args.peek() {
+					Some(key) if key.parse::<Key>().is_ok() => {
+						Some(args.next().unwrap().parse().unwrap())
+					}
+					_ => None,
+				}
+				.unwrap_or_default();
 				if let Some(toml) = args.next() {
-					let (key, nodes) = Self::from_toml(&mut File::open(&toml).map_err(|e| {
+					let err = |e| {
 						(
 							format!("Can't open the TOML file \"{}\": {}", toml, e),
 							false,
 						)
-					})?)
-					.map_err(|e| {
-						(
-							format!("Can't parse the TOML file \"{}\": {}", toml, e),
-							false,
-						)
-					})?;
+					};
+					let nodes = Self::from_toml(&toml).map_err(err)?;
 					Role::Master(bind, key, nodes)
 				} else {
-					let key = match args.peek() {
-						Some(key) if key.parse::<u128>().is_ok() => {
-							Some(args.next().unwrap().parse().unwrap())
-						}
-						_ => None,
-					};
 					if let Some(x) = args.next() {
 						return Err((format!("Invalid arg \"{}\", expecting an address to bind to, like 127.0.0.1:9999\n{}", x, USAGE), false));
 					}
@@ -280,10 +270,9 @@ impl Args {
 			role,
 		})
 	}
-	fn from_toml<R: Read>(reader: &mut R) -> Result<(Option<u128>, Vec<Node>), Box<dyn Error>> {
+	fn from_toml(path: &str) -> Result<Vec<Node>, Box<dyn Error>> {
 		#[derive(Deserialize)]
 		struct A {
-			key: Option<u128>,
 			nodes: Vec<B>,
 		}
 		#[derive(Deserialize)]
@@ -293,10 +282,8 @@ impl Args {
 			mem: Mem,
 			cpu: Cpu,
 		}
-
-		let mut toml = Vec::new();
-		let _ = reader.read_to_end(&mut toml)?;
-		let nodes = toml::from_slice::<A>(&toml).map_err(|e| {
+		let toml = fs::read_to_string(path).map_err(|e| Box::new(e) as Box<dyn Error>)?;
+		let nodes = toml::from_str::<A>(&*toml).map_err(|e| {
 			format!(
 				r#"{}
 It should look something like:
@@ -318,19 +305,16 @@ cpu = 1
 		if nodes.nodes.is_empty() {
 			return Err("must contain multiple nodes".into());
 		}
-		Ok((
-			nodes.key,
-			nodes
-				.nodes
-				.into_iter()
-				.map(|node| Node {
-					fabric: node.fabric_addr,
-					bridge: node.bridge_bind,
-					mem: node.mem,
-					cpu: node.cpu,
-				})
-				.collect(),
-		))
+		Ok(nodes
+			.nodes
+			.into_iter()
+			.map(|node| Node {
+				fabric: node.fabric_addr,
+				bridge: node.bridge_bind,
+				mem: node.mem,
+				cpu: node.cpu,
+			})
+			.collect())
 	}
 }
 
@@ -364,7 +348,7 @@ mod tests {
 			Ok(Args {
 				format: Format::Human,
 				verbose: false,
-				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), None)
+				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), Key::default())
 			})
 		);
 		assert_eq!(
@@ -372,7 +356,7 @@ mod tests {
 			Ok(Args {
 				format: Format::Json,
 				verbose: false,
-				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), None)
+				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), Key::default())
 			})
 		);
 		assert_eq!(
@@ -380,7 +364,7 @@ mod tests {
 			Ok(Args {
 				format: Format::Json,
 				verbose: false,
-				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), None)
+				role: Role::Worker("10.0.0.1:8888".parse().unwrap(), Key::default())
 			})
 		);
 		assert_eq!(
@@ -399,7 +383,7 @@ mod tests {
 				verbose: false,
 				role: Role::Master(
 					"10.0.0.1:8888".parse().unwrap(),
-					None,
+					Key::default(),
 					vec![Node {
 						fabric: "10.0.0.1:8888".parse().unwrap(),
 						bridge: Some("10.0.0.1:7777".parse().unwrap()),
@@ -429,7 +413,7 @@ mod tests {
 				verbose: false,
 				role: Role::Master(
 					"10.0.0.1:8888".parse().unwrap(),
-					None,
+					Key::default(),
 					vec![
 						Node {
 							fabric: "10.0.0.1:8888".parse().unwrap(),

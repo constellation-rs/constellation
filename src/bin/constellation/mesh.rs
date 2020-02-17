@@ -1,14 +1,16 @@
-#![allow(clippy::too_many_lines, clippy::erasing_op)]
+#![allow(clippy::too_many_lines, clippy::erasing_op, clippy::if_not_else)]
 
 use either::Either;
 use std::{
-	collections::{HashMap, VecDeque}, env, ffi::OsString, fs::File, net::{IpAddr, SocketAddr, TcpListener, TcpStream}, os::unix::io::FromRawFd, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
+	collections::{HashMap, VecDeque}, env, ffi::OsString, fs::File, io, net::{IpAddr, TcpListener, TcpStream}, os::unix::io::FromRawFd, process, sync::mpsc::{sync_channel, SyncSender}, thread, time::{Duration, Instant}
 };
 
 use constellation::master_init;
 use constellation_internal::{
 	abort_on_unwind, abort_on_unwind_1, map_bincode_err, msg::{bincode_deserialize_from, FabricRequest, SchedulerArg}, BufferedStream, Cpu, Mem, Pid, PidInternal, Resources, TrySpawnError
 };
+
+use super::MeshRole;
 
 #[derive(Debug)]
 pub struct Node {
@@ -32,12 +34,38 @@ impl Node {
 	}
 }
 
-pub fn run(
-	bind_addr: SocketAddr, master_pid: Pid,
-	nodes: HashMap<SocketAddr, (bool, Option<SocketAddr>, Mem, Cpu)>,
-) -> ! {
+pub(super) fn main(role: MeshRole) -> ! {
 	master_init(false);
-	// let master_pid = pid();
+	// let master_pid = constellation::pid();
+	match role {
+		MeshRole::Master(bind, key, nodes) => {
+			let listener = TcpListener::bind(&bind).unwrap();
+			let pid = nodes[0].fabric;
+			master(listener, Pid::new(pid.ip(), pid.port(), Some(key)), nodes)
+		}
+		MeshRole::Worker(bind, _key) => {
+			let listener = TcpListener::bind(&bind).unwrap();
+			loop {
+				let accepted = listener.accept();
+				if let Ok((stream, addr)) = accepted {
+					if bincode::serialize_into::<_, IpAddr>(&mut &stream, &addr.ip()).is_ok() {
+						let read = unsafe { File::from_raw_fd(super::BOUND_FD_START) };
+						let write = unsafe { File::from_raw_fd(super::BOUND_FD_START + 1) };
+						crossbeam::scope(|scope| {
+							let x = scope.spawn(|_| io::copy(&mut &read, &mut &stream));
+							let _ = io::copy(&mut &stream, &mut &write);
+							let _ = x.join().unwrap();
+						})
+						.unwrap();
+						process::exit(0);
+					}
+				}
+			}
+		}
+	}
+}
+
+fn master(listener: TcpListener, master_pid: Pid, nodes: Vec<super::Node>) -> ! {
 	let (sender, receiver) = sync_channel::<
 		Either<
 			(
@@ -52,15 +80,21 @@ pub fn run(
 	let mut nodes = nodes
 		.into_iter()
 		.enumerate()
-		.map(|(i, (fabric, (master, bridge, mem, cpu)))| {
-			let node = Node { mem, cpu };
+		.map(|(i, node)| {
+			let master = i == 0;
+			let fabric = node.fabric;
+			let bridge = node.bridge;
+			let node = Node {
+				mem: node.mem,
+				cpu: node.cpu,
+			};
 			let (sender_a, receiver_a) = sync_channel::<FabricRequest<Vec<u8>, Vec<u8>>>(0);
 			let start = Instant::now();
 			let sender1 = sender.clone();
 			let _ = thread::Builder::new()
 				.spawn(abort_on_unwind(move || {
 					let (receiver, sender) = (receiver_a, sender1);
-					let stream = if std::ops::Not::not(master) {
+					let stream = if !master {
 						let stream = loop {
 							let err = match TcpStream::connect(&fabric) {
 								Ok(stream) => break Ok(stream),
@@ -95,10 +129,10 @@ pub fn run(
 					bincode::serialize_into::<_, IpAddr>(&mut stream_write.write(), &fabric.ip())
 						.unwrap();
 					if !master {
-						let ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
+						let cluster_ip = bincode::deserialize_from::<_, IpAddr>(&mut stream_read)
 							.map_err(map_bincode_err)
 							.unwrap();
-						assert_eq!(ip, master_pid.addr().ip());
+						assert_eq!(cluster_ip, master_pid.addr().ip());
 					}
 					crossbeam::scope(|scope| {
 						let _ = scope.spawn(abort_on_unwind_1(|_spawn| {
@@ -161,7 +195,6 @@ pub fn run(
 		})
 		.collect::<Vec<_>>();
 
-	let listener = TcpListener::bind(bind_addr).unwrap();
 	let _ = thread::Builder::new()
 		.spawn(abort_on_unwind(move || {
 			for stream in listener.incoming() {

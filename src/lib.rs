@@ -905,7 +905,10 @@ fn native_process_listener() -> (Fd, Pid) {
 		};
 	assert_eq!(process_id.ip(), LOCALHOST);
 
-	(process_listener, Pid::new(LOCALHOST, process_id.port()))
+	(
+		process_listener,
+		Pid::new(LOCALHOST, process_id.port(), None),
+	)
 }
 
 #[allow(clippy::too_many_lines)]

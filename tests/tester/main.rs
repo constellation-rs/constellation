@@ -33,7 +33,9 @@ use std::{
 };
 use systemstat::{saturating_sub_bytes, Platform, System};
 
-use constellation_internal::{abort_on_unwind, Cpu, ExitStatus, FabricOutputEvent, Fd, Mem};
+use constellation_internal::{
+	abort_on_unwind, enable_backtrace, Cpu, ExitStatus, FabricOutputEvent, Fd, Key, Mem
+};
 use ext::serialize_as_regex_string::SerializeAsRegexString;
 
 const DEPLOY: &str = "src/bin/deploy.rs";
@@ -219,18 +221,8 @@ fn treeize(
 
 #[allow(clippy::too_many_lines)]
 fn main() {
-	println!("{:?}", std::env::vars().collect::<Vec<_>>());
+	enable_backtrace();
 	let start = time::Instant::now();
-	std::env::set_var("RUST_BACKTRACE", "full");
-	std::panic::set_hook(Box::new(|info| {
-		eprintln!(
-			"thread '{}' {}",
-			thread::current().name().unwrap_or("<unnamed>"),
-			info
-		);
-		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
-		std::process::abort();
-	}));
 	// https://github.com/rust-lang/cargo/issues/6344
 	#[cfg(unix)]
 	for fd in FdIter::new().unwrap() {
@@ -515,8 +507,8 @@ impl Environment for Cluster {
 		} else {
 			panic!()
 		};
-		let (sender, receiver) =
-			mpsc::sync_channel::<(usize, Option<Result<FabricOutputEvent, _>>)>(0);
+		let key = Key::new();
+		let (sender, receiver) = mpsc::sync_channel(0);
 		let mut cluster = config
 			.nodes
 			.iter()
@@ -543,8 +535,8 @@ impl Environment for Cluster {
 					args.push(String::from("master"));
 				}
 				args.push(node.fabric.bind.to_string());
+				args.push(key.to_string());
 				if i == 0 {
-					args.push(String::from("-"));
 					for node in &config.nodes {
 						args.extend(vec![
 							node.fabric.external.to_string(),
@@ -573,15 +565,6 @@ impl Environment for Cluster {
 						sender.send((i, Some(msg))).unwrap();
 					}
 					sender.send((i, None)).unwrap();
-					// let mut stdout = stdout;
-					// let mut buf = vec![0; 16 * 1024];
-					// loop {
-					// 	let n = stdout.read(&mut buf).unwrap();
-					// 	if n == 0 {
-					// 		break;
-					// 	}
-					// 	println!("fab stdout: {:?}", str::from_utf8(&buf[..n]).unwrap());
-					// }
 				}));
 				let stderr = process.stderr.take().unwrap();
 				let stderr = capture_stdout(stderr, true, move |none, output| {
@@ -590,13 +573,13 @@ impl Environment for Cluster {
 				});
 				let start_ = time::Instant::now();
 				let _mesh_pid: FabricOutputEvent = receiver.recv().unwrap().1.unwrap().unwrap();
-				while TcpStream::connect(node.fabric.external).is_err() {
-					// TODO: parse output rather than this loop and timeout
-					if start_.elapsed() > time::Duration::new(5, 0) {
-						panic!("Fabric not up within 5s");
-					}
-					thread::sleep(std::time::Duration::new(0, 1_000_000));
-				}
+				// while TcpStream::connect(node.fabric.external).is_err() {
+				// 	// TODO: parse output rather than this loop and timeout
+				// 	if start_.elapsed() > time::Duration::new(5, 0) {
+				// 		panic!("Fabric not up within 5s");
+				// 	}
+				// 	thread::sleep(std::time::Duration::new(0, 1_000_000));
+				// }
 				if let Some(bridge) = node.bridge {
 					let _bridge_pid: FabricOutputEvent =
 						receiver.recv().unwrap().1.unwrap().unwrap();
@@ -648,16 +631,15 @@ impl Environment for Cluster {
 								assert!(x.is_none());
 							}
 							FabricOutputEvent::Exit { pid, system_pid } => {
-								let _x = pids.remove(&pid);
-								let _ = system_pid;
-								// assert_eq!(x, Some(system_pid));
+								let x = pids.remove(&pid);
+								assert_eq!(x, Some(system_pid));
 							}
 						}
 					}
-					// assert!(pids.is_empty(), "{:?}", pids);
-					// if let Ok(err) = stdout.try_recv() {
-					// 	panic!("{:?}", err);
-					// }
+					assert!(pids.is_empty(), "{:?}", pids);
+					if let Ok(err) = stdout.try_recv() {
+						panic!("{:?}", err);
+					}
 				});
 			}
 			process::Command::new(&config.deploy)

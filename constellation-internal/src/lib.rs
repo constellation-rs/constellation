@@ -1,4 +1,5 @@
 #![doc(html_root_url = "https://docs.rs/constellation-internal/0.2.0-alpha.1")]
+#![feature(backtrace)]
 #![warn(
 	// missing_copy_implementations,
 	missing_debug_implementations,
@@ -32,11 +33,11 @@ mod units;
 #[cfg(unix)]
 use nix::{fcntl, libc, sys::signal, unistd};
 use palaver::file::{copy, memfd_create};
-use serde::{Deserialize, Serialize};
+use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
 	convert::{TryFrom, TryInto}, env, error::Error, ffi::{CString, OsString}, fmt::{self, Debug, Display}, fs::File, io::{self, Read, Seek, Write}, net::{IpAddr, SocketAddr}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
-	}, process::abort, sync::{Arc, Mutex}
+	}, process::abort, str::FromStr, sync::{Arc, Mutex}, thread
 };
 
 #[cfg(target_family = "unix")]
@@ -49,7 +50,7 @@ pub type Fd = std::os::windows::io::RawHandle;
 static A: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
 
 // This is used when a key is not supplied for a standalone cluster
-const DEFAULT_KEY: u128 = 0x02b0_b808_95b7_e9b1_380e_e1fa_1c76_1c0e;
+const DEFAULT_KEY: Key = Key(0x02b0_b808_95b7_e9b1_380e_e1fa_1c76_1c0e);
 
 pub use ext::*;
 pub use format::*;
@@ -71,15 +72,9 @@ pub struct Pid {
 	port: u16,
 }
 impl Pid {
-	pub(crate) fn new(ip: IpAddr, port: u16) -> Self {
+	pub(crate) fn new(ip: IpAddr, port: u16, key: Option<Key>) -> Self {
 		assert_ne!(port, 0);
-		let key = rand::random();
-		Self { key, ip, port }
-	}
-
-	pub(crate) fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Self {
-		assert_ne!(port, 0);
-		let key = key.unwrap_or(DEFAULT_KEY);
+		let key = key.unwrap_or_else(Key::new).0;
 		Self { key, ip, port }
 	}
 
@@ -109,22 +104,71 @@ impl Debug for Pid {
 	}
 }
 pub trait PidInternal {
-	fn new(ip: IpAddr, port: u16) -> Pid;
-	fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Pid;
+	fn new(ip: IpAddr, port: u16, key: Option<Key>) -> Pid;
 	fn addr(&self) -> SocketAddr;
 }
 #[doc(hidden)]
 impl PidInternal for Pid {
-	fn new(ip: IpAddr, port: u16) -> Self {
-		Self::new(ip, port)
-	}
-
-	fn new_with(ip: IpAddr, port: u16, key: Option<u128>) -> Pid {
-		Self::new_with(ip, port, key)
+	fn new(ip: IpAddr, port: u16, key: Option<Key>) -> Self {
+		Self::new(ip, port, key)
 	}
 
 	fn addr(&self) -> SocketAddr {
 		Self::addr(self)
+	}
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Key(u128);
+impl Key {
+	pub fn new() -> Self {
+		Key(rand::random())
+	}
+}
+impl Default for Key {
+	fn default() -> Self {
+		DEFAULT_KEY
+	}
+}
+impl Display for Key {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		if self != &DEFAULT_KEY {
+			Display::fmt(&self.0, f)
+		} else {
+			Display::fmt("-", f)
+		}
+	}
+}
+impl FromStr for Key {
+	type Err = <u128 as FromStr>::Err;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		if s != "-" {
+			u128::from_str(s).map(Key)
+		} else {
+			Ok(DEFAULT_KEY)
+		}
+	}
+}
+impl Serialize for Key {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		let val = if self != &DEFAULT_KEY {
+			Some(self.0)
+		} else {
+			None
+		};
+		val.serialize(serializer)
+	}
+}
+impl<'de> Deserialize<'de> for Key {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		<Option<u128>>::deserialize(deserializer).map(|key| key.map_or(DEFAULT_KEY, Key))
 	}
 }
 
@@ -756,4 +800,19 @@ pub fn abort_on_unwind<F: FnOnce() -> T, T>(f: F) -> impl FnOnce() -> T {
 #[inline]
 pub fn abort_on_unwind_1<F: FnOnce(&A) -> T, T, A>(f: F) -> impl FnOnce(&A) -> T {
 	|a| abort_on_unwind_(|| f(a))
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn enable_backtrace() {
+	std::env::set_var("RUST_BACKTRACE", "full");
+	std::panic::set_hook(Box::new(|info| {
+		eprintln!(
+			"thread '{}' {}",
+			thread::current().name().unwrap_or("<unnamed>"),
+			info
+		);
+		eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
+		abort();
+	}));
 }

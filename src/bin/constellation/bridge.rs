@@ -219,8 +219,7 @@ fn recce(
 	match child.wait() {
 		Ok(WaitStatus::Exited(0)) => (),
 		wait_status => {
-			if let Ok(WaitStatus::Signaled(Signal::SIGKILL, _)) = wait_status {
-			} else if cfg!(feature = "strict") {
+			if cfg!(feature = "strict") {
 				panic!("{:?}", wait_status)
 			}
 			return Err(());
@@ -392,7 +391,7 @@ fn manage_connection(
 	Ok(())
 }
 
-pub fn main() {
+pub(super) fn main() -> ! {
 	let listener = constellation::bridge_init();
 	trace!("BRIDGE: Resources: {:?}", ()); // TODO
 	let (sender, receiver) = mpsc::sync_channel(0);
@@ -431,4 +430,6 @@ pub fn main() {
 		drop((scheduler_read, scheduler_write));
 		let _ = scheduler.into_raw_fd();
 	}
+
+	unreachable!()
 }
