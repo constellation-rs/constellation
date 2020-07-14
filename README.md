@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.rs/constellation-rs/0.2.0-alpha.1">Docs</a>
+    <a href="https://docs.rs/constellation-rs">Docs</a>
 </p>
 
 Constellation is a framework for Rust (nightly) that aides in the writing, debugging and deployment of distributed programs. It draws heavily from [Erlang/OTP](https://en.wikipedia.org/wiki/Erlang_(programming_language)), [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface), and [CSP](https://en.wikipedia.org/wiki/Communicating_sequential_processes); and leverages the Rust ecosystem where it can including [serde](https://serde.rs/) + [bincode](https://github.com/servo/bincode) for network serialization, and [mio](https://github.com/tokio-rs/mio) and [futures-rs](https://github.com/rust-lang-nursery/futures-rs) for asynchronous channels over TCP.
@@ -27,13 +27,13 @@ For leveraging Constellation directly, read on.
 
 ## Constellation framework
 
-* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/fn.init.html) at the beginning of your program.
-* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/fn.spawn.html) new processes, which run `closure`.
+* Constellation is a framework that's initialised with a call to [`init()`](https://docs.rs/constellation-rs/0.1/constellation/fn.init.html) at the beginning of your program.
+* You can [`spawn(closure)`](https://docs.rs/constellation-rs/0.1/constellation/fn.spawn.html) new processes, which run `closure`.
 * `spawn(closure)` returns the Pid of the new process.
-* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/struct.Receiver.html#method.new).
-* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/struct.Receiver.html#method.recv).
+* You can communicate between processes by creating channels with [`Sender::new(remote_pid)`](https://docs.rs/constellation-rs/0.1/constellation/struct.Sender.html#method.new) and [`Receiver::new(remote_pid)`](https://docs.rs/constellation-rs/0.1/constellation/struct.Receiver.html#method.new).
+* Channels can be used asynchronously with [`sender.send(value).await`](https://docs.rs/constellation-rs/0.1/constellation/struct.Sender.html#method.send) and [`receiver.recv().await`](https://docs.rs/constellation-rs/0.1/constellation/struct.Receiver.html#method.recv).
 * [futures-rs](https://github.com/rust-lang-nursery/futures-rs) provides useful functions and adapters including `select()` and `join()` for working with channels.
-* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.2.0-alpha.1/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
+* You can also block on channels with the [`.block()`](https://docs.rs/constellation-rs/0.1/constellation/trait.FutureExt1.html#method.block) convenience method: `sender.send().block()` and `receiver.recv().block()`.
 * For more information on asynchronous programming in Rust check out the [Async Book](https://rust-lang.github.io/async-book/index.html)!
 
 Here's a simple example recursively spawning processes to distribute the task of finding Fibonacci numbers:
@@ -128,7 +128,7 @@ Constellation takes care of:
  * TODO: Best-effort enforcement of those memory and resource requirements to avoid buggy/greedy processes starving others
  * Channels between processes over TCP, with automatic setup and teardown
  * Asynchronous (de)serialisation of values sent/received over channels (leveraging [`serde`](https://crates.io/crates/serde), [bincode](https://github.com/servo/bincode) and optionally [`libfringe`](https://github.com/edef1c/libfringe) to avoid allocations)
- * Channels implement [`std::future::Future`](https://doc.rust-lang.org/std/future/trait.Future.html), [`futures::stream::Stream`](https://docs.rs/futures-preview/0.3.0-alpha.17/futures/stream/trait.Stream.html) and [`futures::sink::Sink`](https://docs.rs/futures-preview/0.3.0-alpha.17/futures/sink/trait.Sink.html), enabling the useful functions and adapters including `select()` and `join()` from [`futures-rs`](https://github.com/rust-lang-nursery/futures-rs) to be used, as well as compatibility with [`tokio`](https://github.com/tokio-rs/tokio) and [`runtime`](https://github.com/rustasync/runtime).
+ * Channels implement [`std::future::Future`](https://doc.rust-lang.org/std/future/trait.Future.html), [`futures::stream::Stream`](https://docs.rs/futures/0.3/futures/stream/trait.Stream.html) and [`futures::sink::Sink`](https://docs.rs/futures/0.3/futures/sink/trait.Sink.html), enabling the useful functions and adapters including `select()` and `join()` from [`futures-rs`](https://github.com/rust-lang-nursery/futures-rs) to be used, as well as compatibility with [`tokio`](https://github.com/tokio-rs/tokio) and [`runtime`](https://github.com/rustasync/runtime).
  * Powered by a background thread running an efficient edge-triggered epoll loop
  * Ensuring data is sent and acked before process exit to avoid connection resets and lost data (leveraging [`atexit`](http://pubs.opengroup.org/onlinepubs/000095399/functions/atexit.html) and [`TIOCOUTQ`](https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable))
  * Addressing: all channels are between cluster-wide `Pid`s, rather than `(ip,port)`s
@@ -248,7 +248,7 @@ Please file an issue if you experience any other requirements.
 
 ## API
 
-[see Rust doc](https://docs.rs/constellation-rs/0.2.0-alpha.1)
+[see Rust doc](https://docs.rs/constellation-rs)
 
 ## Testing
 

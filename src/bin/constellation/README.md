@@ -50,35 +50,3 @@ or, for a Rust crate:
 ```text
 cargo deploy 10.0.0.1:8888
 ```
-
-<!-- [package]
-name = "fabric"
-version = "0.1.2"
-license = "Apache-2.0"
-authors = ["Alec Mocatta <alec@mocatta.net>"]
-categories = ["development-tools","network-programming","concurrency","command-line-utilities"]
-keywords = ["deploy","distributed","fabric"]
-description = """
-A distributed fabric for `deploy`able programs.
-"""
-repository = "https://github.com/alecmocatta/deploy"
-homepage = "https://github.com/alecmocatta/deploy"
-documentation = "https://docs.rs/fabric"
-readme = "README.md"
-
-[dependencies]
-deploy-common = {path = "../common", version = "=0.1.2"}
-bincode = "1.0"
-serde = "1.0"
-serde_derive = "1.0"
-serde_json = "1.0"
-crossbeam = "0.4"
-either = "1.5"
-palaver = {git = "https://github.com/alecmocatta/palaver"}
-
-[target.'cfg(unix)'.dependencies]
-nix = "0.11"
-
-[target.'cfg(windows)'.dependencies]
-winapi = "0.3"
- -->
