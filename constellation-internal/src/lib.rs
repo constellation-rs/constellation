@@ -297,6 +297,7 @@ pub const RESOURCES_DEFAULT: Resources = Resources {
 /// An error returned by the [`try_spawn()`](try_spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TrySpawnError {
 	/// [`try_spawn()`](try_spawn) failed because the new process couldn't be allocated.
 	NoCapacity,
@@ -304,27 +305,23 @@ pub enum TrySpawnError {
 	Recce,
 	/// [`try_spawn()`](try_spawn) failed for unknown reasons.
 	Unknown,
-	#[doc(hidden)]
-	__Nonexhaustive, // https://github.com/rust-lang/rust/issues/44109
 }
 
 /// An error returned by the [`spawn()`](spawn) method detailing the reason if known.
 #[allow(missing_copy_implementations)]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SpawnError {
 	/// [`spawn()`](spawn) failed because `constellation::init()` is not called immediately inside main().
 	Recce,
 	/// [`spawn()`](spawn) failed for unknown reasons.
 	Unknown,
-	#[doc(hidden)]
-	__Nonexhaustive,
 }
 impl From<SpawnError> for TrySpawnError {
 	fn from(error: SpawnError) -> Self {
 		match error {
 			SpawnError::Recce => Self::Recce,
 			SpawnError::Unknown => Self::Unknown,
-			SpawnError::__Nonexhaustive => unreachable!(),
 		}
 	}
 }
@@ -336,7 +333,6 @@ impl TryFrom<TrySpawnError> for SpawnError {
 			TrySpawnError::NoCapacity => Err(()),
 			TrySpawnError::Recce => Ok(Self::Recce),
 			TrySpawnError::Unknown => Ok(Self::Unknown),
-			TrySpawnError::__Nonexhaustive => unreachable!(),
 		}
 	}
 }
@@ -352,7 +348,6 @@ impl Display for TrySpawnError {
 				"try_spawn() because constellation::init() is not called immediately inside main()"
 			),
 			Self::Unknown => write!(f, "try_spawn() failed for unknown reasons"),
-			Self::__Nonexhaustive => unreachable!(),
 		}
 	}
 }
@@ -369,7 +364,6 @@ impl Display for SpawnError {
 				"spawn() because constellation::init() is not called immediately inside main()"
 			),
 			Self::Unknown => write!(f, "spawn() failed for unknown reasons"),
-			Self::__Nonexhaustive => unreachable!(),
 		}
 	}
 }

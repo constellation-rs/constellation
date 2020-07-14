@@ -69,7 +69,8 @@
 	clippy::type_complexity,
 	clippy::non_ascii_literal,
 	clippy::shadow_unrelated,
-	clippy::too_many_lines
+	clippy::too_many_lines,
+	clippy::unnested_or_patterns
 )]
 
 mod args;

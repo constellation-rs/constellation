@@ -66,7 +66,7 @@ fn fibonacci(x: usize) -> usize {
     }
     let left_pid = spawn(
         Resources::default(),
-        FnOnce!([x] move |parent_pid| {
+        FnOnce!(move |parent_pid| {
             println!("Left process with {}", x);
             Sender::<usize>::new(parent_pid)
                 .send(fibonacci(x - 1))
@@ -78,7 +78,7 @@ fn fibonacci(x: usize) -> usize {
 
     let right_pid = spawn(
         Resources::default(),
-        FnOnce!([x] move |parent_pid| {
+        FnOnce!(move |parent_pid| {
             println!("Right process with {}", x);
             Sender::<usize>::new(parent_pid)
                 .send(fibonacci(x - 2))

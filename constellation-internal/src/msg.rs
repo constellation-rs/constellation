@@ -78,6 +78,7 @@ mod serde {
 
 	use super::{BridgeRequest, FabricRequest};
 	use crate::file_from_reader;
+	use bincode::Options;
 	use palaver::file::{copy, seal_fd};
 	use serde::{
 		de::{self, DeserializeSeed, SeqAccess, Visitor}, ser::{self, SerializeTuple}, Deserialize, Deserializer, Serialize, Serializer
@@ -670,13 +671,13 @@ mod serde {
 	impl<A: FileOrVec, B: FileOrVec> BincodeDeserializeFrom for FabricRequest<A, B> {
 		fn bincode_deserialize_from<R: Read>(stream: &mut R) -> Result<Self, bincode::Error> {
 			let reader = UnsafeCellReaderWriter::new(stream);
-			bincode::config().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
+			bincode_options().deserialize_from_seed(FabricRequestSeed::new(&reader), &reader)
 		}
 	}
 	impl<A: FileOrVec, B: FileOrVec> BincodeDeserializeFrom for BridgeRequest<A, B> {
 		fn bincode_deserialize_from<R: Read>(stream: &mut R) -> Result<Self, bincode::Error> {
 			let reader = UnsafeCellReaderWriter::new(stream);
-			bincode::config().deserialize_from_seed(BridgeRequestSeed::new(&reader), &reader)
+			bincode_options().deserialize_from_seed(BridgeRequestSeed::new(&reader), &reader)
 		}
 	}
 	pub fn bincode_serialize_into<W: Write, S: BincodeSerializeInto>(
@@ -696,7 +697,7 @@ mod serde {
 			stream: &mut W, value: &Self,
 		) -> Result<(), bincode::Error> {
 			let writer = UnsafeCellReaderWriter::new(stream);
-			bincode::config().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
+			bincode_options().serialize_into(&writer, &FabricRequestSerializer::new(&writer, value))
 		}
 	}
 	impl<A: FileOrVec, B: FileOrVec> BincodeSerializeInto for BridgeRequest<A, B> {
@@ -704,7 +705,14 @@ mod serde {
 			stream: &mut W, value: &Self,
 		) -> Result<(), bincode::Error> {
 			let writer = UnsafeCellReaderWriter::new(stream);
-			bincode::config().serialize_into(&writer, &BridgeRequestSerializer::new(&writer, value))
+			bincode_options().serialize_into(&writer, &BridgeRequestSerializer::new(&writer, value))
 		}
+	}
+	fn bincode_options() -> impl Options {
+		bincode::options()
+			.with_fixint_encoding()
+			.allow_trailing_bytes()
+			.with_no_limit()
+			.with_little_endian()
 	}
 }

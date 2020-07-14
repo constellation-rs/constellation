@@ -20,7 +20,7 @@ jobs:
       endpoint: alecmocatta
       default:
         rust_toolchain: nightly
-        rust_lint_toolchain: nightly-2020-02-05
+        rust_lint_toolchain: nightly-2020-07-12
         rust_flags: ''
         rust_features: 'no_alloc strict;no_alloc distribute_binaries strict'
         rust_target_check: ''

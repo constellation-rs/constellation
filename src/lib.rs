@@ -54,6 +54,7 @@ use palaver::{
 };
 use pin_utils::pin_mut;
 use serde::{de::DeserializeOwned, Serialize};
+use serde_traitobject as st;
 use std::{
 	any::type_name, borrow, convert::{Infallible, TryInto}, ffi::{CStr, CString, OsString}, fmt, fs, future::Future, io::{self, Read, Write}, iter, marker, mem::MaybeUninit, net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream}, ops, os::unix::{
 		ffi::OsStringExt, io::{AsRawFd, FromRawFd, IntoRawFd}
@@ -114,7 +115,8 @@ impl<T: ?Sized> FutureExt1 for T where T: Future {}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-type Start<'a> = OwningOrRef<'a, Box<dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static>>;
+#[serde_closure::desugar]
+type Start<'a> = OwningOrRef<'a, Box<dyn st::sc::FnOnce(Pid) + 'static>>;
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const LISTENER_FD: Fd = 3; // from fabric
@@ -356,6 +358,10 @@ impl<T: DeserializeOwned> Receiver<T> {
 	/// Receive.
 	///
 	/// This is an async fn.
+	///
+	/// # Errors
+	///
+	/// Returns `ChannelError` on failure
 	pub async fn recv(&self) -> Result<T, ChannelError>
 	where
 		T: 'static,
@@ -381,7 +387,6 @@ impl<'a> Read for &'a Receiver<u8> {
 		buf[0] = self.recv().block().map_err(|e| match e {
 			ChannelError::Exited => io::ErrorKind::UnexpectedEof,
 			ChannelError::Unknown => io::ErrorKind::ConnectionReset,
-			ChannelError::__Nonexhaustive => unreachable!(),
 		})?;
 		if buf.len() == 1 {
 			return Ok(1);
@@ -406,7 +411,6 @@ impl<'a> Read for &'a Receiver<u8> {
 			*byte = self.recv().block().map_err(|e| match e {
 				ChannelError::Exited => io::ErrorKind::UnexpectedEof,
 				ChannelError::Unknown => io::ErrorKind::ConnectionReset,
-				ChannelError::__Nonexhaustive => unreachable!(),
 			})?;
 		}
 		Ok(())
@@ -483,9 +487,9 @@ pub fn resources() -> Resources {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[allow(clippy::too_many_lines)]
+#[serde_closure::desugar]
 fn spawn_native(
-	resources: Resources, f: &(dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static),
-	_block: bool,
+	resources: Resources, f: &(dyn st::sc::FnOnce(Pid) + 'static), _block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_native");
 	let args: Vec<CString> = env::args_os()
@@ -615,9 +619,9 @@ fn spawn_native(
 	Ok(new_pid)
 }
 
+#[serde_closure::desugar]
 fn spawn_deployed(
-	resources: Resources, f: &(dyn serde_traitobject::FnOnce<(Pid,), Output = ()> + 'static),
-	block: bool,
+	resources: Resources, f: &(dyn st::sc::FnOnce(Pid) + 'static), block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	trace!("spawn_deployed");
 	let stream = unsafe { TcpStream::from_raw_fd(SCHEDULER_FD) };
@@ -676,7 +680,8 @@ fn spawn_deployed(
 	pid
 }
 
-async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+#[serde_closure::desugar]
+async fn spawn_inner<T: serde_closure::traits::FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T, block: bool,
 ) -> Result<Pid, TrySpawnError> {
 	let _scheduler = SCHEDULER.lock().unwrap();
@@ -688,7 +693,7 @@ async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 	let start = FnOnce!(move |parent| {
 		let arg: Vec<u8> = arg;
 		let closure: T = bincode::deserialize(&arg).unwrap();
-		closure(parent)
+		closure.call_once((parent,))
 	});
 	if !deployed {
 		spawn_native(resources, &start, block)
@@ -704,7 +709,8 @@ async fn spawn_inner<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 ///  * `start`: the closure to be run in the new process
 ///
 /// `try_spawn()` on success returns the [Pid] of the new process.
-pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+#[serde_closure::desugar]
+pub async fn try_spawn<T: serde_closure::traits::FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, TrySpawnError> {
 	spawn_inner(resources, start, false).await
@@ -717,7 +723,8 @@ pub async fn try_spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
 ///  * `start`: the closure to be run in the new process
 ///
 /// `spawn()` on success returns the [Pid] of the new process.
-pub async fn spawn<T: FnOnce(Pid) + Serialize + DeserializeOwned>(
+#[serde_closure::desugar]
+pub async fn spawn<T: serde_closure::traits::FnOnce(Pid) + Serialize + DeserializeOwned>(
 	resources: Resources, start: T,
 ) -> Result<Pid, SpawnError> {
 	spawn_inner(resources, start, true)
@@ -1330,7 +1337,7 @@ pub fn init(resources: Resources) {
 	);
 
 	if let Some(SpawnArgSub { parent, f }) = argument.spawn {
-		f.into_inner().unwrap()(parent);
+		f.into_inner().unwrap().call_once_box((parent,));
 		process::exit(0);
 	}
 }

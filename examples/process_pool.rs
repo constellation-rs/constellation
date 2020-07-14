@@ -37,9 +37,9 @@ use std::{any, collections::VecDeque, env, marker, mem, thread, time};
 
 use constellation::*;
 
-// type Request = st::Box<dyn st::FnOnce() -> Response>; // when #![feature(unboxed_closures)] is stable
-type Request = st::Box<dyn st::FnOnce<(), Output = Response>>;
-type Response = st::Box<dyn st::Any>;
+#[serde_closure::desugar]
+type Request = Box<dyn st::sc::FnOnce() -> Response>;
+type Response = Box<dyn st::Any>;
 
 struct Process {
 	sender: Sender<Option<Request>>,
@@ -74,6 +74,7 @@ struct ProcessPool {
 	processes: Vec<Process>,
 	i: usize,
 }
+#[serde_closure::desugar]
 impl ProcessPool {
 	fn new(processes: usize, resources: Resources) -> Self {
 		let processes = (0..processes)
@@ -95,7 +96,7 @@ impl ProcessPool {
 
 						while let Some(work) = receiver.recv().block().unwrap() {
 							// println!("process {}: got work", i);
-							let ret = work();
+							let ret = work.call_once_box(());
 							// println!("process {}: done work", i);
 							sender.send(ret).block();
 							// println!("process {}: awaiting work", i);
@@ -123,7 +124,10 @@ impl ProcessPool {
 		ProcessPool { processes, i: 0 }
 	}
 	fn spawn<
-		F: FnOnce() -> T + serde::ser::Serialize + serde::de::DeserializeOwned + 'static,
+		F: serde_closure::traits::FnOnce() -> T
+			+ serde::ser::Serialize
+			+ serde::de::DeserializeOwned
+			+ 'static,
 		T: any::Any + serde::ser::Serialize + serde::de::DeserializeOwned,
 	>(
 		&mut self, work: F,
@@ -136,9 +140,9 @@ impl ProcessPool {
 		let process = &mut self.processes[process_index];
 		process
 			.sender
-			.send(Some(st::Box::new(FnOnce!(move || {
+			.send(Some(Box::new(FnOnce!(move || {
 				let work: F = work;
-				st::Box::new(work()) as Response
+				Box::new(work.call_once(())) as Response
 			})) as Request))
 			.block();
 		process.queue.push_back(Queued::Awaiting);
@@ -157,7 +161,7 @@ impl ProcessPool {
 				.received(process.receiver.recv().block().unwrap());
 			process.received += 1;
 		}
-		let boxed: st::Box<_> = process.queue[process_offset - process.tail].take();
+		let boxed: Box<_> = process.queue[process_offset - process.tail].take();
 		while let Some(Queued::Taken) = process.queue.front() {
 			let _ = process.queue.pop_front().unwrap();
 			process.tail += 1;

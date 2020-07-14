@@ -474,20 +474,18 @@ impl Channel {
 /// Channel operation error modes.
 #[allow(missing_copy_implementations)]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[non_exhaustive]
 pub enum ChannelError {
 	/// The remote process has exited, thus `send()`/`recv()` could never succeed.
 	Exited,
 	/// The remote process terminated abruptly, or the channel was killed by the OS or hardware.
 	Unknown,
-	#[doc(hidden)]
-	__Nonexhaustive,
 }
 impl fmt::Display for ChannelError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
 			Self::Exited => write!(f, "remote process already exited"),
 			Self::Unknown => write!(f, "remote process died or channel killed by OS/hardware"), //(ref err) => err.fmt(f),
-			Self::__Nonexhaustive => unreachable!(),
 		}
 	}
 }

@@ -1,6 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
-use super::*;
+use super::{Connection, Either};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
 	collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr
