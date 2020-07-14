@@ -22,15 +22,15 @@ jobs:
         rust_toolchain: nightly
         rust_lint_toolchain: nightly-2020-07-12
         rust_flags: ''
-        rust_features_clippy: ';distribute_binaries;kubernetes;no_alloc;strict;distribute_binaries kubernetes no_alloc strict'
-        rust_features: 'no_alloc strict no_alloc distribute_binaries strict'
+        rust_features_clippy: ';distribute_binaries;no_alloc;strict;distribute_binaries no_alloc strict'
+        rust_features: 'no_alloc strict;no_alloc distribute_binaries strict'
         rust_target_check: ''
         rust_target_build: ''
         rust_target_run: ''
         constellation_test_iterations: '10'
       matrix:
         windows0:
-          imageName: 'vs2017-latest'
+          imageName: 'windows-latest'
           rust_target_build: 'x86_64-unknown-linux-musl i686-unknown-linux-musl'
           # rust_target_run: 'x86_64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-gnu i686-pc-windows-gnu' # TODO
         mac0:
