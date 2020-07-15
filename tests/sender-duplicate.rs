@@ -1,7 +1,7 @@
 //= {
 //=   "output": {
 //=     "2": [
-//=       "thread 'main' panicked at 'Sender::<.*>::new\\(\\) called for pid [a-z0-9]{7} when a Sender to this pid already exists', (src/.*\\.rs|<::std::macros::panic macros>):[0-9]+:[0-9]+\n",
+//=       "thread 'main' panicked at 'Sender::<.*>::new\\(\\) called for pid [a-z0-9]{7} when a Sender to this pid already exists', .*:[0-9]+:[0-9]+\n",
 //=       true
 //=     ],
 //=     "1": [

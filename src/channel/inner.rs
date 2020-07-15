@@ -1,8 +1,10 @@
 #![allow(clippy::large_enum_variant)]
 
-use super::*;
+use super::{
+	Connection, InnerClosing, InnerClosingPoll, InnerConnected, InnerConnectedPoll, InnerConnecting, InnerConnectingLocalClosed, InnerConnectingLocalClosedPoll, InnerConnectingPoll, InnerLocalClosed, InnerLocalClosedPoll, InnerRemoteClosed, InnerRemoteClosedPoll
+};
 use serde::{de::DeserializeOwned, Serialize};
-use std::net::SocketAddr;
+use std::{mem, net::SocketAddr};
 use tcp_typed::Notifier;
 
 #[derive(Debug)]

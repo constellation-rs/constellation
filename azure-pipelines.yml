@@ -20,8 +20,9 @@ jobs:
       endpoint: alecmocatta
       default:
         rust_toolchain: nightly
-        rust_lint_toolchain: nightly-2020-02-05
+        rust_lint_toolchain: nightly-2020-07-12
         rust_flags: ''
+        rust_features_clippy: ';distribute_binaries;no_alloc;strict;distribute_binaries no_alloc strict'
         rust_features: 'no_alloc strict;no_alloc distribute_binaries strict'
         rust_target_check: ''
         rust_target_build: ''
@@ -29,98 +30,98 @@ jobs:
         constellation_test_iterations: '10'
       matrix:
         windows0:
-          imageName: 'vs2017-win2016'
+          imageName: 'windows-latest'
           rust_target_build: 'x86_64-unknown-linux-musl i686-unknown-linux-musl'
           # rust_target_run: 'x86_64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-gnu i686-pc-windows-gnu' # TODO
         mac0:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_build: 'x86_64-unknown-linux-musl i686-unknown-linux-musl'
           rust_target_run: 'x86_64-apple-darwin'
         mac1:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac2:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac3:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac4:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac5:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac6:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac7:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac8:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         mac9:
-          imageName: 'macos-10.13'
+          imageName: 'macos-latest'
           rust_target_run: 'x86_64-apple-darwin'
         linux0:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_build: 'i686-unknown-linux-gnu i686-unknown-linux-musl' # TODO: get running reliably
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux1:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux2:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux3:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux4:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux5:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux6:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux7:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux8:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux9:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-gnu'
         linux10:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux11:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux12:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux13:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux14:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux15:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux16:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux17:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux18:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'
         linux19:
-          imageName: 'ubuntu-16.04'
+          imageName: 'ubuntu-latest'
           rust_target_run: 'x86_64-unknown-linux-musl'

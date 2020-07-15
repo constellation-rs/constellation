@@ -110,7 +110,7 @@ impl Args {
 				}
 				Some("--format") if format.is_none() => {
 					let _ = args.next().unwrap();
-					match args.next().as_ref().map(|x| &**x) {
+					match args.next().as_deref() {
 						Some("json") => format = Some(Format::Json),
 						Some("human") => format = Some(Format::Human),
 						_ => {
