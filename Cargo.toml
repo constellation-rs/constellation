@@ -45,7 +45,7 @@ atty = "0.2"
 bincode = "1.2"
 cargo_metadata = { version = "0.10", default-features = false }
 clap = "2.33"
-crossbeam = "0.7"
+crossbeam = "0.8"
 docopt = "1.0"
 either = "1.5"
 futures = "0.3"
