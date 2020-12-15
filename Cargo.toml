@@ -80,7 +80,7 @@ doc-comment = "0.3"
 hex = "0.4"
 itertools = "0.9"
 multiset = "0.0"
-rand_pcg = { version = "0.2", features = ["serde1"] }
+rand_pcg = { version = "0.3", features = ["serde1"] }
 regex = "1.0"
 sha1 = "0.6"
 systemstat = "0.1"
