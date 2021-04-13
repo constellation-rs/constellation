@@ -63,7 +63,7 @@ serde_traitobject = { version = "0.2", features = ["serde_closure"] }
 serde_json = { version = "1.0", features = ["unbounded_depth"] }
 serde_pipe = "0.1"
 tcp_typed = "0.1"
-tokio = { version = "0.2", optional = true }
+tokio = { version = "1.5", optional = true }
 toml = "0.5"
 
 # dependency of kube; ensure it's vendored to simplify cross-compilation
