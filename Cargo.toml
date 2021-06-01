@@ -70,7 +70,7 @@ toml = "0.5"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.16"
+nix = "0.21"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
